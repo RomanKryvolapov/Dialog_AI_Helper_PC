@@ -19,6 +19,7 @@ ext {
     logback_version = '1.5.13'
     gson_version = '2.13.1'
     kotlinx_serialization_json_version = "1.9.0"
+    moshi_version = '1.15.2'
 }
 
 
@@ -45,6 +46,8 @@ dependencies {
     implementation "io.ktor:ktor-client-logging:$ktor_version"
     implementation "ch.qos.logback:logback-classic:$logback_version"
 //    implementation "com.google.code.gson:gson:$gson_version"
+    implementation "com.squareup.moshi:moshi:$moshi_version"
+    implementation "com.squareup.moshi:moshi-kotlin:$moshi_version"
 
 }
 

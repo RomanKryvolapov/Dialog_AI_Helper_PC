@@ -1,0 +1,262 @@
+/* Общий фон для всего окна */
+.root {
+    -fx-background-color: #323232;
+}
+
+
+
+/* Основной контейнер вкладок */
+.tab-pane {
+    -fx-background-color: #323232;
+}
+
+/* Область заголовков вкладок (вся верхняя панель с названиями вкладок) */
+.tab-pane .tab-header-area {
+    -fx-pref-height: 64px;
+    -fx-min-height: 64px;
+    -fx-max-height: 64px;
+    -fx-padding: 10 0 10 0;
+    -fx-background-insets: 0 0 0 0;
+}
+
+/* Фон под вкладками */
+.tab-pane .tab-header-background {
+    -fx-background-color: #323232;
+    -fx-background-insets: 0 0 0 0;
+}
+
+/* Стиль обычной (неактивной) вкладки */
+.tab-pane .tab {
+    -fx-pref-height: 42px;
+    -fx-min-height: 42px;
+    -fx-max-height: 42px;
+    -fx-background-color: #242424;
+    -fx-padding: 10 80 10 80;
+    -fx-background-insets: 0 10 0 0;
+    -fx-border-color: transparent;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+    -fx-background-radius: 24;
+    -fx-border-radius: 24;
+}
+
+/* Стиль активной вкладки */
+.tab-pane .tab:selected {
+    -fx-background-color: #3C71AC;
+}
+
+/* Текст заголовка вкладки (обычной) */
+.tab-pane .tab-label {
+    -fx-font-size: 18px;
+    -fx-padding: 0 0 0 0;
+    -fx-alignment: center;
+    -fx-text-fill: #AAAAAA;
+}
+
+/* Текст активной вкладки */
+.tab-pane .tab:selected .tab-label {
+    -fx-text-fill: #FFFFFF;
+}
+
+
+
+
+
+
+/* Контейнер прокрутки (ScrollPane) */
+.scroll-pane {
+    -fx-background: #333333;
+    -fx-background-color: #333333;
+    -fx-padding: 0;
+    -fx-border-color: transparent;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+
+/* Внутренняя область просмотра (где отображается содержимое) */
+.scroll-pane .viewport {
+    -fx-background-color: #333333;
+}
+
+/* Фон полос прокрутки (вертикальной и горизонтальной) */
+.scroll-pane .scroll-bar:vertical,
+.scroll-pane .scroll-bar:horizontal {
+    -fx-background-color: #333333;
+}
+
+/* Ползунок в полосах прокрутки */
+.scroll-pane .thumb {
+    -fx-background-color: #444444;
+    -fx-background-insets: 2;
+    -fx-background-radius: 4;
+}
+
+/* Ползунок при наведении */
+.scroll-pane .thumb:hover {
+    -fx-background-color: #666666;
+}
+
+/* Кнопки прокрутки (стрелки) */
+.scroll-pane .increment-button,
+.scroll-pane .decrement-button {
+    -fx-background-color: #111111;
+    -fx-padding: 4;
+    -fx-background-insets: 0;
+}
+
+/* Скрытие стрелок в кнопках прокрутки */
+.scroll-pane .increment-arrow,
+.scroll-pane .decrement-arrow {
+    -fx-shape: " ";
+    -fx-padding: 0;
+}
+
+
+
+
+
+
+/* Радиокнопка — кружок */
+.radio-button .radio {
+    -fx-background-color: #646464;
+    -fx-border-color: transparent;
+}
+
+/* Радиокнопка — активная (выбранная) */
+.radio-button:selected .radio {
+    -fx-background-color: #FFFFFF;
+    -fx-border-color: transparent;
+}
+
+/* Текст рядом с радиокнопкой */
+.radio-button .text {
+    -fx-fill: #FFFFFF;
+}
+
+/* Общий стиль радиокнопки */
+.radio-button {
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 16px;
+}
+
+
+
+
+/* Фон для всех VBox */
+.vbox {
+    -fx-background-color: #000000;
+}
+
+/* Комбобокс — выпадающий список */
+.combo-box {
+    -fx-background-color: #222222;
+    -fx-pref-height: 36px;
+    -fx-min-height: 36px;
+    -fx-max-height: 36px;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 16px;
+    -fx-background-insets: 0;
+}
+
+/* Элементы списка в комбобоксе */
+.combo-box .list-cell {
+    -fx-background-color: #222222;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 16px;
+}
+
+
+
+
+/* Однострочное текстовое поле */
+.text-field {
+    -fx-background-color: #222222;
+    -fx-pref-height: 36px;
+    -fx-min-height: 36px;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 16px;
+}
+
+
+
+
+
+/* Многострочное текстовое поле (TextArea) */
+.text-area {
+    -fx-pref-height: 640px;
+    -fx-min-height: 640px;
+    -fx-max-height: 640px;
+    -fx-background-color: #222222;
+    -fx-control-inner-background: #222222;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 16px;
+    -fx-background-insets: 0;
+    -fx-prompt-text-fill: #AAAAAA;
+    -fx-border-color: transparent;
+    -fx-border-insets: 0;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+
+
+
+
+/* Обычные Label */
+.label {
+    -fx-pref-height: 42px;
+    -fx-min-height: 42px;
+    -fx-max-height: 42px;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 18px;
+    -fx-alignment: center;
+    -fx-max-width: Infinity;
+}
+
+
+/* Заголовки с классом title-label */
+.label.title-label {
+    -fx-pref-height: 42px;
+    -fx-min-height: 42px;
+    -fx-max-height: 42px;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 24px;
+    -fx-font-weight: bold;
+    -fx-alignment: center;
+    -fx-max-width: Infinity;
+}
+
+
+
+
+
+/* Кнопки */
+.button {
+    -fx-pref-height: 42px;
+    -fx-min-height: 42px;
+    -fx-max-height: 42px;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 20px;
+    -fx-padding: 0 0 0 0;
+    -fx-background-radius: 24;
+    -fx-border-radius: 24;
+    -fx-border-color: transparent;
+    -fx-cursor: hand;
+}
+
+/* Кнопка при наведении */
+.button:hover {
+    -fx-background-color: #5A5A5A;
+}
+
+/* Кнопка при нажатии */
+.button:pressed {
+    -fx-background-color: #2A2A2A;
+}
+
+/* Отключённая кнопка */
+.button:disabled {
+    -fx-background-color: #222222;
+    -fx-text-fill: #777777;
+    -fx-opacity: 0.6;
+    -fx-cursor: default;
+}

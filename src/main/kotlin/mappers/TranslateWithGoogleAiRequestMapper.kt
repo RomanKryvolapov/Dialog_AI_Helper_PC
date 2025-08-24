@@ -3,7 +3,7 @@ package mappers
 import models.network.ContentRequest
 import models.network.PartRequest
 import models.network.TranslateWithGoogleAiRequest
-import utils.BaseMapper
+import mappers.base.BaseMapper
 
 object TranslateWithGoogleAiRequestMapper : BaseMapper<String, TranslateWithGoogleAiRequest>() {
 

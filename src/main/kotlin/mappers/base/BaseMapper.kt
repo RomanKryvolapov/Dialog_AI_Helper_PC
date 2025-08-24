@@ -1,3 +1,5 @@
+package mappers.base
+
 /**
  * Please follow code style when editing project
  * Please follow principles of clean architecture
@@ -166,8 +168,6 @@
  * }
  *
  **/
-package utils
-
 abstract class BaseMapper<From, To> {
 
     abstract fun map(model: From): To

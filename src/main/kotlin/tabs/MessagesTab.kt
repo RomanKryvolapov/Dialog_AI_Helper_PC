@@ -1,5 +1,8 @@
 package tabs
 
+import COLOUR_BLUE
+import COLOUR_GREEN
+import COLOUR_RED
 import javafx.application.Platform
 import javafx.geometry.Insets
 import javafx.geometry.Pos
@@ -17,14 +20,12 @@ import utils.normalizeAndRemoveEmptyLines
 
 object MessagesTab {
 
-    const val FIELD_BACKGROUND_COLOUR = "#111111"
-    const val WINDOW_BACKGROUND_COLOUR = "#222222"
-    const val BUTTONS_TEXT_COLOUR = "#FFFFFF"
+    const val FIELD_BACKGROUND_COLOUR = "#323232"
+
+    const val BUTTONS_BACKGROUND_COLOUR = "#323232"
+
     const val LIST_ITEM_FIRST_TEXT_COLOUR = "#999999"
     const val LIST_ITEM_SECOND_TEXT_COLOUR = "#FFFFFF"
-    const val COLOUR_GREEN = "#3C713C"
-    const val COLOUR_BLUE = "#3C71AC"
-    const val COLOUR_RED = "#8C3C3C"
 
     val content: Pane
 
@@ -32,8 +33,8 @@ object MessagesTab {
 
     private var originalMessageBuffer = ""
 
-    private val messageBox = VBox(10.0).apply {
-        padding = Insets(10.0)
+    private val messageBox = VBox(4.0).apply {
+        padding = Insets(4.0)
         background = Background(BackgroundFill(Color.web(FIELD_BACKGROUND_COLOUR), null, null))
     }
 
@@ -42,25 +43,30 @@ object MessagesTab {
 
         val scrollPane = ScrollPane(messageBox).apply {
             isFitToWidth = true
-            style = "-fx-background: $FIELD_BACKGROUND_COLOUR;"
             vbarPolicy = ScrollPane.ScrollBarPolicy.ALWAYS
         }
 
-        val buttonBar = HBox(10.0).apply {
+        val buttonBar = HBox(12.0).apply {
             alignment = Pos.CENTER
-            padding = Insets(10.0)
-            background = Background(BackgroundFill(Color.web(WINDOW_BACKGROUND_COLOUR), null, null))
+            padding = Insets(12.0)
+            background = Background(BackgroundFill(Color.web(BUTTONS_BACKGROUND_COLOUR), null, null))
 
             val buttons = listOf(
                 Button("Clear dialog").apply {
-                    style = buttonStyle(COLOUR_RED)
+                    style += "-fx-background-color: $COLOUR_RED;"
                     setOnAction { messageBox.children.clear() }
                 },
-                Button("Restart engine").apply { style = buttonStyle(COLOUR_RED) },
-                Button("Restart recognition").apply { style = buttonStyle(COLOUR_BLUE) },
-                Button("Translate now").apply { style = buttonStyle(COLOUR_GREEN) },
+                Button("Restart engine").apply {
+                    style += "-fx-background-color: $COLOUR_RED;"
+                },
+                Button("Restart recognition").apply {
+                    style += "-fx-background-color: $COLOUR_BLUE;"
+                },
+                Button("Translate now").apply {
+                    style += "-fx-background-color: $COLOUR_GREEN;"
+                },
                 Button("Start translate").apply {
-                    style = buttonStyle(COLOUR_BLUE)
+                    style += "-fx-background-color: $COLOUR_BLUE;"
                     var isRunning = false
                     setOnAction {
                         val device = SettingsTab.getSelectedDevice()
@@ -88,7 +94,6 @@ object MessagesTab {
                     }
                 }
             )
-
             buttons.forEach {
                 HBox.setHgrow(it, Priority.ALWAYS)
                 it.maxWidth = Double.MAX_VALUE
@@ -158,11 +163,17 @@ object MessagesTab {
 
     private fun createMessageEntry(item: DialogItem): VBox {
         val titleLabel = Label(item.title).apply {
-            style = "-fx-text-fill: $LIST_ITEM_FIRST_TEXT_COLOUR; -fx-font-size: 16px;"
+            style = """
+                -fx-text-fill: $LIST_ITEM_FIRST_TEXT_COLOUR; 
+                -fx-font-size: 16px;
+            """.trimIndent()
             isWrapText = true
         }
         val descLabel = Label(item.description).apply {
-            style = "-fx-text-fill: $LIST_ITEM_SECOND_TEXT_COLOUR; -fx-font-size: 18px;"
+            style = """
+                -fx-text-fill: $LIST_ITEM_SECOND_TEXT_COLOUR; 
+                -fx-font-size: 18px;
+            """.trimIndent()
             isWrapText = true
         }
         return VBox(5.0, titleLabel, descLabel).apply {
@@ -172,14 +183,6 @@ object MessagesTab {
             alignment = Pos.TOP_LEFT
         }
     }
-
-    private fun buttonStyle(bgColor: String) = """
-        -fx-background-color: $bgColor;
-        -fx-text-fill: $BUTTONS_TEXT_COLOUR;
-        -fx-font-size: 18px;
-        -fx-background-radius: 5px;
-        -fx-effect: innershadow(gaussian #000000 5 0.3 0 0);
-    """.trimIndent()
 
     private val sharedEntryBackground = Background(
         BackgroundFill(Color.web("#2f2f2f"), CornerRadii(8.0), Insets.EMPTY)
