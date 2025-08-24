@@ -3,35 +3,49 @@ package tabs
 import COLOUR_BLUE
 import COLOUR_GREEN
 import COLOUR_RED
+import TRANSLATE_FROM_LANGUAGE
+import TRANSLATE_TEXT
+import TRANSLATE_TO_LANGUAGE
+import backgroundThreadScope
 import extensions.normalizeAndRemoveEmptyLines
+import extensions.showAlert
 import javafx.application.Platform
 import javafx.geometry.Insets
 import javafx.geometry.Pos
-import javafx.scene.control.Alert
 import javafx.scene.control.Button
 import javafx.scene.control.Label
 import javafx.scene.control.ScrollPane
 import javafx.scene.layout.*
 import javafx.scene.paint.Color
 import javafx.stage.Stage
+import kotlinx.coroutines.launch
+import mainThreadScope
 import models.domain.DialogItem
 import org.json.JSONObject
-import utils.VoskMicrophoneDemo
+import org.slf4j.LoggerFactory
+import repository.CloudRepository
+import utils.VoskRecognizer
 
-object MessagesTab: BaseTab() {
+object MessagesTab : BaseTab() {
+
+    private val log = LoggerFactory.getLogger("MessagesTabTag")
 
     const val FIELD_BACKGROUND_COLOUR = "#323232"
 
     const val BUTTONS_BACKGROUND_COLOUR = "#323232"
-
-    const val LIST_ITEM_FIRST_TEXT_COLOUR = "#999999"
-    const val LIST_ITEM_SECOND_TEXT_COLOUR = "#FFFFFF"
 
     val content: Pane
 
     var ownerStage: Stage? = null
 
     private var originalMessageBuffer = ""
+
+    private var listeningButton = Button("Wait for init").apply {
+        style += "-fx-background-color: $COLOUR_RED;"
+        setOnAction {
+            startListening()
+        }
+    }
 
     private val messageBox = VBox(4.0).apply {
         padding = Insets(4.0)
@@ -50,11 +64,12 @@ object MessagesTab: BaseTab() {
             alignment = Pos.CENTER
             padding = Insets(12.0)
             background = Background(BackgroundFill(Color.web(BUTTONS_BACKGROUND_COLOUR), null, null))
-
             val buttons = listOf(
                 Button("Clear dialog").apply {
                     style += "-fx-background-color: $COLOUR_RED;"
-                    setOnAction { messageBox.children.clear() }
+                    setOnAction {
+                        messageBox.children.clear()
+                    }
                 },
                 Button("Restart engine").apply {
                     style += "-fx-background-color: $COLOUR_RED;"
@@ -65,34 +80,7 @@ object MessagesTab: BaseTab() {
                 Button("Translate now").apply {
                     style += "-fx-background-color: $COLOUR_GREEN;"
                 },
-                Button("Start translate").apply {
-                    style += "-fx-background-color: $COLOUR_BLUE;"
-                    var isRunning = false
-                    setOnAction {
-                        val device = SettingsTab.getSelectedDevice()
-                        if (device == null) {
-                            Alert(Alert.AlertType.WARNING).apply {
-                                ownerStage?.let { initOwner(it) }
-                                title = "No Device Selected"
-                                headerText = null
-                                contentText =
-                                    "Please select an audio device in the Settings tab before starting recognition."
-                                showAndWait()
-                            }
-                            return@setOnAction
-                        }
-
-                        if (!isRunning) {
-                            VoskMicrophoneDemo.runRecognition(device)
-                            text = "Stop translate"
-                            isRunning = true
-                        } else {
-                            VoskMicrophoneDemo.stopRecognition()
-                            text = "Start translate"
-                            isRunning = false
-                        }
-                    }
-                }
+                listeningButton,
             )
             buttons.forEach {
                 HBox.setHgrow(it, Priority.ALWAYS)
@@ -108,45 +96,159 @@ object MessagesTab: BaseTab() {
         }
     }
 
-    private fun setupListeners() {
-        VoskMicrophoneDemo.onStartListener = { println("onStartListener") }
-        VoskMicrophoneDemo.onStopListener = { println("onStopListener") }
-        VoskMicrophoneDemo.onErrorListener = { error -> println("onErrorListener: $error") }
-        VoskMicrophoneDemo.onResultListener = { result ->
-            val resultString = JSONObject(result).optString("partial").normalizeAndRemoveEmptyLines()
-            if (resultString.isNotEmpty()) {
-                println("onResultListener: $resultString")
+    private fun startListening() {
+        val device = VoskRecognizer.getAvailableInputDevices().firstOrNull {
+            getAppInfo().lastSelectedDevice == it.name
+        }
+        if (device == null) {
+            showAlert(
+                alertTitle = "No Device Selected",
+                alertContent = "Please select an audio device in the Settings tab before starting recognition."
+            )
+            return
+        }
+        when {
+            VoskRecognizer.inInit() -> {
+                showAlert(
+                    alertTitle = "Error",
+                    alertContent = "Please wait for the initialization to complete."
+                )
+            }
+            !VoskRecognizer.inRunning() -> {
+                VoskRecognizer.runRecognition(device)
+            }
+            else -> {
+                VoskRecognizer.stopRecognition()
             }
         }
-        VoskMicrophoneDemo.onPartialResultListener = { result ->
+    }
+
+    private fun setupListeners() {
+        VoskRecognizer.onInitReady = {
+            log.debug("onInitReady")
+            mainThreadScope.launch {
+                listeningButton.text = "Start translate"
+                listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
+            }
+        }
+        VoskRecognizer.onStartListener = {
+            log.debug("onStartListener")
+            mainThreadScope.launch {
+                listeningButton.text = "Stop translate"
+                listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
+            }
+        }
+        VoskRecognizer.onStopListener = {
+            log.debug("onStopListener")
+            mainThreadScope.launch {
+                listeningButton.text = "Start translate"
+                listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
+            }
+        }
+        VoskRecognizer.onErrorListener = { message ->
+            log.error("onErrorListener: $message")
+            mainThreadScope.launch {
+                listeningButton.text = "Error init"
+                listeningButton.style += "-fx-background-color: $COLOUR_RED;"
+            }
+            showAlert(
+                alertTitle = "Recognizer error",
+                alertContent = message
+            )
+        }
+        VoskRecognizer.onResultListener = { result ->
             val resultString = JSONObject(result).optString("partial").normalizeAndRemoveEmptyLines()
-            if (resultString.isNotEmpty() && originalMessageBuffer != result) {
+            if (resultString.isNotEmpty()) {
+                log.debug("onResultListener: $resultString")
+                mainThreadScope.launch {
+                    listeningButton.text = "Stop translate"
+                    listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
+                }
+            }
+        }
+        VoskRecognizer.onPartialResultListener = { result ->
+            val resultString = JSONObject(result).optString("partial").normalizeAndRemoveEmptyLines()
+            if (resultString.isNotEmpty() && resultString != "the" && originalMessageBuffer != result) {
+                mainThreadScope.launch {
+                    listeningButton.text = "Stop translate"
+                    listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
+                }
                 when {
                     originalMessageBuffer.length > resultString.length + 16 -> {
-                        println("onPartialResultListener new message: $resultString")
+                        log.debug("onPartialResultListener new message: $resultString")
                         updateMessageAt(
                             index = messageBox.children.size,
                             newItem = DialogItem(
-                                title = originalMessageBuffer,
-                                description = "",
+                                originalMessage = resultString,
+                                answerMessage = "...",
                             )
+                        )
+                        translateMessage(
+                            index = messageBox.children.size - 1,
+                            message = originalMessageBuffer
                         )
                         originalMessageBuffer = resultString
                     }
 
                     else -> {
-                        println("onPartialResultListener: $resultString")
+//                        log.debug("onPartialResultListener: $resultString")
                         originalMessageBuffer = resultString
                         updateMessageAt(
                             index = messageBox.children.size - 1,
                             newItem = DialogItem(
-                                title = originalMessageBuffer,
-                                description = "",
+                                originalMessage = originalMessageBuffer,
+                                answerMessage = "...",
                             )
                         )
                     }
                 }
             }
+        }
+    }
+
+    private fun translateMessage(index: Int, message: String) {
+        backgroundThreadScope.launch {
+            val appInfo = getAppInfo()
+            val text = appInfo.prompt
+                .replace(TRANSLATE_FROM_LANGUAGE, appInfo.selectedFromLanguage.englishNameString)
+                .replace(TRANSLATE_TO_LANGUAGE, appInfo.selectedToLanguage.englishNameString)
+                .replace(TRANSLATE_TEXT, message)
+            val result = CloudRepository.generateAnswerByGoogleAI(
+                text = text,
+                apiKey = getAppInfo().googleCloudToken,
+                model = getAppInfo().selectedModel.id,
+            )
+            if (!result.isSuccess) {
+                log.error("translateMessage result error: ${result.exceptionOrNull()}")
+                updateMessageAt(
+                    index = index,
+                    newItem = DialogItem(
+                        originalMessage = message,
+                        answerMessage = result.exceptionOrNull()?.message ?: "",
+                    )
+                )
+                return@launch
+            }
+            val resultMessage = result.getOrNull()
+            if (resultMessage == null) {
+                log.error("translateMessage resultMessage is null")
+                updateMessageAt(
+                    index = index,
+                    newItem = DialogItem(
+                        originalMessage = message,
+                        answerMessage = "Error",
+                    )
+                )
+                return@launch
+            }
+            log.debug("translateMessage result: $resultMessage")
+            updateMessageAt(
+                index = index,
+                newItem = DialogItem(
+                    originalMessage = message,
+                    answerMessage = resultMessage,
+                )
+            )
         }
     }
 
@@ -162,25 +264,23 @@ object MessagesTab: BaseTab() {
     }
 
     private fun createMessageEntry(item: DialogItem): VBox {
-        val titleLabel = Label(item.title).apply {
-            style = """
-                -fx-text-fill: $LIST_ITEM_FIRST_TEXT_COLOUR; 
-                -fx-font-size: 16px;
-            """.trimIndent()
+        val titleLabel = Label(item.originalMessage).apply {
+            styleClass.add("original-message-label")
             isWrapText = true
+            maxWidth = Double.MAX_VALUE
         }
-        val descLabel = Label(item.description).apply {
-            style = """
-                -fx-text-fill: $LIST_ITEM_SECOND_TEXT_COLOUR; 
-                -fx-font-size: 18px;
-            """.trimIndent()
+        val descLabel = Label(item.answerMessage).apply {
+            styleClass.add("answer-message-label")
             isWrapText = true
+            maxWidth = Double.MAX_VALUE
         }
         return VBox(5.0, titleLabel, descLabel).apply {
             padding = Insets(10.0)
             background = sharedEntryBackground
             border = sharedEntryBorder
             alignment = Pos.TOP_LEFT
+            titleLabel.prefWidthProperty().bind(widthProperty())
+            descLabel.prefWidthProperty().bind(widthProperty())
         }
     }
 

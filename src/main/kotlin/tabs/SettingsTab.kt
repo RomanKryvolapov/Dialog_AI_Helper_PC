@@ -1,6 +1,7 @@
 package tabs
 
 import COLOUR_GREEN
+import backgroundThreadScope
 import extensions.*
 import javafx.collections.FXCollections
 import javafx.geometry.Insets
@@ -13,23 +14,27 @@ import javafx.scene.layout.BackgroundFill
 import javafx.scene.layout.HBox
 import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.javafx.JavaFx
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import models.common.ApplicationLanguage
 import models.common.GoogleAiModelsEnum
 import models.domain.LlmModel
 import models.domain.LlmModelEngine
 import repository.LocalNetworkRepository
-import viewModelScope
-import javax.sound.sampled.AudioSystem
+import utils.VoskRecognizer.getAvailableInputDevices
+import org.slf4j.LoggerFactory
 import javax.sound.sampled.Mixer
-import javax.sound.sampled.TargetDataLine
 
 object SettingsTab : BaseTab() {
+
+    private val log = LoggerFactory.getLogger("SettingsTabTag")
 
     const val WINDOW_BACKGROUND_COLOUR = "#323232"
 
     val currentToggleGroup = ToggleGroup()
-    private val devices: List<Mixer.Info> = getAvailableInputDevices()
+
 
     var lmStudioModelsBox: ComboBox<LlmModel>? = null
 
@@ -41,15 +46,24 @@ object SettingsTab : BaseTab() {
 
         addTitleLabel("Audio device for voice recognition:")
 
+        val devices: List<Mixer.Info> = getAvailableInputDevices()
+
         if (devices.isEmpty()) {
             addLabel("Not found")
         } else {
             val lastSelected = devices.firstOrNull {
                 appInfo.lastSelectedDevice == it.name
-            } ?: devices.first()
+            }
+            if (lastSelected == null) {
+                saveAppInfo(
+                    getAppInfo().copy(
+                        lastSelectedDevice = devices.first().name
+                    )
+                )
+            }
             addComboBox(
                 items = devices,
-                selectedItem = lastSelected,
+                selectedItem = lastSelected ?: devices.first(),
                 toStringFn = { mixerInfo ->
                     mixerInfo.name
                 },
@@ -195,7 +209,7 @@ object SettingsTab : BaseTab() {
     }
 
     private fun getLmStudioModels(port: String) {
-        viewModelScope.launch {
+        backgroundThreadScope.launch {
             val models = LocalNetworkRepository.getLmStudioModels(
                 port = port
             )
@@ -204,26 +218,16 @@ object SettingsTab : BaseTab() {
                     lmStudioModels = models
                 )
             )
-            lmStudioModelsBox?.items = FXCollections.observableArrayList(getModelsList())
-            val selected = getAppInfo().selectedModel
-            models.firstOrNull {
-                it.id == selected.id
-            }?.let {
-                lmStudioModelsBox?.selectionModel?.select(it)
+            withContext(Dispatchers.JavaFx) {
+                lmStudioModelsBox?.items = FXCollections.observableArrayList(getModelsList())
+                val selected = getAppInfo().selectedModel
+                models.firstOrNull {
+                    it.id == selected.id
+                }?.let {
+                    lmStudioModelsBox?.selectionModel?.select(it)
+                }
             }
-
         }
     }
-
-    private fun getAvailableInputDevices(): List<Mixer.Info> {
-        val mixers = AudioSystem.getMixerInfo()
-        return mixers.filter {
-            AudioSystem.getMixer(it).targetLineInfo.any { info -> info.lineClass == TargetDataLine::class.java }
-        }
-    }
-
-    fun getSelectedDevice(): Mixer.Info? =
-        currentToggleGroup.selectedToggle?.userData as? Mixer.Info
-
 
 }

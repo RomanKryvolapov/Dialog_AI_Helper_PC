@@ -1,6 +1,6 @@
 package models.domain
 
 data class DialogItem(
-    val title: String,
-    val description: String
+    val originalMessage: String,
+    val answerMessage: String
 )

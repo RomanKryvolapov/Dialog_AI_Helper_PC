@@ -7,7 +7,6 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.javafx.JavaFx
 import kotlinx.serialization.json.Json
 import models.domain.ApplicationInfo
@@ -95,4 +94,8 @@ val applicationInfoAdapter = moshi.adapter(ApplicationInfoNullable::class.java)
 
 val prefs: Preferences = Preferences.userRoot().node("PREFERENCES_DATABASE")
 
-val viewModelScope = CoroutineScope(Dispatchers.JavaFx + SupervisorJob())
+val mainThreadScope = CoroutineScope(Dispatchers.JavaFx)
+
+val backgroundThreadScope = CoroutineScope(Dispatchers.IO)
+
+val defaultThreadScope = CoroutineScope(Dispatchers.Default)

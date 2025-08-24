@@ -13,6 +13,7 @@ import javafx.scene.control.TabPane
 import javafx.stage.Screen
 import javafx.stage.Stage
 import tabs.PromptTab
+import utils.VoskRecognizer
 
 class DialogApplication : Application() {
 
@@ -70,5 +71,6 @@ class DialogApplication : Application() {
             this.scene = scene
             show()
         }
+        VoskRecognizer.init()
     }
 }

@@ -5,10 +5,14 @@ import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import mappers.network.TranslateWithGoogleAiRequestMapper
-import models.network.TranslateWithGoogleAiResponse
+import mappers.network.TranslateWithGoogleAiResponseMapper
+import org.slf4j.LoggerFactory
 
 object CloudRepository {
+
+    private val log = LoggerFactory.getLogger("CloudRepositoryTag")
 
     private const val GOOGLE_AI_BASE_URL = "https://generativelanguage.googleapis.com/"
     private const val GOOGLE_TRANSLATE_BASE_URL = "https://translation.googleapis.com/"
@@ -17,19 +21,29 @@ object CloudRepository {
 
     suspend fun generateAnswerByGoogleAI(
         model: String,
-        key: String,
+        apiKey: String,
         text: String
-    ): TranslateWithGoogleAiResponse {
+    ): Result<String> {
+        log.debug("generateAnswerByGoogleAI text: $text")
         val requestBody = TranslateWithGoogleAiRequestMapper.map(text)
         val url = GENERATE_ANSWER_BY_GOOGLE_AIURL.replace("{model}", model)
-        val response = client.post(url) {
-            url {
-                parameters.append("key", key)
+        try {
+            val response = client.post(url) {
+                url {
+                    parameters.append("key", apiKey)
+                }
+                contentType(ContentType.Application.Json)
+                setBody(requestBody)
             }
-            contentType(ContentType.Application.Json)
-            setBody(requestBody)
+            if (!response.status.isSuccess()) {
+                return Result.failure(IllegalStateException("Send to model error: ${response.status}"))
+            }
+            return Result.success(TranslateWithGoogleAiResponseMapper.map(response.body()))
+        } catch (e: Exception) {
+            println("Send to model error")
+            e.printStackTrace()
+            return Result.failure(e)
         }
-        return response.body()
     }
 
 

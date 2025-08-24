@@ -8,8 +8,11 @@ import javafx.scene.layout.Background
 import javafx.scene.layout.BackgroundFill
 import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
+import org.slf4j.LoggerFactory
 
 object PromptTab: BaseTab() {
+
+    private val log = LoggerFactory.getLogger("PromptTabTag")
 
     const val WINDOW_BACKGROUND_COLOUR = "#323232"
 

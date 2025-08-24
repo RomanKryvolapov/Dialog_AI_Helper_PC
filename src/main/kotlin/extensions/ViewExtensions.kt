@@ -6,6 +6,7 @@ import COLOUR_RED
 import javafx.collections.FXCollections
 import javafx.geometry.Insets
 import javafx.geometry.Pos
+import javafx.scene.control.Alert
 import javafx.scene.control.Button
 import javafx.scene.control.ComboBox
 import javafx.scene.control.Label
@@ -17,6 +18,10 @@ import javafx.scene.input.Clipboard
 import javafx.scene.input.ClipboardContent
 import javafx.scene.layout.HBox
 import javafx.scene.layout.VBox
+import javafx.stage.Stage
+import kotlinx.coroutines.launch
+import mainThreadScope
+import tabs.MessagesTab.ownerStage
 
 fun VBox.addLabel(text: String) {
     children.add(Label(text).apply {
@@ -37,9 +42,9 @@ fun VBox.addTextFieldWithButtons(
     lines: Int = 1,
     onSave: (String) -> Unit
 ) {
-    val field = if(lines == 1){
+    val field = if (lines == 1) {
         TextField().apply {
-            text =fieldText
+            text = fieldText
         }
     } else {
         TextArea().apply {
@@ -99,7 +104,7 @@ fun <T> VBox.addComboBox(
     selectedItem: T?,
     toStringFn: (T) -> String,
     onSelected: (T) -> Unit
-): ComboBox<T>  {
+): ComboBox<T> {
     val comboBox = ComboBox(FXCollections.observableArrayList(items)).apply {
         cellFactory = javafx.util.Callback {
             object : ListCell<T>() {
@@ -110,11 +115,12 @@ fun <T> VBox.addComboBox(
             }
         }
         buttonCell = cellFactory.call(null)
-        if(selectedItem != null) {
+        if (selectedItem != null) {
             selectionModel.select(selectedItem)
         }
         setOnAction {
             val selected = selectionModel.selectedItem
+            if (selected == null) return@setOnAction
             onSelected(selected)
         }
         visibleRowCount = 50
@@ -151,4 +157,21 @@ fun VBox.addButton(
     }
     children.add(buttonContainer)
     return button
+}
+
+fun showAlert(
+    alertTitle: String,
+    alertContent: String
+) {
+    mainThreadScope.launch {
+        Alert(Alert.AlertType.WARNING).apply {
+            ownerStage?.let {
+                initOwner(it)
+            }
+            title = alertTitle
+            headerText = null
+            contentText = alertContent
+            showAndWait()
+        }
+    }
 }
