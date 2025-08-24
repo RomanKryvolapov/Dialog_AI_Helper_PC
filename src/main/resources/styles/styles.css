@@ -263,7 +263,6 @@
     -fx-text-fill: #999999;
     -fx-font-size: 18px;
     -fx-wrap-text: true;
-    -fx-min-height: -Infinity;
     -fx-pref-height: -1;
     -fx-max-height: Infinity;
     -fx-alignment: top-left;
@@ -274,7 +273,6 @@
     -fx-text-fill: #FFFFFF;
     -fx-font-size: 22px;
     -fx-wrap-text: true;
-    -fx-min-height: -Infinity;
     -fx-pref-height: -1;
     -fx-max-height: Infinity;
     -fx-alignment: top-left;

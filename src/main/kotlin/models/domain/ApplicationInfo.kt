@@ -14,4 +14,6 @@ data class ApplicationInfo(
     val promptsMap: Map<String, String>,
     val lmStudioPort: String,
     val lmStudioModels: List<LlmModel>,
+    val translateTextEverySymbols: Int,
+    val translateTextEveryMilliseconds: Long,
 )

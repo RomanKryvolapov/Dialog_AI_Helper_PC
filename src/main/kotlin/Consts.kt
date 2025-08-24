@@ -68,6 +68,8 @@ val defaultApplicationInfo = ApplicationInfo(
     ),
     lmStudioPort = "1234",
     lmStudioModels = emptyList(),
+    translateTextEverySymbols = 100,
+    translateTextEveryMilliseconds = 10000L,
 )
 
 val kotlinxJsonConfig: Json = Json {

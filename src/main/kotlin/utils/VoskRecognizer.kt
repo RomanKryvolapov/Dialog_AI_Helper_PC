@@ -120,19 +120,54 @@ object VoskRecognizer {
 
     fun stopRecognition() {
         log.debug("stopRecognition")
+        recognizer?.let {
+            runCatching {
+                onResultListener?.invoke(it.finalResult)
+            }
+        }
+        onStopListener?.invoke()
+    }
+
+    fun close() {
+        log.debug("close")
         recognitionJob?.cancel()
         recognitionJob = null
         recognizer?.close()
         recognizer = null
         model?.close()
         model = null
-        onStopListener?.invoke()
     }
 
     fun inInit() = initJob?.isActive == true
 
     fun inRunning() = initJob?.isActive == true || recognitionJob?.isActive == true
 
+
+    fun splitUtterance() {
+        log.debug("splitUtterance")
+        if (initJob?.isActive == true) {
+            log.error("runRecognition init is running")
+            showAlert(
+                alertTitle = "Recognizer error",
+                alertContent = "Please wait for the initialization to complete."
+            )
+            return
+        }
+        if (recognitionJob?.isActive != true) {
+            log.error("runRecognition recognition is not running")
+            showAlert(
+                alertTitle = "Recognizer error",
+                alertContent = "Please first run recognition"
+            )
+            return
+        }
+        val recognizer = recognizer ?: return
+        defaultThreadScope.launch {
+            val partial = recognizer.partialResult
+            if (partial.isNotBlank()) onResultListener?.invoke(partial)
+            recognizer.reset()
+        }
+    }
 
     fun getAvailableInputDevices(): List<Mixer.Info> {
         val mixers = AudioSystem.getMixerInfo()

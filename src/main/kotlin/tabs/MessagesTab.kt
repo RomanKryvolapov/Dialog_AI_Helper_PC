@@ -18,6 +18,7 @@ import javafx.scene.control.ScrollPane
 import javafx.scene.layout.*
 import javafx.scene.paint.Color
 import javafx.stage.Stage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import mainThreadScope
 import models.domain.DialogItem
@@ -25,20 +26,26 @@ import org.json.JSONObject
 import org.slf4j.LoggerFactory
 import repository.CloudRepository
 import utils.VoskRecognizer
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 object MessagesTab : BaseTab() {
 
     private val log = LoggerFactory.getLogger("MessagesTabTag")
 
     const val FIELD_BACKGROUND_COLOUR = "#323232"
-
     const val BUTTONS_BACKGROUND_COLOUR = "#323232"
+    private const val TRANSLATE_CHECK_DELAY = 1000L
 
     val content: Pane
 
     var ownerStage: Stage? = null
 
     private var originalMessageBuffer = ""
+    private var translatedMessageBuffer = "..."
+
+    private val lastTranslatedLength = AtomicInteger(0)
+    private val lastTranslatedTime = AtomicLong(System.currentTimeMillis())
 
     private var listeningButton = Button("Wait for init").apply {
         style += "-fx-background-color: $COLOUR_RED;"
@@ -73,12 +80,35 @@ object MessagesTab : BaseTab() {
                 },
                 Button("Restart engine").apply {
                     style += "-fx-background-color: $COLOUR_RED;"
+                    setOnAction {
+                        val device = VoskRecognizer.getAvailableInputDevices().firstOrNull {
+                            getAppInfo().lastSelectedDevice == it.name
+                        }
+                        if (device == null) {
+                            showAlert(
+                                alertTitle = "No Device Selected",
+                                alertContent = "Please select an audio device in the Settings tab before starting recognition."
+                            )
+                            return@setOnAction
+                        }
+                        VoskRecognizer.runRecognition(device)
+                    }
                 },
                 Button("Restart recognition").apply {
                     style += "-fx-background-color: $COLOUR_BLUE;"
+                    setOnAction {
+                        VoskRecognizer.splitUtterance()
+                    }
                 },
                 Button("Translate now").apply {
                     style += "-fx-background-color: $COLOUR_GREEN;"
+                    setOnAction {
+                        translateMessage(
+                            index = messageBox.children.size - 1,
+                            message = originalMessageBuffer,
+                            writeResultToMessageBuffer = true,
+                        )
+                    }
                 },
                 listeningButton,
             )
@@ -114,9 +144,29 @@ object MessagesTab : BaseTab() {
                     alertContent = "Please wait for the initialization to complete."
                 )
             }
+
             !VoskRecognizer.inRunning() -> {
                 VoskRecognizer.runRecognition(device)
+                backgroundThreadScope.launch {
+                    val translateTextEveryMilliseconds = getAppInfo().translateTextEveryMilliseconds
+                    if (translateTextEveryMilliseconds != 0L) {
+                        delay(3000L)
+                        while (VoskRecognizer.inRunning()) {
+                            delay(TRANSLATE_CHECK_DELAY)
+                            val currentTime = System.currentTimeMillis()
+                            if (lastTranslatedTime.get() + translateTextEveryMilliseconds < currentTime) {
+                                log.debug("translate by timer")
+                                translateMessage(
+                                    index = messageBox.children.size - 1,
+                                    message = originalMessageBuffer,
+                                    writeResultToMessageBuffer = true,
+                                )
+                            }
+                        }
+                    }
+                }
             }
+
             else -> {
                 VoskRecognizer.stopRecognition()
             }
@@ -127,21 +177,21 @@ object MessagesTab : BaseTab() {
         VoskRecognizer.onInitReady = {
             log.debug("onInitReady")
             mainThreadScope.launch {
-                listeningButton.text = "Start translate"
+                listeningButton.text = "Start dialog"
                 listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
             }
         }
         VoskRecognizer.onStartListener = {
             log.debug("onStartListener")
             mainThreadScope.launch {
-                listeningButton.text = "Stop translate"
+                listeningButton.text = "Stop dialog"
                 listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
             }
         }
         VoskRecognizer.onStopListener = {
             log.debug("onStopListener")
             mainThreadScope.launch {
-                listeningButton.text = "Start translate"
+                listeningButton.text = "Start dialog"
                 listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
             }
         }
@@ -161,7 +211,7 @@ object MessagesTab : BaseTab() {
             if (resultString.isNotEmpty()) {
                 log.debug("onResultListener: $resultString")
                 mainThreadScope.launch {
-                    listeningButton.text = "Stop translate"
+                    listeningButton.text = "Stop dialog"
                     listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
                 }
             }
@@ -170,34 +220,57 @@ object MessagesTab : BaseTab() {
             val resultString = JSONObject(result).optString("partial").normalizeAndRemoveEmptyLines()
             if (resultString.isNotEmpty() && resultString != "the" && originalMessageBuffer != result) {
                 mainThreadScope.launch {
-                    listeningButton.text = "Stop translate"
+                    listeningButton.text = "Stop dialog"
                     listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
                 }
+                val translateTextEverySymbols = getAppInfo().translateTextEverySymbols
+                val currentMessageIndex = messageBox.children.size - 1
                 when {
                     originalMessageBuffer.length > resultString.length + 16 -> {
                         log.debug("onPartialResultListener new message: $resultString")
                         updateMessageAt(
-                            index = messageBox.children.size,
+                            index = currentMessageIndex + 1,
                             newItem = DialogItem(
                                 originalMessage = resultString,
                                 answerMessage = "...",
                             )
                         )
                         translateMessage(
-                            index = messageBox.children.size - 1,
-                            message = originalMessageBuffer
+                            index = currentMessageIndex,
+                            message = originalMessageBuffer,
+                            writeResultToMessageBuffer = false,
                         )
                         originalMessageBuffer = resultString
+                        translatedMessageBuffer = "..."
+                        lastTranslatedLength.set(0)
+                    }
+
+                    translateTextEverySymbols != 0 &&
+                            (originalMessageBuffer.length / translateTextEverySymbols) > (lastTranslatedLength.get() / translateTextEverySymbols) -> {
+                        log.debug("translate by size")
+                        lastTranslatedLength.set(originalMessageBuffer.length)
+                        originalMessageBuffer = resultString
+                        updateMessageAt(
+                            index = currentMessageIndex,
+                            newItem = DialogItem(
+                                originalMessage = resultString,
+                                answerMessage = translatedMessageBuffer,
+                            )
+                        )
+                        translateMessage(
+                            index = currentMessageIndex,
+                            message = resultString,
+                            writeResultToMessageBuffer = true,
+                        )
                     }
 
                     else -> {
-//                        log.debug("onPartialResultListener: $resultString")
                         originalMessageBuffer = resultString
                         updateMessageAt(
-                            index = messageBox.children.size - 1,
+                            index =currentMessageIndex,
                             newItem = DialogItem(
-                                originalMessage = originalMessageBuffer,
-                                answerMessage = "...",
+                                originalMessage = resultString,
+                                answerMessage = translatedMessageBuffer,
                             )
                         )
                     }
@@ -206,8 +279,17 @@ object MessagesTab : BaseTab() {
         }
     }
 
-    private fun translateMessage(index: Int, message: String) {
+    private fun translateMessage(
+        index: Int,
+        message: String,
+        writeResultToMessageBuffer: Boolean,
+    ) {
+        if (message.isEmpty()) {
+            log.error("translateMessage message is empty")
+            return
+        }
         backgroundThreadScope.launch {
+            lastTranslatedTime.set(System.currentTimeMillis())
             val appInfo = getAppInfo()
             val text = appInfo.prompt
                 .replace(TRANSLATE_FROM_LANGUAGE, appInfo.selectedFromLanguage.englishNameString)
@@ -242,6 +324,11 @@ object MessagesTab : BaseTab() {
                 return@launch
             }
             log.debug("translateMessage result: $resultMessage")
+            translatedMessageBuffer = if (writeResultToMessageBuffer) {
+                resultMessage
+            } else {
+                "..."
+            }
             updateMessageAt(
                 index = index,
                 newItem = DialogItem(

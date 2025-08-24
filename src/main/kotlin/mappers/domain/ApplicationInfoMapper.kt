@@ -30,6 +30,10 @@ object ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInf
                 lmStudioModels = lmStudioModels ?: defaultApplicationInfo.lmStudioModels,
                 promptsMap = promptsMap ?: defaultApplicationInfo.promptsMap,
                 lmStudioPort = lmStudioPort ?: defaultApplicationInfo.lmStudioPort,
+                translateTextEverySymbols = translateTextEverySymbols
+                    ?: defaultApplicationInfo.translateTextEverySymbols,
+                translateTextEveryMilliseconds = translateTextEveryMilliseconds
+                    ?: defaultApplicationInfo.translateTextEveryMilliseconds,
             )
         }
     }
@@ -47,6 +51,8 @@ object ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInf
                 lmStudioModels = lmStudioModels,
                 promptsMap = promptsMap,
                 lmStudioPort = lmStudioPort,
+                translateTextEverySymbols = translateTextEverySymbols,
+                translateTextEveryMilliseconds = translateTextEveryMilliseconds,
             )
         }
     }
