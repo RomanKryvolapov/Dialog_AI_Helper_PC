@@ -1,13 +1,17 @@
-package models
+package models.common
 
-import models.common.TypeEnum
-
-enum class TranslateWithGoogleAiModelsEnum(
+enum class GoogleAiModelsEnum(
     override val type: String,
     val limitRequestsInMinute: Int?,
     val limitRequestsInDay: Int?,
     val limitTokensInMinute: Int?,
 ) : TypeEnum {
+    LM_STUDIO_LOCAL_MODEL(
+        type = "LM Studio Local Model",
+        limitRequestsInMinute = null,
+        limitRequestsInDay = null,
+        limitTokensInMinute = null,
+    ),
     GEMINI_2_5_FLASH(
         type = "gemini-2.5-flash",
         limitRequestsInMinute = 10, // ok
@@ -55,5 +59,8 @@ enum class TranslateWithGoogleAiModelsEnum(
         limitRequestsInMinute = 30,
         limitRequestsInDay = 14400,
         limitTokensInMinute = 15000,
-    ),
+    );
+
+    fun getDescription() = "Google Cloud: $type (Free: Requests/min=$limitRequestsInMinute, Requests/day=$limitRequestsInDay, Tokens/min=$limitTokensInMinute)"
+
 }

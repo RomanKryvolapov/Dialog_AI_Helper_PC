@@ -1,16 +1,16 @@
-/**
- * Created & Copyright 2025 by Roman Kryvolapov
- **/
-package models
+package models.common
+
+import java.util.Locale
 
 /**
  * Please follow code style when editing project
  * Please follow principles of clean architecture
  * Created & Copyright 2025 by Roman Kryvolapov
  **/
-import models.common.TypeEnum
-import java.util.Locale
 
+/**
+ * Created & Copyright 2025 by Roman Kryvolapov
+ **/
 enum class ApplicationLanguage(
     override val type: String,
     val nameString: String,

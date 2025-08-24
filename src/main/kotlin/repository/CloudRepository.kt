@@ -5,10 +5,10 @@ import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
-import mappers.TranslateWithGoogleAiRequestMapper
+import mappers.network.TranslateWithGoogleAiRequestMapper
 import models.network.TranslateWithGoogleAiResponse
 
-object NetworkRepository {
+object CloudRepository {
 
     private const val GOOGLE_AI_BASE_URL = "https://generativelanguage.googleapis.com/"
     private const val GOOGLE_TRANSLATE_BASE_URL = "https://translation.googleapis.com/"
@@ -22,13 +22,14 @@ object NetworkRepository {
     ): TranslateWithGoogleAiResponse {
         val requestBody = TranslateWithGoogleAiRequestMapper.map(text)
         val url = GENERATE_ANSWER_BY_GOOGLE_AIURL.replace("{model}", model)
-        return client.post(url) {
+        val response = client.post(url) {
             url {
                 parameters.append("key", key)
             }
             contentType(ContentType.Application.Json)
             setBody(requestBody)
-        }.body()
+        }
+        return response.body()
     }
 
 

@@ -5,11 +5,17 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.javafx.JavaFx
 import kotlinx.serialization.json.Json
-import models.ApplicationInfo
-import models.ApplicationInfoNullable
-import models.ApplicationLanguage
-import models.TranslateWithGoogleAiModelsEnum
+import models.domain.ApplicationInfo
+import models.domain.ApplicationInfoNullable
+import models.common.ApplicationLanguage
+import models.common.GoogleAiModelsEnum
+import models.domain.LlmModel
+import models.domain.LlmModelEngine
 import java.util.prefs.Preferences
 
 const val COLOUR_GREEN = "#3C713C"
@@ -47,21 +53,23 @@ $TRANSLATE_TEXT
 
 val defaultApplicationInfo = ApplicationInfo(
     lastSelectedDevice = "",
-    selectedModel = TranslateWithGoogleAiModelsEnum.GEMMA_3_27B,
+    selectedModel = LlmModel(
+        id = GoogleAiModelsEnum.GEMMA_3_27B.type,
+        description = GoogleAiModelsEnum.GEMMA_3_27B.getDescription(),
+        engine = LlmModelEngine.GOOGLE,
+        googleAiModel = GoogleAiModelsEnum.GEMMA_3_27B,
+    ),
     selectedFromLanguage = ApplicationLanguage.ENGLISH,
     selectedToLanguage = ApplicationLanguage.ENGLISH,
     googleCloudToken = "",
     prompt = PROMPT_FULL_SIZE,
     lastOpenedTab = 1,
-    lmStudioModelName = "",
     promptsMap = mapOf(
         DEFAULT_KEY to PROMPT_FULL_SIZE
-    )
+    ),
+    lmStudioPort = "1234",
+    lmStudioModels = emptyList(),
 )
-
-fun buttonStyle(bgColor: String) = """
-        -fx-background-color: $bgColor;
-    """.trimIndent()
 
 val kotlinxJsonConfig: Json = Json {
     ignoreUnknownKeys = true
@@ -86,3 +94,5 @@ val moshi = Moshi.Builder()
 val applicationInfoAdapter = moshi.adapter(ApplicationInfoNullable::class.java)
 
 val prefs: Preferences = Preferences.userRoot().node("PREFERENCES_DATABASE")
+
+val viewModelScope = CoroutineScope(Dispatchers.JavaFx + SupervisorJob())

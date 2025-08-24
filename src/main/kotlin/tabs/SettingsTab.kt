@@ -1,64 +1,83 @@
 package tabs
 
+import COLOUR_GREEN
+import extensions.*
 import javafx.collections.FXCollections
 import javafx.geometry.Insets
 import javafx.geometry.Pos
-import javafx.scene.control.*
-import javafx.scene.layout.*
+import javafx.scene.control.ComboBox
+import javafx.scene.control.ListCell
+import javafx.scene.control.ToggleGroup
+import javafx.scene.layout.Background
+import javafx.scene.layout.BackgroundFill
+import javafx.scene.layout.HBox
+import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
-import models.ApplicationLanguage
-import models.TranslateWithGoogleAiModelsEnum
-import repository.PreferencesRepository
-import utils.addTitleLabel
-import utils.addComboBoxSettingRowWithLabel
-import utils.createTextFieldRow
+import kotlinx.coroutines.launch
+import models.common.ApplicationLanguage
+import models.common.GoogleAiModelsEnum
+import models.domain.LlmModel
+import models.domain.LlmModelEngine
+import repository.LocalNetworkRepository
+import viewModelScope
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.Mixer
 import javax.sound.sampled.TargetDataLine
 
-object SettingsTab {
+object SettingsTab : BaseTab() {
 
     const val WINDOW_BACKGROUND_COLOUR = "#323232"
 
     val currentToggleGroup = ToggleGroup()
     private val devices: List<Mixer.Info> = getAvailableInputDevices()
 
+    var lmStudioModelsBox: ComboBox<LlmModel>? = null
+
     val content: VBox = VBox(4.0).apply {
         padding = Insets(0.0, 20.0, 0.0, 20.0)
         background = Background(BackgroundFill(Color.web(WINDOW_BACKGROUND_COLOUR), null, null))
 
-        addTitleLabel("Audio device for voice recognition:")
-        val radioVBox = VBox(4.0)
-        if (devices.isEmpty()) {
-            radioVBox.children.add(Label("No input audio devices found"))
-        } else {
-            val lastDeviceName = PreferencesRepository.getLastSelectedDevice()
-            devices.forEachIndexed { index, mixerInfo ->
-                val radioButton = RadioButton("[$index] ${mixerInfo.name}").apply {
-                    toggleGroup = currentToggleGroup
-                    userData = mixerInfo
-                    if (mixerInfo.name == lastDeviceName) isSelected = true
-                    setOnAction { PreferencesRepository.setLastSelectedDevice(mixerInfo.name) }
-                }
-                radioVBox.children.add(radioButton)
-            }
-            if (currentToggleGroup.selectedToggle == null) {
-                currentToggleGroup.selectToggle(currentToggleGroup.toggles.firstOrNull())
-                PreferencesRepository.setLastSelectedDevice(devices.firstOrNull()?.name ?: "")
-            }
-        }
-        children.add(HBox(radioVBox).apply {
-            alignment = Pos.CENTER
-        })
+        val appInfo = getAppInfo()
 
-        addComboBoxSettingRowWithLabel(
-            title = "AI model:",
-            items = TranslateWithGoogleAiModelsEnum.entries,
-            selectedItem = PreferencesRepository.getSelectedModel(),
+        addTitleLabel("Audio device for voice recognition:")
+
+        if (devices.isEmpty()) {
+            addLabel("Not found")
+        } else {
+            val lastSelected = devices.firstOrNull {
+                appInfo.lastSelectedDevice == it.name
+            } ?: devices.first()
+            addComboBox(
+                items = devices,
+                selectedItem = lastSelected,
+                toStringFn = { mixerInfo ->
+                    mixerInfo.name
+                },
+                onSelected = { mixerInfo ->
+                    saveAppInfo(
+                        getAppInfo().copy(
+                            lastSelectedDevice = mixerInfo.name
+                        )
+                    )
+                }
+            )
+        }
+
+        addTitleLabel("AI model:")
+
+        lmStudioModelsBox = addComboBox(
+            items = getModelsList(),
+            selectedItem = appInfo.selectedModel,
             toStringFn = {
-                "${it.type} (Requests/min=${it.limitRequestsInMinute}, Requests/day=${it.limitRequestsInDay}, Tokens/min=${it.limitTokensInMinute})"
+                it.description ?: ""
             },
-            onSelected = PreferencesRepository::setSelectedModel
+            onSelected = {
+                saveAppInfo(
+                    getAppInfo().copy(
+                        selectedModel = it
+                    )
+                )
+            }
         )
 
         addTitleLabel("Translate From / To Language:")
@@ -74,9 +93,13 @@ object SettingsTab {
                 }
             }
             buttonCell = cellFactory.call(null)
-            selectionModel.select(PreferencesRepository.getSelectedFromLanguage())
+            selectionModel.select(appInfo.selectedFromLanguage)
             setOnAction {
-                PreferencesRepository.setSelectedFromLanguage(selectionModel.selectedItem)
+                saveAppInfo(
+                    getAppInfo().copy(
+                        selectedFromLanguage = selectionModel.selectedItem
+                    )
+                )
             }
         }
         val translateToComboBox = ComboBox(
@@ -91,9 +114,13 @@ object SettingsTab {
                 }
             }
             buttonCell = cellFactory.call(null)
-            selectionModel.select(PreferencesRepository.getSelectedToLanguage())
+            selectionModel.select(appInfo.selectedToLanguage)
             setOnAction {
-                PreferencesRepository.setSelectedToLanguage(selectionModel.selectedItem)
+                saveAppInfo(
+                    getAppInfo().copy(
+                        selectedToLanguage = selectionModel.selectedItem
+                    )
+                )
             }
         }
         val langContainer = HBox(4.0).apply {
@@ -107,15 +134,85 @@ object SettingsTab {
 
         addTitleLabel("Google CLoud token:")
 
-        val tokenField = TextField().apply {
-            text = PreferencesRepository.getGoogleCloudToken()
-        }
-        createTextFieldRow(
-            field = tokenField,
+        addTextFieldWithButtons(
+            fieldText = appInfo.googleCloudToken,
             onSave = {
-                PreferencesRepository.setGoogleCloudToken(it)
+                saveAppInfo(
+                    getAppInfo().copy(
+                        googleCloudToken = it
+                    )
+                )
             }
         )
+
+        addTitleLabel("LM Studio Port")
+
+        addTextFieldWithButtons(
+            fieldText = appInfo.lmStudioPort,
+            onSave = {
+                saveAppInfo(
+                    getAppInfo().copy(
+                        lmStudioPort = it
+                    )
+                )
+            }
+        )
+        addButton(
+            title = "Update models",
+            bgColor = COLOUR_GREEN,
+            onClicked = {
+                getLmStudioModels(
+                    port = getAppInfo().lmStudioPort
+                )
+            }
+        )
+
+    }
+
+    private fun getModelsList(): List<LlmModel> {
+        return buildList {
+            getAppInfo().lmStudioModels.forEach {
+                add(
+                    LlmModel(
+                        id = it.id,
+                        description = "LM Studio Local: ${it.id}",
+                        engine = LlmModelEngine.LOCALHOST,
+                        googleAiModel = null,
+                    )
+                )
+            }
+            GoogleAiModelsEnum.entries.forEach {
+                add(
+                    LlmModel(
+                        id = it.type,
+                        description = it.getDescription(),
+                        engine = LlmModelEngine.GOOGLE,
+                        googleAiModel = it,
+                    )
+                )
+            }
+        }
+    }
+
+    private fun getLmStudioModels(port: String) {
+        viewModelScope.launch {
+            val models = LocalNetworkRepository.getLmStudioModels(
+                port = port
+            )
+            saveAppInfo(
+                getAppInfo().copy(
+                    lmStudioModels = models
+                )
+            )
+            lmStudioModelsBox?.items = FXCollections.observableArrayList(getModelsList())
+            val selected = getAppInfo().selectedModel
+            models.firstOrNull {
+                it.id == selected.id
+            }?.let {
+                lmStudioModelsBox?.selectionModel?.select(it)
+            }
+
+        }
     }
 
     private fun getAvailableInputDevices(): List<Mixer.Info> {
@@ -127,5 +224,6 @@ object SettingsTab {
 
     fun getSelectedDevice(): Mixer.Info? =
         currentToggleGroup.selectedToggle?.userData as? Mixer.Info
+
 
 }

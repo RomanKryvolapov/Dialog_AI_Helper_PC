@@ -3,6 +3,7 @@ package tabs
 import COLOUR_BLUE
 import COLOUR_GREEN
 import COLOUR_RED
+import extensions.normalizeAndRemoveEmptyLines
 import javafx.application.Platform
 import javafx.geometry.Insets
 import javafx.geometry.Pos
@@ -13,12 +14,11 @@ import javafx.scene.control.ScrollPane
 import javafx.scene.layout.*
 import javafx.scene.paint.Color
 import javafx.stage.Stage
-import models.DialogItem
+import models.domain.DialogItem
 import org.json.JSONObject
 import utils.VoskMicrophoneDemo
-import utils.normalizeAndRemoveEmptyLines
 
-object MessagesTab {
+object MessagesTab: BaseTab() {
 
     const val FIELD_BACKGROUND_COLOUR = "#323232"
 

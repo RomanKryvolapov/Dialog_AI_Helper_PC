@@ -1,17 +1,15 @@
 package tabs
 
+import extensions.addLabel
+import extensions.addTextFieldWithButtons
+import extensions.addTitleLabel
 import javafx.geometry.Insets
-import javafx.scene.control.TextArea
 import javafx.scene.layout.Background
 import javafx.scene.layout.BackgroundFill
 import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
-import repository.PreferencesRepository
-import utils.addLabel
-import utils.addTitleLabel
-import utils.createTextFieldRow
 
-object PromptTab {
+object PromptTab: BaseTab() {
 
     const val WINDOW_BACKGROUND_COLOUR = "#323232"
 
@@ -21,15 +19,16 @@ object PromptTab {
 
         addTitleLabel("Prompt:")
         addLabel("Will be replaced with actual values: TRANSLATE_FROM_LANGUAGE, TRANSLATE_TO_LANGUAGE, TRANSLATE_TEXT")
-        val promptField = TextArea().apply {
-            isWrapText = true
-            prefRowCount = 36
-            text = PreferencesRepository.getPrompt()
-        }
-        createTextFieldRow(
-            field = promptField,
+        val appInfo = getAppInfo()
+        addTextFieldWithButtons(
+            fieldText = appInfo.prompt,
+            lines = 36,
             onSave = {
-                PreferencesRepository.setPrompt(it)
+                saveAppInfo(
+                    appInfo.copy(
+                        prompt = it
+                    )
+                )
             }
         )
     }

@@ -1,9 +1,8 @@
-package utils
+package extensions
 
 import COLOUR_BLUE
 import COLOUR_GREEN
 import COLOUR_RED
-import buttonStyle
 import javafx.collections.FXCollections
 import javafx.geometry.Insets
 import javafx.geometry.Pos
@@ -11,20 +10,13 @@ import javafx.scene.control.Button
 import javafx.scene.control.ComboBox
 import javafx.scene.control.Label
 import javafx.scene.control.ListCell
+import javafx.scene.control.TextArea
+import javafx.scene.control.TextField
 import javafx.scene.control.TextInputControl
 import javafx.scene.input.Clipboard
 import javafx.scene.input.ClipboardContent
 import javafx.scene.layout.HBox
 import javafx.scene.layout.VBox
-import models.common.TypeEnum
-import models.common.TypeEnumInt
-
-fun String.normalizeAndRemoveEmptyLines(): String {
-    return lineSequence()
-        .map { it.trimEnd() }
-        .filter { it.isNotBlank() }
-        .joinToString("\n")
-}
 
 fun VBox.addLabel(text: String) {
     children.add(Label(text).apply {
@@ -40,7 +32,22 @@ fun VBox.addTitleLabel(text: String) {
     })
 }
 
-fun VBox.createTextFieldRow(field: TextInputControl, onSave: (String) -> Unit) {
+fun VBox.addTextFieldWithButtons(
+    fieldText: String,
+    lines: Int = 1,
+    onSave: (String) -> Unit
+) {
+    val field = if(lines == 1){
+        TextField().apply {
+            text =fieldText
+        }
+    } else {
+        TextArea().apply {
+            isWrapText = true
+            prefRowCount = lines
+            text = fieldText
+        }
+    }
     val box = VBox(4.0)
     val fieldContainer = HBox(field).apply {
         alignment = Pos.CENTER
@@ -53,7 +60,9 @@ fun VBox.createTextFieldRow(field: TextInputControl, onSave: (String) -> Unit) {
         val buttonWidthBinding = field.prefWidthProperty().divide(3)
         val copyButton = Button("Copy").apply {
             prefWidthProperty().bind(buttonWidthBinding)
-            style = buttonStyle(COLOUR_BLUE)
+            style = """
+                -fx-background-color: $COLOUR_BLUE;
+            """.trimIndent()
             setOnAction {
                 val content = ClipboardContent()
                 content.putString(field.text)
@@ -62,7 +71,9 @@ fun VBox.createTextFieldRow(field: TextInputControl, onSave: (String) -> Unit) {
         }
         val pasteButton = Button("Paste").apply {
             prefWidthProperty().bind(buttonWidthBinding)
-            style = buttonStyle(COLOUR_GREEN)
+            style = """
+                -fx-background-color: $COLOUR_GREEN;
+            """.trimIndent()
             setOnAction {
                 val clipboard = Clipboard.getSystemClipboard()
                 if (clipboard.hasString()) field.text = clipboard.string
@@ -70,7 +81,9 @@ fun VBox.createTextFieldRow(field: TextInputControl, onSave: (String) -> Unit) {
         }
         val saveButton = Button("Save").apply {
             prefWidthProperty().bind(buttonWidthBinding)
-            style = buttonStyle(COLOUR_RED)
+            style = """
+                -fx-background-color: $COLOUR_RED;
+            """.trimIndent()
             setOnAction {
                 onSave(field.text)
             }
@@ -81,14 +94,12 @@ fun VBox.createTextFieldRow(field: TextInputControl, onSave: (String) -> Unit) {
     children.addAll(box)
 }
 
-fun <T> VBox.addComboBoxSettingRowWithLabel(
-    title: String,
+fun <T> VBox.addComboBox(
     items: List<T>,
-    selectedItem: T,
+    selectedItem: T?,
     toStringFn: (T) -> String,
     onSelected: (T) -> Unit
-) {
-    addTitleLabel(title)
+): ComboBox<T>  {
     val comboBox = ComboBox(FXCollections.observableArrayList(items)).apply {
         cellFactory = javafx.util.Callback {
             object : ListCell<T>() {
@@ -99,11 +110,14 @@ fun <T> VBox.addComboBoxSettingRowWithLabel(
             }
         }
         buttonCell = cellFactory.call(null)
-        selectionModel.select(selectedItem)
+        if(selectedItem != null) {
+            selectionModel.select(selectedItem)
+        }
         setOnAction {
             val selected = selectionModel.selectedItem
             onSelected(selected)
         }
+        visibleRowCount = 50
     }
     val container = HBox(comboBox).apply {
         alignment = Pos.CENTER
@@ -111,18 +125,30 @@ fun <T> VBox.addComboBoxSettingRowWithLabel(
         comboBox.prefWidthProperty().bind(widthProperty().multiply(0.6))
     }
     children.add(container)
+    return comboBox
 }
 
-inline fun <reified T : Enum<T>> getEnumValue(type: String): T? {
-    val values = enumValues<T>()
-    return values.firstOrNull {
-        it is TypeEnum && (it as TypeEnum).type.equals(type, true)
+fun VBox.addButton(
+    title: String,
+    bgColor: String,
+    onClicked: () -> Unit
+): Button {
+    val button = Button(title).apply {
+        style = """
+            -fx-background-color: $bgColor;
+        """.trimIndent()
+        prefWidthProperty().bind(widthProperty().multiply(0.6))
+        setOnAction {
+            onClicked.invoke()
+        }
     }
-}
+    val buttonContainer = HBox(4.0).apply {
+        alignment = Pos.CENTER
+        padding = Insets(0.0, 20.0, 0.0, 20.0)
 
-inline fun <reified T : Enum<T>> getEnumIntValue(type: Int): T? {
-    val values = enumValues<T>()
-    return values.firstOrNull {
-        it is TypeEnumInt && (it as TypeEnumInt).type == type
+        children.add(button)
+        button.prefWidthProperty().bind(widthProperty().multiply(0.6))
     }
+    children.add(buttonContainer)
+    return button
 }

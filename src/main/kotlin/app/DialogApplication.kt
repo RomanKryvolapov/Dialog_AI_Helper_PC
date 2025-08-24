@@ -21,8 +21,14 @@ class DialogApplication : Application() {
 //        primaryStage.isFullScreen = true
         primaryStage.isMaximized = true
 
-        if (PreferencesRepository.getPrompt().isBlank()) {
-            PreferencesRepository.setPrompt(PROMPT_FULL_SIZE)
+        val appInfo = PreferencesRepository.getAppInfo()
+
+        if (appInfo.prompt.isBlank()) {
+            PreferencesRepository.saveAppInfo(
+                PreferencesRepository.getAppInfo().copy(
+                    prompt = PROMPT_FULL_SIZE
+                )
+            )
         }
 
         val tabPane = TabPane().apply {
@@ -36,9 +42,13 @@ class DialogApplication : Application() {
                     isPannable = true
                 })
             )
-            selectionModel.select(PreferencesRepository.getLastOpenedTab())
+            selectionModel.select(appInfo.lastOpenedTab)
             selectionModel.selectedIndexProperty().addListener { _, _, newValue ->
-                PreferencesRepository.setLastOpenedTab(newValue.toInt())
+                PreferencesRepository.saveAppInfo(
+                    PreferencesRepository.getAppInfo().copy(
+                        lastOpenedTab = newValue.toInt()
+                    )
+                )
             }
         }
 
