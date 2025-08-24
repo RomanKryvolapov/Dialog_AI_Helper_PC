@@ -4,12 +4,10 @@ import client
 import extensions.normalizeAndRemoveEmptyLines
 import io.ktor.client.call.*
 import io.ktor.client.request.*
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
-import io.ktor.http.isSuccess
+import io.ktor.http.*
+import io.ktor.utils.io.*
 import mappers.network.TranslateWithGoogleAiRequestMapper
 import mappers.network.TranslateWithGoogleAiResponseMapper
-import models.network.OpenAIModelsResponse
 import models.network.TranslateWithGoogleAiResponse
 import org.slf4j.LoggerFactory
 
@@ -44,8 +42,12 @@ object CloudRepository {
             val body = response.body<TranslateWithGoogleAiResponse>()
             val model = TranslateWithGoogleAiResponseMapper.map(body).normalizeAndRemoveEmptyLines()
             return Result.success(model)
+        } catch (e: CancellationException) {
+            log.error("generateAnswerByGoogleAI CancellationException")
+            e.printStackTrace()
+            return Result.success("...")
         } catch (e: Exception) {
-            log.error("Send to model error")
+            log.error("generateAnswerByGoogleAI exception: ${e.message}")
             e.printStackTrace()
             return Result.failure(e)
         }

@@ -6,6 +6,7 @@ import extensions.normalizeAndRemoveEmptyLines
 import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.http.*
+import io.ktor.utils.io.CancellationException
 import mappers.network.OpenAIGenerationResponseMapper
 import mappers.network.OpenAIModelsResponseMapper
 import mappers.network.TranslateWithGoogleAiResponseMapper
@@ -37,8 +38,12 @@ object LocalNetworkRepository {
             val models = OpenAIModelsResponseMapper.map(body)
             log.debug("getLmStudioModels size: ${models.size}")
             return Result.success(models)
+        } catch (e: CancellationException) {
+            log.error("getLmStudioModels CancellationException")
+            e.printStackTrace()
+            return Result.success(emptyList())
         } catch (e: Exception) {
-            log.error("getLmStudioModels error: ${e.message}")
+            log.error("getLmStudioModels exception: ${e.message}")
             e.printStackTrace()
             return Result.failure(e)
         }
@@ -73,8 +78,12 @@ object LocalNetworkRepository {
             val model = OpenAIGenerationResponseMapper.map(body).normalizeAndRemoveEmptyLines()
             log.debug("generateAnswerByLmStudio result size: ${model.length}")
             return Result.success(model)
+        } catch (e: CancellationException) {
+            log.error("generateAnswerByLmStudio CancellationException")
+            e.printStackTrace()
+            return Result.success("...")
         } catch (e: Exception) {
-            log.error("generateAnswerByLmStudio error: ${e.message}")
+            log.error("generateAnswerByLmStudio exception: ${e.message}")
             e.printStackTrace()
             return Result.failure(e)
         }
