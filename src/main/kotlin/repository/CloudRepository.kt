@@ -1,6 +1,7 @@
 package repository
 
 import client
+import extensions.normalizeAndRemoveEmptyLines
 import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.http.ContentType
@@ -8,6 +9,8 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import mappers.network.TranslateWithGoogleAiRequestMapper
 import mappers.network.TranslateWithGoogleAiResponseMapper
+import models.network.OpenAIModelsResponse
+import models.network.TranslateWithGoogleAiResponse
 import org.slf4j.LoggerFactory
 
 object CloudRepository {
@@ -38,9 +41,11 @@ object CloudRepository {
             if (!response.status.isSuccess()) {
                 return Result.failure(IllegalStateException("Send to model error: ${response.status}"))
             }
-            return Result.success(TranslateWithGoogleAiResponseMapper.map(response.body()))
+            val body = response.body<TranslateWithGoogleAiResponse>()
+            val model = TranslateWithGoogleAiResponseMapper.map(body).normalizeAndRemoveEmptyLines()
+            return Result.success(model)
         } catch (e: Exception) {
-            println("Send to model error")
+            log.error("Send to model error")
             e.printStackTrace()
             return Result.failure(e)
         }

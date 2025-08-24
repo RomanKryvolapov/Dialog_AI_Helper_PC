@@ -210,18 +210,36 @@ object SettingsTab : BaseTab() {
 
     private fun getLmStudioModels(port: String) {
         backgroundThreadScope.launch {
-            val models = LocalNetworkRepository.getLmStudioModels(
+            val result = LocalNetworkRepository.getLmStudioModels(
                 port = port
             )
+            if (!result.isSuccess) {
+                log.error("getLmStudioModels result error: ${result.exceptionOrNull()}")
+                showAlert(
+                    alertTitle = "Error",
+                    alertContent = result.exceptionOrNull()?.message ?: ""
+                )
+                return@launch
+            }
+            val resultData = result.getOrNull()
+            if (resultData.isNullOrEmpty()) {
+                log.error("getLmStudioModels resultData == null")
+                showAlert(
+                    alertTitle = "Error",
+                    alertContent = "Empty data received"
+                )
+                return@launch
+
+            }
             saveAppInfo(
                 getAppInfo().copy(
-                    lmStudioModels = models
+                    lmStudioModels = resultData
                 )
             )
             withContext(Dispatchers.JavaFx) {
                 lmStudioModelsBox?.items = FXCollections.observableArrayList(getModelsList())
                 val selected = getAppInfo().selectedModel
-                models.firstOrNull {
+                resultData.firstOrNull {
                     it.id == selected.id
                 }?.let {
                     lmStudioModelsBox?.selectionModel?.select(it)

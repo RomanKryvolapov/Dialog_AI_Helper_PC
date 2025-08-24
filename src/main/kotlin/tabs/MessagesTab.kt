@@ -18,13 +18,16 @@ import javafx.scene.control.ScrollPane
 import javafx.scene.layout.*
 import javafx.scene.paint.Color
 import javafx.stage.Stage
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import mainThreadScope
 import models.domain.DialogItem
+import models.domain.LlmModelEngine
 import org.json.JSONObject
 import org.slf4j.LoggerFactory
 import repository.CloudRepository
+import repository.LocalNetworkRepository
 import utils.VoskRecognizer
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -38,7 +41,7 @@ object MessagesTab : BaseTab() {
     private const val TRANSLATE_CHECK_DELAY = 1000L
 
     val content: Pane
-
+    val scrollPane: ScrollPane
     var ownerStage: Stage? = null
 
     private var originalMessageBuffer = ""
@@ -46,6 +49,8 @@ object MessagesTab : BaseTab() {
 
     private val lastTranslatedLength = AtomicInteger(0)
     private val lastTranslatedTime = AtomicLong(System.currentTimeMillis())
+
+    private var translateMessageJob: Job? = null
 
     private var listeningButton = Button("Wait for init").apply {
         style += "-fx-background-color: $COLOUR_RED;"
@@ -62,7 +67,7 @@ object MessagesTab : BaseTab() {
     init {
         setupListeners()
 
-        val scrollPane = ScrollPane(messageBox).apply {
+        scrollPane = ScrollPane(messageBox).apply {
             isFitToWidth = true
             vbarPolicy = ScrollPane.ScrollBarPolicy.ALWAYS
         }
@@ -76,6 +81,12 @@ object MessagesTab : BaseTab() {
                     style += "-fx-background-color: $COLOUR_RED;"
                     setOnAction {
                         messageBox.children.clear()
+                        originalMessageBuffer = "..."
+                        translatedMessageBuffer = "..."
+                        lastTranslatedLength.set(0)
+                        lastTranslatedTime.set(System.currentTimeMillis())
+                        translateMessageJob?.cancel()
+                        translateMessageJob = null
                     }
                 },
                 Button("Restart engine").apply {
@@ -288,18 +299,30 @@ object MessagesTab : BaseTab() {
             log.error("translateMessage message is empty")
             return
         }
-        backgroundThreadScope.launch {
+        translateMessageJob?.cancel()
+        translateMessageJob = backgroundThreadScope.launch {
             lastTranslatedTime.set(System.currentTimeMillis())
             val appInfo = getAppInfo()
             val text = appInfo.prompt
                 .replace(TRANSLATE_FROM_LANGUAGE, appInfo.selectedFromLanguage.englishNameString)
                 .replace(TRANSLATE_TO_LANGUAGE, appInfo.selectedToLanguage.englishNameString)
                 .replace(TRANSLATE_TEXT, message)
-            val result = CloudRepository.generateAnswerByGoogleAI(
-                text = text,
-                apiKey = getAppInfo().googleCloudToken,
-                model = getAppInfo().selectedModel.id,
-            )
+            val result = when (appInfo.selectedModel.engine) {
+                LlmModelEngine.GOOGLE -> {
+                    CloudRepository.generateAnswerByGoogleAI(
+                        text = text,
+                        apiKey = appInfo.googleCloudToken,
+                        model = appInfo.selectedModel.id,
+                    )
+                }
+                LlmModelEngine.LOCALHOST -> {
+                    LocalNetworkRepository.generateAnswerByLmStudio(
+                        port = appInfo.lmStudioPort,
+                        text = text,
+                        model = appInfo.selectedModel.id,
+                    )
+                }
+            }
             if (!result.isSuccess) {
                 log.error("translateMessage result error: ${result.exceptionOrNull()}")
                 updateMessageAt(
@@ -347,6 +370,7 @@ object MessagesTab : BaseTab() {
             } else {
                 messageBox.children.add(newEntry)
             }
+            scrollPane.vvalue = 1.0
         }
     }
 
