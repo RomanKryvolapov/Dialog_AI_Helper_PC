@@ -1,29 +1,19 @@
-import com.squareup.moshi.Moshi
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.javafx.JavaFx
-import kotlinx.serialization.json.Json
-import models.domain.ApplicationInfo
-import models.domain.ApplicationInfoNullable
-import models.common.ApplicationLanguage
-import models.common.GoogleAiModelsEnum
-import models.domain.LlmModel
-import models.domain.LlmModelEngine
-import java.util.prefs.Preferences
+import models.domain.*
 
 const val COLOUR_GREEN = "#3C713C"
 const val COLOUR_BLUE = "#3C71AC"
 const val COLOUR_RED = "#8C3C3C"
 
-const val TRANSLATE_FROM_LANGUAGE = "TRANSLATE_FROM_LANGUAGE"
-const val TRANSLATE_TO_LANGUAGE = "TRANSLATE_TO_LANGUAGE"
-const val TRANSLATE_TEXT = "TRANSLATE_TEXT"
+const val TRANSLATE_FROM_LANGUAGE = "{{translate_from_language}}"
+const val TRANSLATE_TO_LANGUAGE = "{{translate_to_language}}"
+const val TRANSLATE_TEXT = "{{translate_text}}"
+
+const val TRANSLATE_FROM_LANGUAGE_CLEAR = "translate_from_language"
+const val TRANSLATE_TO_LANGUAGE_CLEAR = "translate_to_language"
+const val TRANSLATE_TEXT_CLEAR = "translate_text"
 
 const val DEFAULT_KEY = "Default"
 
@@ -66,35 +56,22 @@ val defaultApplicationInfo = ApplicationInfo(
     promptsMap = mapOf(
         DEFAULT_KEY to PROMPT_FULL_SIZE
     ),
-    lmStudioPort = "1234",
-    lmStudioModels = emptyList(),
+    lmStudioConfig = LmStudioConfig(
+        ip = "localhost",
+        port = "1234",
+        models = emptyList(),
+
+    ),
+    ollamaConfig = OllamaConfig(
+        ip = "localhost",
+        port = "11434",
+        models = emptyList(),
+    ),
     translateTextEverySymbols = 100,
     translateTextEveryMilliseconds = 10000L,
+    voskModel = VoskModels.VOSK_MODEL_EN_US_0_22,
 )
 
-val kotlinxJsonConfig: Json = Json {
-    ignoreUnknownKeys = true
-    prettyPrint = false
-}
-
-val client: HttpClient = HttpClient(CIO) {
-    install(ContentNegotiation) {
-        json(kotlinxJsonConfig)
-    }
-    install(HttpTimeout) {
-        requestTimeoutMillis = 60_000
-        connectTimeoutMillis = 10_000
-        socketTimeoutMillis = 60_000
-    }
-}
-
-val moshi = Moshi.Builder()
-    .add(KotlinJsonAdapterFactory())
-    .build()
-
-val applicationInfoAdapter = moshi.adapter(ApplicationInfoNullable::class.java)
-
-val prefs: Preferences = Preferences.userRoot().node("PREFERENCES_DATABASE")
 
 val mainThreadScope = CoroutineScope(Dispatchers.JavaFx)
 

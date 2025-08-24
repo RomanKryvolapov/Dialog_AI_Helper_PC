@@ -1,17 +1,14 @@
 package mappers.domain
 
 import defaultApplicationInfo
-import extensions.getEnumValue
 import mappers.base.BaseReverseMapper
 import models.domain.ApplicationInfo
 import models.domain.ApplicationInfoNullable
-import models.common.ApplicationLanguage
-import models.common.GoogleAiModelsEnum
 
 /**
  * Created & Copyright 2025 by Roman Kryvolapov
  **/
-object ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfoNullable>() {
+class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfoNullable>() {
 
     override fun reverse(model: ApplicationInfoNullable): ApplicationInfo {
         return with(model) {
@@ -27,13 +24,15 @@ object ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInf
                 googleCloudToken = googleCloudToken ?: defaultApplicationInfo.googleCloudToken,
                 prompt = prompt ?: defaultApplicationInfo.prompt,
                 lastOpenedTab = lastOpenedTab ?: defaultApplicationInfo.lastOpenedTab,
-                lmStudioModels = lmStudioModels ?: defaultApplicationInfo.lmStudioModels,
+                lmStudioConfig = lmStudioConfig ?: defaultApplicationInfo.lmStudioConfig,
                 promptsMap = promptsMap ?: defaultApplicationInfo.promptsMap,
-                lmStudioPort = lmStudioPort ?: defaultApplicationInfo.lmStudioPort,
+                ollamaConfig = ollamaConfig ?: defaultApplicationInfo.ollamaConfig,
                 translateTextEverySymbols = translateTextEverySymbols
                     ?: defaultApplicationInfo.translateTextEverySymbols,
                 translateTextEveryMilliseconds = translateTextEveryMilliseconds
                     ?: defaultApplicationInfo.translateTextEveryMilliseconds,
+                voskModel = voskModel
+                    ?: defaultApplicationInfo.voskModel
             )
         }
     }
@@ -48,11 +47,12 @@ object ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInf
                 googleCloudToken = googleCloudToken,
                 prompt = prompt,
                 lastOpenedTab = lastOpenedTab,
-                lmStudioModels = lmStudioModels,
+                ollamaConfig = ollamaConfig,
                 promptsMap = promptsMap,
-                lmStudioPort = lmStudioPort,
+                lmStudioConfig = lmStudioConfig,
                 translateTextEverySymbols = translateTextEverySymbols,
                 translateTextEveryMilliseconds = translateTextEveryMilliseconds,
+                voskModel = voskModel,
             )
         }
     }

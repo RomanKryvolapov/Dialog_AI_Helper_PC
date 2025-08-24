@@ -1,7 +1,7 @@
 package app
 
 import PROMPT_FULL_SIZE
-import repository.PreferencesRepository
+import di.allModules
 import tabs.MessagesTab
 import tabs.SettingsTab
 import javafx.application.Application
@@ -12,21 +12,42 @@ import javafx.scene.control.Tab
 import javafx.scene.control.TabPane
 import javafx.stage.Screen
 import javafx.stage.Stage
+import org.koin.core.component.KoinComponent
+import org.koin.core.component.inject
 import tabs.PromptTab
+import org.koin.core.context.startKoin
+import repository.PreferencesRepository
 import utils.VoskRecognizer
 
-class DialogApplication : Application() {
+class DialogApplication : Application(), KoinComponent {
+
+    private val voskRecognizer: VoskRecognizer by inject()
+    private val preferencesRepository: PreferencesRepository by inject()
+
+    private val messagesTab: MessagesTab by inject()
+    private val promptTab: PromptTab by inject()
+    private val settingsTab: SettingsTab by inject()
+
+    companion object{
+        var ownerStage: Stage? = null
+    }
 
     override fun start(primaryStage: Stage) {
 
-//        primaryStage.isFullScreen = true
+        startKoin {
+            modules(allModules)
+        }
+
+//        preferencesRepository.clear()
+
+        ownerStage = primaryStage
         primaryStage.isMaximized = true
 
-        val appInfo = PreferencesRepository.getAppInfo()
+        val appInfo = preferencesRepository.getAppInfo()
 
         if (appInfo.prompt.isBlank()) {
-            PreferencesRepository.saveAppInfo(
-                PreferencesRepository.getAppInfo().copy(
+            preferencesRepository.saveAppInfo(
+                preferencesRepository.getAppInfo().copy(
                     prompt = PROMPT_FULL_SIZE
                 )
             )
@@ -35,9 +56,9 @@ class DialogApplication : Application() {
         val tabPane = TabPane().apply {
             tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
             tabs.addAll(
-                Tab("Messages", MessagesTab.content),
-                Tab("Prompt", PromptTab.content),
-                Tab("Settings", ScrollPane(SettingsTab.content).apply {
+                Tab("Messages", messagesTab.content),
+                Tab("Prompt", promptTab.content),
+                Tab("Settings", ScrollPane(settingsTab.content).apply {
                     fitToWidthProperty().set(true)
                     fitToHeightProperty().set(true)
                     isPannable = true
@@ -45,15 +66,13 @@ class DialogApplication : Application() {
             )
             selectionModel.select(appInfo.lastOpenedTab)
             selectionModel.selectedIndexProperty().addListener { _, _, newValue ->
-                PreferencesRepository.saveAppInfo(
-                    PreferencesRepository.getAppInfo().copy(
+                preferencesRepository.saveAppInfo(
+                    preferencesRepository.getAppInfo().copy(
                         lastOpenedTab = newValue.toInt()
                     )
                 )
             }
         }
-
-        MessagesTab.ownerStage = primaryStage
 
         val screenBounds: Rectangle2D =
             Screen.getScreens().let { if (it.size > 1) it[1] else it[0] }.visualBounds
@@ -71,6 +90,6 @@ class DialogApplication : Application() {
             this.scene = scene
             show()
         }
-        VoskRecognizer.init()
+        voskRecognizer.init(appInfo.voskModel)
     }
 }

@@ -3,25 +3,17 @@ package extensions
 import COLOUR_BLUE
 import COLOUR_GREEN
 import COLOUR_RED
+import app.DialogApplication
 import javafx.collections.FXCollections
 import javafx.geometry.Insets
 import javafx.geometry.Pos
-import javafx.scene.control.Alert
-import javafx.scene.control.Button
-import javafx.scene.control.ComboBox
-import javafx.scene.control.Label
-import javafx.scene.control.ListCell
-import javafx.scene.control.TextArea
-import javafx.scene.control.TextField
-import javafx.scene.control.TextInputControl
+import javafx.scene.control.*
 import javafx.scene.input.Clipboard
 import javafx.scene.input.ClipboardContent
 import javafx.scene.layout.HBox
 import javafx.scene.layout.VBox
-import javafx.stage.Stage
 import kotlinx.coroutines.launch
 import mainThreadScope
-import tabs.MessagesTab.ownerStage
 
 fun VBox.addLabel(text: String) {
     children.add(Label(text).apply {
@@ -161,11 +153,11 @@ fun VBox.addButton(
 
 fun showAlert(
     alertTitle: String,
-    alertContent: String
+    alertContent: String,
 ) {
     mainThreadScope.launch {
         Alert(Alert.AlertType.WARNING).apply {
-            ownerStage?.let {
+            DialogApplication.ownerStage?.let {
                 initOwner(it)
             }
             title = alertTitle

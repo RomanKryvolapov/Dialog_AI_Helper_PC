@@ -15,3 +15,9 @@ simultaneously to your sound device, I did this using
 [VB-Audio VoiceMeeter Banana](https://vb-audio.com/Voicemeeter/banana.htm) 
 
 audio mixer application
+
+<br>
+
+![Screenshot_messages](Screenshot_messages.png)<br>
+![Screenshot_prompt](Screenshot_prompt.png)<br>
+![Screenshot_settings](Screenshot_settings.png)<br>

@@ -1,7 +1,5 @@
 package models.domain
 
-import models.common.GoogleAiModelsEnum
-
 /**
  * Created & Copyright 2025 by Roman Kryvolapov
  **/

@@ -1,8 +1,5 @@
 package models.domain
 
-import models.common.ApplicationLanguage
-import models.common.GoogleAiModelsEnum
-
 data class ApplicationInfo(
     val lastSelectedDevice: String,
     val selectedModel: LlmModel,
@@ -12,8 +9,9 @@ data class ApplicationInfo(
     val prompt: String,
     val lastOpenedTab: Int,
     val promptsMap: Map<String, String>,
-    val lmStudioPort: String,
-    val lmStudioModels: List<LlmModel>,
+    val lmStudioConfig: LmStudioConfig,
+    val ollamaConfig: OllamaConfig,
     val translateTextEverySymbols: Int,
     val translateTextEveryMilliseconds: Long,
+    val voskModel: VoskModels,
 )

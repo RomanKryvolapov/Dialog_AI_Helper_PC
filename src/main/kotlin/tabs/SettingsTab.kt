@@ -18,20 +18,29 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.javafx.JavaFx
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import models.common.ApplicationLanguage
-import models.common.GoogleAiModelsEnum
+import models.domain.ApplicationLanguage
+import models.domain.GoogleAiModelsEnum
 import models.domain.LlmModel
 import models.domain.LlmModelEngine
-import repository.LocalNetworkRepository
-import utils.VoskRecognizer.getAvailableInputDevices
 import org.slf4j.LoggerFactory
+import repository.LocalNetworkRepository
+import repository.PreferencesRepository
+import utils.VoskRecognizer
 import javax.sound.sampled.Mixer
 
-object SettingsTab : BaseTab() {
+class SettingsTab(
+    private val voskRecognizer: VoskRecognizer,
+    private val localNetworkRepository: LocalNetworkRepository,
+    preferencesRepository: PreferencesRepository
+) : BaseTab(
+    preferencesRepository = preferencesRepository,
+) {
+
+    companion object {
+        const val WINDOW_BACKGROUND_COLOUR = "#323232"
+    }
 
     private val log = LoggerFactory.getLogger("SettingsTabTag")
-
-    const val WINDOW_BACKGROUND_COLOUR = "#323232"
 
     val currentToggleGroup = ToggleGroup()
 
@@ -46,7 +55,7 @@ object SettingsTab : BaseTab() {
 
         addTitleLabel("Audio device for voice recognition:")
 
-        val devices: List<Mixer.Info> = getAvailableInputDevices()
+        val devices: List<Mixer.Info> = voskRecognizer.getAvailableInputDevices()
 
         if (devices.isEmpty()) {
             addLabel("Not found")
@@ -162,11 +171,15 @@ object SettingsTab : BaseTab() {
         addTitleLabel("LM Studio Port")
 
         addTextFieldWithButtons(
-            fieldText = appInfo.lmStudioPort,
+            fieldText = appInfo.lmStudioConfig.port,
             onSave = {
+                val appInfo = getAppInfo()
                 saveAppInfo(
-                    getAppInfo().copy(
-                        lmStudioPort = it
+                    appInfo.copy(
+                        lmStudioConfig = appInfo.lmStudioConfig.copy(
+                            port = it
+
+                        ),
                     )
                 )
             }
@@ -176,7 +189,7 @@ object SettingsTab : BaseTab() {
             bgColor = COLOUR_GREEN,
             onClicked = {
                 getLmStudioModels(
-                    port = getAppInfo().lmStudioPort
+                    port = getAppInfo().lmStudioConfig.port
                 )
             }
         )
@@ -185,7 +198,7 @@ object SettingsTab : BaseTab() {
 
     private fun getModelsList(): List<LlmModel> {
         return buildList {
-            getAppInfo().lmStudioModels.forEach {
+            getAppInfo().lmStudioConfig.models.forEach {
                 add(
                     LlmModel(
                         id = it.id,
@@ -210,7 +223,7 @@ object SettingsTab : BaseTab() {
 
     private fun getLmStudioModels(port: String) {
         backgroundThreadScope.launch {
-            val result = LocalNetworkRepository.getLmStudioModels(
+            val result = localNetworkRepository.getLmStudioModels(
                 port = port
             )
             if (!result.isSuccess) {
@@ -231,9 +244,12 @@ object SettingsTab : BaseTab() {
                 return@launch
 
             }
+            val appInfo = getAppInfo()
             saveAppInfo(
-                getAppInfo().copy(
-                    lmStudioModels = resultData
+                appInfo.copy(
+                    lmStudioConfig = appInfo.lmStudioConfig.copy(
+                        models = resultData
+                    ),
                 )
             )
             withContext(Dispatchers.JavaFx) {

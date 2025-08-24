@@ -3,12 +3,14 @@ package tabs
 import models.domain.ApplicationInfo
 import repository.PreferencesRepository
 
-abstract class BaseTab {
+abstract class BaseTab(
+    private val preferencesRepository: PreferencesRepository
+) {
 
-    fun getAppInfo() = PreferencesRepository.getAppInfo()
+    fun getAppInfo() = preferencesRepository.getAppInfo()
 
     fun saveAppInfo(appInfo: ApplicationInfo) {
-        PreferencesRepository.saveAppInfo(appInfo)
+        preferencesRepository.saveAppInfo(appInfo)
     }
 
 }

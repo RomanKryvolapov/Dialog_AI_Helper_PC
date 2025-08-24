@@ -10,5 +10,8 @@ enum class LlmModelEngine(
     ),
     GOOGLE(
         type = "Google",
+    ),
+    OLLAMA(
+        type = "Ollama",
     )
 }

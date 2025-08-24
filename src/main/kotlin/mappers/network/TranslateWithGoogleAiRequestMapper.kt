@@ -1,11 +1,11 @@
 package mappers.network
 
 import mappers.base.BaseMapper
-import models.network.ContentRequest
-import models.network.PartRequest
-import models.network.TranslateWithGoogleAiRequest
+import models.network.googleai.ContentRequest
+import models.network.googleai.PartRequest
+import models.network.googleai.TranslateWithGoogleAiRequest
 
-object TranslateWithGoogleAiRequestMapper : BaseMapper<String, TranslateWithGoogleAiRequest>() {
+class TranslateWithGoogleAiRequestMapper : BaseMapper<String, TranslateWithGoogleAiRequest>() {
 
     override fun map(model: String): TranslateWithGoogleAiRequest {
         return TranslateWithGoogleAiRequest(

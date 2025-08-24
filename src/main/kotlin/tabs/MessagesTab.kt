@@ -3,10 +3,12 @@ package tabs
 import COLOUR_BLUE
 import COLOUR_GREEN
 import COLOUR_RED
-import TRANSLATE_FROM_LANGUAGE
-import TRANSLATE_TEXT
-import TRANSLATE_TO_LANGUAGE
+import PROMPT_FULL_SIZE
+import TRANSLATE_FROM_LANGUAGE_CLEAR
+import TRANSLATE_TEXT_CLEAR
+import TRANSLATE_TO_LANGUAGE_CLEAR
 import backgroundThreadScope
+import dev.langchain4j.model.input.PromptTemplate
 import extensions.normalizeAndRemoveEmptyLines
 import extensions.showAlert
 import javafx.application.Platform
@@ -28,21 +30,31 @@ import org.json.JSONObject
 import org.slf4j.LoggerFactory
 import repository.CloudRepository
 import repository.LocalNetworkRepository
+import repository.PreferencesRepository
 import utils.VoskRecognizer
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
-object MessagesTab : BaseTab() {
+class MessagesTab(
+    private val voskRecognizer: VoskRecognizer,
+    private val cloudRepository: CloudRepository,
+    private val localNetworkRepository: LocalNetworkRepository,
+    preferencesRepository: PreferencesRepository
+) : BaseTab(
+    preferencesRepository = preferencesRepository,
+) {
+
 
     private val log = LoggerFactory.getLogger("MessagesTabTag")
 
-    const val FIELD_BACKGROUND_COLOUR = "#323232"
-    const val BUTTONS_BACKGROUND_COLOUR = "#323232"
-    private const val TRANSLATE_CHECK_DELAY = 1000L
+    companion object {
+        const val FIELD_BACKGROUND_COLOUR = "#323232"
+        const val BUTTONS_BACKGROUND_COLOUR = "#323232"
+        private const val TRANSLATE_CHECK_DELAY = 1000L
+    }
 
     val content: Pane
     val scrollPane: ScrollPane
-    var ownerStage: Stage? = null
 
     private var originalMessageBuffer = ""
     private var translatedMessageBuffer = "..."
@@ -92,7 +104,7 @@ object MessagesTab : BaseTab() {
                 Button("Restart engine").apply {
                     style += "-fx-background-color: $COLOUR_RED;"
                     setOnAction {
-                        val device = VoskRecognizer.getAvailableInputDevices().firstOrNull {
+                        val device = voskRecognizer.getAvailableInputDevices().firstOrNull {
                             getAppInfo().lastSelectedDevice == it.name
                         }
                         if (device == null) {
@@ -102,13 +114,13 @@ object MessagesTab : BaseTab() {
                             )
                             return@setOnAction
                         }
-                        VoskRecognizer.runRecognition(device)
+                        voskRecognizer.runRecognition(device)
                     }
                 },
                 Button("Restart recognition").apply {
                     style += "-fx-background-color: $COLOUR_BLUE;"
                     setOnAction {
-                        VoskRecognizer.splitUtterance()
+                        voskRecognizer.splitUtterance()
                     }
                 },
                 Button("Translate now").apply {
@@ -138,7 +150,7 @@ object MessagesTab : BaseTab() {
     }
 
     private fun startListening() {
-        val device = VoskRecognizer.getAvailableInputDevices().firstOrNull {
+        val device = voskRecognizer.getAvailableInputDevices().firstOrNull {
             getAppInfo().lastSelectedDevice == it.name
         }
         if (device == null) {
@@ -149,20 +161,20 @@ object MessagesTab : BaseTab() {
             return
         }
         when {
-            VoskRecognizer.inInit() -> {
+            voskRecognizer.inInit() -> {
                 showAlert(
                     alertTitle = "Error",
                     alertContent = "Please wait for the initialization to complete."
                 )
             }
 
-            !VoskRecognizer.inRunning() -> {
-                VoskRecognizer.runRecognition(device)
+            !voskRecognizer.inRunning() -> {
+                voskRecognizer.runRecognition(device)
                 backgroundThreadScope.launch {
                     val translateTextEveryMilliseconds = getAppInfo().translateTextEveryMilliseconds
                     if (translateTextEveryMilliseconds != 0L) {
                         delay(3000L)
-                        while (VoskRecognizer.inRunning()) {
+                        while (voskRecognizer.inRunning()) {
                             delay(TRANSLATE_CHECK_DELAY)
                             val currentTime = System.currentTimeMillis()
                             if (lastTranslatedTime.get() + translateTextEveryMilliseconds < currentTime) {
@@ -179,34 +191,34 @@ object MessagesTab : BaseTab() {
             }
 
             else -> {
-                VoskRecognizer.stopRecognition()
+                voskRecognizer.stopRecognition()
             }
         }
     }
 
     private fun setupListeners() {
-        VoskRecognizer.onInitReady = {
+        voskRecognizer.onInitReady = {
             log.debug("onInitReady")
             mainThreadScope.launch {
                 listeningButton.text = "Start dialog"
                 listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
             }
         }
-        VoskRecognizer.onStartListener = {
+        voskRecognizer.onStartListener = {
             log.debug("onStartListener")
             mainThreadScope.launch {
                 listeningButton.text = "Stop dialog"
                 listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
             }
         }
-        VoskRecognizer.onStopListener = {
+        voskRecognizer.onStopListener = {
             log.debug("onStopListener")
             mainThreadScope.launch {
                 listeningButton.text = "Start dialog"
                 listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
             }
         }
-        VoskRecognizer.onErrorListener = { message ->
+        voskRecognizer.onErrorListener = { message ->
             log.error("onErrorListener: $message")
             mainThreadScope.launch {
                 listeningButton.text = "Error init"
@@ -217,7 +229,7 @@ object MessagesTab : BaseTab() {
                 alertContent = message
             )
         }
-        VoskRecognizer.onResultListener = { result ->
+        voskRecognizer.onResultListener = { result ->
             val resultString = JSONObject(result).optString("partial").normalizeAndRemoveEmptyLines()
             if (resultString.isNotEmpty()) {
                 log.debug("onResultListener: $resultString")
@@ -227,7 +239,7 @@ object MessagesTab : BaseTab() {
                 }
             }
         }
-        VoskRecognizer.onPartialResultListener = { result ->
+        voskRecognizer.onPartialResultListener = { result ->
             val resultString = JSONObject(result).optString("partial").normalizeAndRemoveEmptyLines()
             if (resultString.isNotEmpty() && resultString != "the" && originalMessageBuffer != result) {
                 mainThreadScope.launch {
@@ -278,7 +290,7 @@ object MessagesTab : BaseTab() {
                     else -> {
                         originalMessageBuffer = resultString
                         updateMessageAt(
-                            index =currentMessageIndex,
+                            index = currentMessageIndex,
                             newItem = DialogItem(
                                 originalMessage = resultString,
                                 answerMessage = translatedMessageBuffer,
@@ -303,45 +315,71 @@ object MessagesTab : BaseTab() {
         translateMessageJob = backgroundThreadScope.launch {
             lastTranslatedTime.set(System.currentTimeMillis())
             val appInfo = getAppInfo()
-            val text = appInfo.prompt
-                .replace(TRANSLATE_FROM_LANGUAGE, appInfo.selectedFromLanguage.englishNameString)
-                .replace(TRANSLATE_TO_LANGUAGE, appInfo.selectedToLanguage.englishNameString)
-                .replace(TRANSLATE_TEXT, message)
+//            val text = appInfo.prompt
+//                .replace(TRANSLATE_FROM_LANGUAGE, appInfo.selectedFromLanguage.englishNameString)
+//                .replace(TRANSLATE_TO_LANGUAGE, appInfo.selectedToLanguage.englishNameString)
+//                .replace(TRANSLATE_TEXT, message)
+            log.debug("translateMessage message: $message from: ${appInfo.selectedFromLanguage.englishNameString} to: ${appInfo.selectedToLanguage.englishNameString}")
+            val template = PromptTemplate.from(PROMPT_FULL_SIZE)
+            val prompt = template.apply(
+                mapOf(
+                    TRANSLATE_FROM_LANGUAGE_CLEAR to appInfo.selectedFromLanguage.englishNameString,
+                    TRANSLATE_TO_LANGUAGE_CLEAR to appInfo.selectedToLanguage.englishNameString,
+                    TRANSLATE_TEXT_CLEAR to message
+                )
+            )
             val result = when (appInfo.selectedModel.engine) {
                 LlmModelEngine.GOOGLE -> {
-                    CloudRepository.generateAnswerByGoogleAI(
-                        text = text,
+                    cloudRepository.generateAnswerByLangChainByGoogleAI(
+                        prompt = prompt,
                         apiKey = appInfo.googleCloudToken,
                         model = appInfo.selectedModel.id,
                     )
                 }
+
                 LlmModelEngine.LOCALHOST -> {
-                    LocalNetworkRepository.generateAnswerByLmStudio(
-                        port = appInfo.lmStudioPort,
-                        text = text,
+                    localNetworkRepository.generateAnswerByLangChainLmStudio(
+                        prompt = prompt,
+                        port = appInfo.lmStudioConfig.port,
+                        model = appInfo.selectedModel.id,
+                    )
+                }
+
+                LlmModelEngine.OLLAMA -> {
+                    localNetworkRepository.generateAnswerByLangChainOllama(
+                        prompt = prompt,
+                        port = appInfo.ollamaConfig.port,
                         model = appInfo.selectedModel.id,
                     )
                 }
             }
             if (!result.isSuccess) {
                 log.error("translateMessage result error: ${result.exceptionOrNull()}")
+                showAlert(
+                    alertTitle = "Error",
+                    alertContent = result.exceptionOrNull()?.message ?: ""
+                )
                 updateMessageAt(
                     index = index,
                     newItem = DialogItem(
                         originalMessage = message,
-                        answerMessage = result.exceptionOrNull()?.message ?: "",
+                        answerMessage = "...",
                     )
                 )
                 return@launch
             }
             val resultMessage = result.getOrNull()
-            if (resultMessage == null) {
+            if (resultMessage.isNullOrBlank()) {
                 log.error("translateMessage resultMessage is null")
+                showAlert(
+                    alertTitle = "Error",
+                    alertContent = "Answer message is null or blank"
+                )
                 updateMessageAt(
                     index = index,
                     newItem = DialogItem(
                         originalMessage = message,
-                        answerMessage = "Error",
+                        answerMessage = "...",
                     )
                 )
                 return@launch
