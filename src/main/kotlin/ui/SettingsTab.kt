@@ -1,4 +1,4 @@
-package tabs
+package ui
 
 import COLOUR_GREEN
 import backgroundThreadScope
@@ -25,6 +25,7 @@ import models.domain.LlmModelEngine
 import org.slf4j.LoggerFactory
 import repository.LocalNetworkRepository
 import repository.PreferencesRepository
+import ui.base.BaseTab
 import utils.VoskRecognizer
 import javax.sound.sampled.Mixer
 
@@ -45,7 +46,7 @@ class SettingsTab(
     val currentToggleGroup = ToggleGroup()
 
 
-    var lmStudioModelsBox: ComboBox<LlmModel>? = null
+    var modelsBox: ComboBox<LlmModel>? = null
 
     val content: VBox = VBox(4.0).apply {
         padding = Insets(0.0, 20.0, 0.0, 20.0)
@@ -88,7 +89,7 @@ class SettingsTab(
 
         addTitleLabel("AI model:")
 
-        lmStudioModelsBox = addComboBox(
+        modelsBox = addComboBox(
             items = getModelsList(),
             selectedItem = appInfo.selectedModel,
             toStringFn = {
@@ -168,7 +169,21 @@ class SettingsTab(
             }
         )
 
-        addTitleLabel("LM Studio Port")
+        addTitleLabel("LM Studio IP Address / Port")
+
+        addTextFieldWithButtons(
+            fieldText = appInfo.lmStudioConfig.ip,
+            onSave = {
+                val appInfo = getAppInfo()
+                saveAppInfo(
+                    appInfo.copy(
+                        lmStudioConfig = appInfo.lmStudioConfig.copy(
+                            ip = it
+                        ),
+                    )
+                )
+            }
+        )
 
         addTextFieldWithButtons(
             fieldText = appInfo.lmStudioConfig.port,
@@ -178,18 +193,61 @@ class SettingsTab(
                     appInfo.copy(
                         lmStudioConfig = appInfo.lmStudioConfig.copy(
                             port = it
-
                         ),
                     )
                 )
             }
         )
+
         addButton(
-            title = "Update models",
+            title = "Update LM Studio models",
             bgColor = COLOUR_GREEN,
             onClicked = {
+                val appInfo = getAppInfo()
                 getLmStudioModels(
-                    port = getAppInfo().lmStudioConfig.port
+                    ip = appInfo.lmStudioConfig.ip,
+                    port = appInfo.lmStudioConfig.port,
+                )
+            }
+        )
+
+        addTitleLabel("Ollama IP Address / Port")
+
+        addTextFieldWithButtons(
+            fieldText = appInfo.ollamaConfig.port,
+            onSave = {
+                val appInfo = getAppInfo()
+                saveAppInfo(
+                    appInfo.copy(
+                        ollamaConfig = appInfo.ollamaConfig.copy(
+                            port = it
+                        )
+                    )
+                )
+            }
+        )
+
+        addTextFieldWithButtons(
+            fieldText = appInfo.ollamaConfig.ip,
+            onSave = {
+                val appInfo = getAppInfo()
+                saveAppInfo(
+                    appInfo.copy(
+                        ollamaConfig = appInfo.ollamaConfig.copy(
+                            ip = it
+                        ),
+                    )
+                )
+            }
+        )
+
+        addButton(
+            title = "Update Ollama models",
+            bgColor = COLOUR_GREEN,
+            onClicked = {
+                getOllamaModels(
+                    ip = appInfo.ollamaConfig.ip,
+                    port = appInfo.ollamaConfig.port,
                 )
             }
         )
@@ -197,13 +255,24 @@ class SettingsTab(
     }
 
     private fun getModelsList(): List<LlmModel> {
+        val appInfo = getAppInfo()
         return buildList {
-            getAppInfo().lmStudioConfig.models.forEach {
+            appInfo.lmStudioConfig.models.forEach {
                 add(
                     LlmModel(
                         id = it.id,
                         description = "LM Studio Local: ${it.id}",
-                        engine = LlmModelEngine.LOCALHOST,
+                        engine = LlmModelEngine.LM_STUDIO,
+                        googleAiModel = null,
+                    )
+                )
+            }
+            appInfo.ollamaConfig.models.forEach {
+                add(
+                    LlmModel(
+                        id = it.id,
+                        description = "Ollama Local: ${it.id}",
+                        engine = LlmModelEngine.OLLAMA,
                         googleAiModel = null,
                     )
                 )
@@ -221,10 +290,14 @@ class SettingsTab(
         }
     }
 
-    private fun getLmStudioModels(port: String) {
+    private fun getLmStudioModels(
+        ip: String,
+        port: String,
+    ) {
         backgroundThreadScope.launch {
             val result = localNetworkRepository.getLmStudioModels(
-                port = port
+                ip = ip,
+                port = port,
             )
             if (!result.isSuccess) {
                 log.error("getLmStudioModels result error: ${result.exceptionOrNull()}")
@@ -253,12 +326,59 @@ class SettingsTab(
                 )
             )
             withContext(Dispatchers.JavaFx) {
-                lmStudioModelsBox?.items = FXCollections.observableArrayList(getModelsList())
+                modelsBox?.items = FXCollections.observableArrayList(getModelsList())
                 val selected = getAppInfo().selectedModel
                 resultData.firstOrNull {
                     it.id == selected.id
                 }?.let {
-                    lmStudioModelsBox?.selectionModel?.select(it)
+                    modelsBox?.selectionModel?.select(it)
+                }
+            }
+        }
+    }
+
+    private fun getOllamaModels(
+        ip: String,
+        port: String,
+    ){
+        backgroundThreadScope.launch {
+            val result = localNetworkRepository.getOllamaModels(
+                ip = ip,
+                port = port,
+            )
+            if (!result.isSuccess) {
+                log.error("getOllamaModels result error: ${result.exceptionOrNull()}")
+                showAlert(
+                    alertTitle = "Error",
+                    alertContent = result.exceptionOrNull()?.message ?: ""
+                )
+                return@launch
+            }
+            val resultData = result.getOrNull()
+            if (resultData.isNullOrEmpty()) {
+                log.error("getOllamaModels resultData == null")
+                showAlert(
+                    alertTitle = "Error",
+                    alertContent = "Empty data received"
+                )
+                return@launch
+
+            }
+            val appInfo = getAppInfo()
+            saveAppInfo(
+                appInfo.copy(
+                    ollamaConfig = appInfo.ollamaConfig.copy(
+                        models = resultData
+                    ),
+                )
+            )
+            withContext(Dispatchers.JavaFx) {
+                modelsBox?.items = FXCollections.observableArrayList(getModelsList())
+                val selected = getAppInfo().selectedModel
+                resultData.firstOrNull {
+                    it.id == selected.id
+                }?.let {
+                    modelsBox?.selectionModel?.select(it)
                 }
             }
         }

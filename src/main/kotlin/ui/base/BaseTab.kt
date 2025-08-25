@@ -1,4 +1,4 @@
-package tabs
+package ui.base
 
 import models.domain.ApplicationInfo
 import repository.PreferencesRepository

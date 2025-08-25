@@ -2,9 +2,9 @@ package di
 
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.module
-import tabs.MessagesTab
-import tabs.PromptTab
-import tabs.SettingsTab
+import ui.MessagesTab
+import ui.PromptTab
+import ui.SettingsTab
 
 val uiModule = module {
 

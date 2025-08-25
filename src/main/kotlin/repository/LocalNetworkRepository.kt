@@ -6,10 +6,12 @@ import models.domain.LlmModel
 interface LocalNetworkRepository {
 
     suspend fun getLmStudioModels(
+        ip: String,
         port: String,
     ): Result<List<LlmModel>>
 
     suspend fun getOllamaModels(
+        ip: String,
         port: String,
     ): Result<List<LlmModel>>
 

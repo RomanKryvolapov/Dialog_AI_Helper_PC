@@ -1,4 +1,4 @@
-package tabs
+package ui
 
 import COLOUR_BLUE
 import COLOUR_GREEN
@@ -19,7 +19,6 @@ import javafx.scene.control.Label
 import javafx.scene.control.ScrollPane
 import javafx.scene.layout.*
 import javafx.scene.paint.Color
-import javafx.stage.Stage
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -31,6 +30,7 @@ import org.slf4j.LoggerFactory
 import repository.CloudRepository
 import repository.LocalNetworkRepository
 import repository.PreferencesRepository
+import ui.base.BaseTab
 import utils.VoskRecognizer
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -337,7 +337,7 @@ class MessagesTab(
                     )
                 }
 
-                LlmModelEngine.LOCALHOST -> {
+                LlmModelEngine.LM_STUDIO -> {
                     localNetworkRepository.generateAnswerByLangChainLmStudio(
                         prompt = prompt,
                         port = appInfo.lmStudioConfig.port,

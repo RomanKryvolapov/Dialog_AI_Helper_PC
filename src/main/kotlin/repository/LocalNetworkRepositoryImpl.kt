@@ -34,10 +34,11 @@ class LocalNetworkRepositoryImpl(
     private val log = LoggerFactory.getLogger("LocalNetworkRepositoryTag")
 
     override suspend fun getLmStudioModels(
+        ip: String,
         port: String,
     ): Result<List<LlmModel>> {
         log.debug("getLmStudioModels port: $port")
-        val url = "http://localhost:$port/v1/models"
+        val url = "http://$ip:$port/v1/models"
         try {
             val response = httpClient.get(url) {
                 contentType(ContentType.Application.Json)
@@ -61,10 +62,11 @@ class LocalNetworkRepositoryImpl(
     }
 
     override suspend fun getOllamaModels(
+        ip: String,
         port: String,
     ): Result<List<LlmModel>> {
         log.debug("getOllamaModels port: $port")
-        val url = "http://localhost:$port/api/tags"
+        val url = "http://$ip:$port/api/tags"
         try {
             val response = httpClient.get(url) {
                 contentType(ContentType.Application.Json)

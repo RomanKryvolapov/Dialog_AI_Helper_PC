@@ -2,8 +2,8 @@ package app
 
 import PROMPT_FULL_SIZE
 import di.allModules
-import tabs.MessagesTab
-import tabs.SettingsTab
+import ui.MessagesTab
+import ui.SettingsTab
 import javafx.application.Application
 import javafx.geometry.Rectangle2D
 import javafx.scene.Scene
@@ -14,7 +14,7 @@ import javafx.stage.Screen
 import javafx.stage.Stage
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
-import tabs.PromptTab
+import ui.PromptTab
 import org.koin.core.context.startKoin
 import repository.PreferencesRepository
 import utils.VoskRecognizer

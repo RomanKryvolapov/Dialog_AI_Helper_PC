@@ -1,4 +1,4 @@
-package tabs
+package ui
 
 import TRANSLATE_FROM_LANGUAGE
 import TRANSLATE_TEXT
@@ -13,6 +13,7 @@ import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
 import org.slf4j.LoggerFactory
 import repository.PreferencesRepository
+import ui.base.BaseTab
 
 class PromptTab(
     preferencesRepository: PreferencesRepository
