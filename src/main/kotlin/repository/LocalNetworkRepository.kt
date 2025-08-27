@@ -6,29 +6,27 @@ import models.domain.LlmModel
 interface LocalNetworkRepository {
 
     suspend fun getLmStudioModels(
-        ip: String,
-        port: String,
+        baseUrl: String,
     ): Result<List<LlmModel>>
 
     suspend fun getOllamaModels(
-        ip: String,
-        port: String,
+        baseUrl: String,
     ): Result<List<LlmModel>>
 
     suspend fun generateAnswerByLmStudio(
-        port: String,
+        baseUrl: String,
         model: String,
         text: String,
     ): Result<String>
 
     fun generateAnswerByLangChainLmStudio(
-        port: String,
+        baseUrl: String,
         model: String,
         prompt: Prompt,
     ): Result<String>
 
     fun generateAnswerByLangChainOllama(
-        port: String,
+        baseUrl: String,
         model: String,
         prompt: Prompt,
     ): Result<String>

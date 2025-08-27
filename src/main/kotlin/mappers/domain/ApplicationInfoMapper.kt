@@ -17,10 +17,6 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                     ?: defaultApplicationInfo.lastSelectedDevice,
                 selectedModel = selectedModel
                     ?: defaultApplicationInfo.selectedModel,
-                selectedFromLanguage = selectedFromLanguage
-                    ?: defaultApplicationInfo.selectedFromLanguage,
-                selectedToLanguage = selectedToLanguage
-                    ?: defaultApplicationInfo.selectedToLanguage,
                 googleCloudToken = googleCloudToken ?: defaultApplicationInfo.googleCloudToken,
                 prompt = prompt ?: defaultApplicationInfo.prompt,
                 lastOpenedTab = lastOpenedTab ?: defaultApplicationInfo.lastOpenedTab,
@@ -31,8 +27,8 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                     ?: defaultApplicationInfo.translateTextEverySymbols,
                 translateTextEveryMilliseconds = translateTextEveryMilliseconds
                     ?: defaultApplicationInfo.translateTextEveryMilliseconds,
-                voskModel = voskModel
-                    ?: defaultApplicationInfo.voskModel
+                voskModelPath = voskModelPath
+                    ?: defaultApplicationInfo.voskModelPath
             )
         }
     }
@@ -42,8 +38,6 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
             ApplicationInfoNullable(
                 lastSelectedDevice = lastSelectedDevice,
                 selectedModel = selectedModel,
-                selectedFromLanguage = selectedFromLanguage,
-                selectedToLanguage = selectedToLanguage,
                 googleCloudToken = googleCloudToken,
                 prompt = prompt,
                 lastOpenedTab = lastOpenedTab,
@@ -52,7 +46,7 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                 lmStudioConfig = lmStudioConfig,
                 translateTextEverySymbols = translateTextEverySymbols,
                 translateTextEveryMilliseconds = translateTextEveryMilliseconds,
-                voskModel = voskModel,
+                voskModelPath = voskModelPath,
             )
         }
     }

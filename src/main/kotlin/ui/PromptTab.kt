@@ -1,10 +1,8 @@
 package ui
 
-import TRANSLATE_FROM_LANGUAGE
-import TRANSLATE_TEXT
-import TRANSLATE_TO_LANGUAGE
+import SOURCE_TEXT
 import extensions.addLabel
-import extensions.addTextFieldWithButtons
+import extensions.addTextFieldWithCopyPasteActionButtons
 import extensions.addTitleLabel
 import javafx.geometry.Insets
 import javafx.scene.layout.Background
@@ -25,20 +23,19 @@ class PromptTab(
         const val WINDOW_BACKGROUND_COLOUR = "#323232"
     }
 
-    private val log = LoggerFactory.getLogger("PromptTabTag")
-
+    private val log = LoggerFactory.getLogger("PromptTab")
 
     val content: VBox = VBox(4.0).apply {
         padding = Insets(0.0, 20.0, 0.0, 20.0)
         background = Background(BackgroundFill(Color.web(WINDOW_BACKGROUND_COLOUR), null, null))
 
         addTitleLabel("Prompt:")
-        addLabel("Will be replaced with actual values: $TRANSLATE_FROM_LANGUAGE, $TRANSLATE_TO_LANGUAGE, $TRANSLATE_TEXT")
+        addLabel("Will be replaced with actual values: $SOURCE_TEXT")
         val appInfo = getAppInfo()
-        addTextFieldWithButtons(
+        addTextFieldWithCopyPasteActionButtons(
             fieldText = appInfo.prompt,
             lines = 36,
-            onSave = {
+            onClicked = {
                 saveAppInfo(
                     appInfo.copy(
                         prompt = it

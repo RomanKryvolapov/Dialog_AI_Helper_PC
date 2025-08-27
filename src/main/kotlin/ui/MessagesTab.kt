@@ -4,9 +4,8 @@ import COLOUR_BLUE
 import COLOUR_GREEN
 import COLOUR_RED
 import PROMPT_FULL_SIZE
-import TRANSLATE_FROM_LANGUAGE_CLEAR
-import TRANSLATE_TEXT_CLEAR
-import TRANSLATE_TO_LANGUAGE_CLEAR
+import SOURCE_TEXT_CLEAR
+import app.DialogApplication.Companion.ownerStage
 import backgroundThreadScope
 import dev.langchain4j.model.input.PromptTemplate
 import extensions.normalizeAndRemoveEmptyLines
@@ -31,12 +30,12 @@ import repository.CloudRepository
 import repository.LocalNetworkRepository
 import repository.PreferencesRepository
 import ui.base.BaseTab
-import utils.VoskRecognizer
+import utils.VoskVoiceRecognizer
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 class MessagesTab(
-    private val voskRecognizer: VoskRecognizer,
+    private val voskVoiceRecognizer: VoskVoiceRecognizer,
     private val cloudRepository: CloudRepository,
     private val localNetworkRepository: LocalNetworkRepository,
     preferencesRepository: PreferencesRepository
@@ -45,7 +44,7 @@ class MessagesTab(
 ) {
 
 
-    private val log = LoggerFactory.getLogger("MessagesTabTag")
+    private val log = LoggerFactory.getLogger("MessagesTab")
 
     companion object {
         const val FIELD_BACKGROUND_COLOUR = "#323232"
@@ -104,23 +103,23 @@ class MessagesTab(
                 Button("Restart engine").apply {
                     style += "-fx-background-color: $COLOUR_RED;"
                     setOnAction {
-                        val device = voskRecognizer.getAvailableInputDevices().firstOrNull {
+                        val device = voskVoiceRecognizer.getAvailableInputDevices().firstOrNull {
                             getAppInfo().lastSelectedDevice == it.name
                         }
                         if (device == null) {
-                            showAlert(
+                            ownerStage?.showAlert(
                                 alertTitle = "No Device Selected",
                                 alertContent = "Please select an audio device in the Settings tab before starting recognition."
                             )
                             return@setOnAction
                         }
-                        voskRecognizer.runRecognition(device)
+                        voskVoiceRecognizer.runRecognition(device)
                     }
                 },
                 Button("Restart recognition").apply {
                     style += "-fx-background-color: $COLOUR_BLUE;"
                     setOnAction {
-                        voskRecognizer.splitUtterance()
+                        voskVoiceRecognizer.splitUtterance()
                     }
                 },
                 Button("Translate now").apply {
@@ -150,35 +149,35 @@ class MessagesTab(
     }
 
     private fun startListening() {
-        val device = voskRecognizer.getAvailableInputDevices().firstOrNull {
+        val device = voskVoiceRecognizer.getAvailableInputDevices().firstOrNull {
             getAppInfo().lastSelectedDevice == it.name
         }
         if (device == null) {
-            showAlert(
+            ownerStage?.showAlert(
                 alertTitle = "No Device Selected",
                 alertContent = "Please select an audio device in the Settings tab before starting recognition."
             )
             return
         }
         when {
-            voskRecognizer.inInit() -> {
-                showAlert(
+            voskVoiceRecognizer.inInit() -> {
+                ownerStage?.showAlert(
                     alertTitle = "Error",
                     alertContent = "Please wait for the initialization to complete."
                 )
             }
 
-            !voskRecognizer.inRunning() -> {
-                voskRecognizer.runRecognition(device)
+            !voskVoiceRecognizer.inRunning() -> {
+                voskVoiceRecognizer.runRecognition(device)
                 backgroundThreadScope.launch {
                     val translateTextEveryMilliseconds = getAppInfo().translateTextEveryMilliseconds
                     if (translateTextEveryMilliseconds != 0L) {
                         delay(3000L)
-                        while (voskRecognizer.inRunning()) {
+                        while (voskVoiceRecognizer.inRunning()) {
                             delay(TRANSLATE_CHECK_DELAY)
                             val currentTime = System.currentTimeMillis()
                             if (lastTranslatedTime.get() + translateTextEveryMilliseconds < currentTime) {
-                                log.debug("translate by timer")
+                                log.debug("Translate text by timer")
                                 translateMessage(
                                     index = messageBox.children.size - 1,
                                     message = originalMessageBuffer,
@@ -191,55 +190,50 @@ class MessagesTab(
             }
 
             else -> {
-                voskRecognizer.stopRecognition()
+                voskVoiceRecognizer.stopRecognition()
             }
         }
     }
 
     private fun setupListeners() {
-        voskRecognizer.onInitReady = {
-            log.debug("onInitReady")
+        voskVoiceRecognizer.onInitReady = {
             mainThreadScope.launch {
                 listeningButton.text = "Start dialog"
                 listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
             }
         }
-        voskRecognizer.onStartListener = {
-            log.debug("onStartListener")
+        voskVoiceRecognizer.onStartListener = {
             mainThreadScope.launch {
                 listeningButton.text = "Stop dialog"
                 listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
             }
         }
-        voskRecognizer.onStopListener = {
-            log.debug("onStopListener")
+        voskVoiceRecognizer.onStopListener = {
             mainThreadScope.launch {
                 listeningButton.text = "Start dialog"
                 listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
             }
         }
-        voskRecognizer.onErrorListener = { message ->
-            log.error("onErrorListener: $message")
+        voskVoiceRecognizer.onErrorListener = { message ->
             mainThreadScope.launch {
                 listeningButton.text = "Error init"
                 listeningButton.style += "-fx-background-color: $COLOUR_RED;"
             }
-            showAlert(
+            ownerStage?.showAlert(
                 alertTitle = "Recognizer error",
                 alertContent = message
             )
         }
-        voskRecognizer.onResultListener = { result ->
+        voskVoiceRecognizer.onResultListener = { result ->
             val resultString = JSONObject(result).optString("partial").normalizeAndRemoveEmptyLines()
             if (resultString.isNotEmpty()) {
-                log.debug("onResultListener: $resultString")
                 mainThreadScope.launch {
                     listeningButton.text = "Stop dialog"
                     listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
                 }
             }
         }
-        voskRecognizer.onPartialResultListener = { result ->
+        voskVoiceRecognizer.onPartialResultListener = { result ->
             val resultString = JSONObject(result).optString("partial").normalizeAndRemoveEmptyLines()
             if (resultString.isNotEmpty() && resultString != "the" && originalMessageBuffer != result) {
                 mainThreadScope.launch {
@@ -250,7 +244,6 @@ class MessagesTab(
                 val currentMessageIndex = messageBox.children.size - 1
                 when {
                     originalMessageBuffer.length > resultString.length + 16 -> {
-                        log.debug("onPartialResultListener new message: $resultString")
                         updateMessageAt(
                             index = currentMessageIndex + 1,
                             newItem = DialogItem(
@@ -270,7 +263,7 @@ class MessagesTab(
 
                     translateTextEverySymbols != 0 &&
                             (originalMessageBuffer.length / translateTextEverySymbols) > (lastTranslatedLength.get() / translateTextEverySymbols) -> {
-                        log.debug("translate by size")
+                        log.debug("Translate text by text size")
                         lastTranslatedLength.set(originalMessageBuffer.length)
                         originalMessageBuffer = resultString
                         updateMessageAt(
@@ -307,8 +300,8 @@ class MessagesTab(
         message: String,
         writeResultToMessageBuffer: Boolean,
     ) {
-        if (message.isEmpty()) {
-            log.error("translateMessage message is empty")
+        if (message.isEmpty() || message == "the") {
+            log.error("Translate message is empty")
             return
         }
         translateMessageJob?.cancel()
@@ -319,15 +312,9 @@ class MessagesTab(
 //                .replace(TRANSLATE_FROM_LANGUAGE, appInfo.selectedFromLanguage.englishNameString)
 //                .replace(TRANSLATE_TO_LANGUAGE, appInfo.selectedToLanguage.englishNameString)
 //                .replace(TRANSLATE_TEXT, message)
-            log.debug("translateMessage message: $message from: ${appInfo.selectedFromLanguage.englishNameString} to: ${appInfo.selectedToLanguage.englishNameString}")
+            log.debug("Translate text: $message")
             val template = PromptTemplate.from(PROMPT_FULL_SIZE)
-            val prompt = template.apply(
-                mapOf(
-                    TRANSLATE_FROM_LANGUAGE_CLEAR to appInfo.selectedFromLanguage.englishNameString,
-                    TRANSLATE_TO_LANGUAGE_CLEAR to appInfo.selectedToLanguage.englishNameString,
-                    TRANSLATE_TEXT_CLEAR to message
-                )
-            )
+            val prompt = template.apply(mapOf(SOURCE_TEXT_CLEAR to message))
             val result = when (appInfo.selectedModel.engine) {
                 LlmModelEngine.GOOGLE -> {
                     cloudRepository.generateAnswerByLangChainByGoogleAI(
@@ -340,7 +327,7 @@ class MessagesTab(
                 LlmModelEngine.LM_STUDIO -> {
                     localNetworkRepository.generateAnswerByLangChainLmStudio(
                         prompt = prompt,
-                        port = appInfo.lmStudioConfig.port,
+                        baseUrl = appInfo.lmStudioConfig.baseUrl,
                         model = appInfo.selectedModel.id,
                     )
                 }
@@ -348,14 +335,14 @@ class MessagesTab(
                 LlmModelEngine.OLLAMA -> {
                     localNetworkRepository.generateAnswerByLangChainOllama(
                         prompt = prompt,
-                        port = appInfo.ollamaConfig.port,
+                        baseUrl = appInfo.ollamaConfig.baseUrl,
                         model = appInfo.selectedModel.id,
                     )
                 }
             }
             if (!result.isSuccess) {
-                log.error("translateMessage result error: ${result.exceptionOrNull()}")
-                showAlert(
+                log.error("Translate message error: ${result.exceptionOrNull()}")
+                ownerStage?.showAlert(
                     alertTitle = "Error",
                     alertContent = result.exceptionOrNull()?.message ?: ""
                 )
@@ -370,8 +357,8 @@ class MessagesTab(
             }
             val resultMessage = result.getOrNull()
             if (resultMessage.isNullOrBlank()) {
-                log.error("translateMessage resultMessage is null")
-                showAlert(
+                log.error("Translate message result is null")
+                ownerStage?.showAlert(
                     alertTitle = "Error",
                     alertContent = "Answer message is null or blank"
                 )
@@ -384,7 +371,7 @@ class MessagesTab(
                 )
                 return@launch
             }
-            log.debug("translateMessage result: $resultMessage")
+            log.debug("Translate message result:\n$resultMessage")
             translatedMessageBuffer = if (writeResultToMessageBuffer) {
                 resultMessage
             } else {

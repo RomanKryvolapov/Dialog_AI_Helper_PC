@@ -3,17 +3,21 @@ package extensions
 import COLOUR_BLUE
 import COLOUR_GREEN
 import COLOUR_RED
-import app.DialogApplication
 import javafx.collections.FXCollections
 import javafx.geometry.Insets
 import javafx.geometry.Pos
 import javafx.scene.control.*
+import javafx.scene.control.TextInputControl
 import javafx.scene.input.Clipboard
 import javafx.scene.input.ClipboardContent
 import javafx.scene.layout.HBox
 import javafx.scene.layout.VBox
+import javafx.stage.DirectoryChooser
+import javafx.stage.Stage
+import kotlinx.coroutines.NonCancellable.children
 import kotlinx.coroutines.launch
 import mainThreadScope
+import java.io.File
 
 fun VBox.addLabel(text: String) {
     children.add(Label(text).apply {
@@ -29,66 +33,114 @@ fun VBox.addTitleLabel(text: String) {
     })
 }
 
-fun VBox.addTextFieldWithButtons(
+fun VBox.addTextField(
     fieldText: String,
     lines: Int = 1,
-    onSave: (String) -> Unit
-) {
+): TextInputControl {
     val field = if (lines == 1) {
-        TextField().apply {
-            text = fieldText
-        }
+        TextField(fieldText)
     } else {
-        TextArea().apply {
+        TextArea(fieldText).apply {
             isWrapText = true
             prefRowCount = lines
-            text = fieldText
         }
     }
-    val box = VBox(4.0)
     val fieldContainer = HBox(field).apply {
         alignment = Pos.CENTER
         padding = Insets(0.0, 20.0, 0.0, 20.0)
         field.prefWidthProperty().bind(widthProperty().multiply(0.6))
     }
-    val buttonsContainer = HBox(4.0).apply {
+    children.add(fieldContainer)
+    return field
+}
+
+fun VBox.addTextFieldWithSaveButton(
+    fieldText: String,
+    lines: Int = 1,
+    buttonTitle: String,
+    onClicked: (String) -> Unit
+): TextInputControl {
+    val field = if (lines == 1) {
+        TextField(fieldText)
+    } else {
+        TextArea(fieldText).apply {
+            isWrapText = true
+            prefRowCount = lines
+        }
+    }
+    val buttonWidthBinding = field.prefWidthProperty().divide(3)
+    val button = Button(buttonTitle).apply {
+        style = "-fx-background-color: $COLOUR_BLUE"
+        prefWidthProperty().bind(buttonWidthBinding)
+        setOnAction {
+            onClicked(field.text)
+        }
+    }
+    val buttonContainer = HBox(4.0).apply {
         alignment = Pos.CENTER
         padding = Insets(0.0, 20.0, 0.0, 20.0)
-        val buttonWidthBinding = field.prefWidthProperty().divide(3)
-        val copyButton = Button("Copy").apply {
-            prefWidthProperty().bind(buttonWidthBinding)
-            style = """
-                -fx-background-color: $COLOUR_BLUE;
-            """.trimIndent()
-            setOnAction {
-                val content = ClipboardContent()
-                content.putString(field.text)
-                Clipboard.getSystemClipboard().setContent(content)
-            }
-        }
-        val pasteButton = Button("Paste").apply {
-            prefWidthProperty().bind(buttonWidthBinding)
-            style = """
-                -fx-background-color: $COLOUR_GREEN;
-            """.trimIndent()
-            setOnAction {
-                val clipboard = Clipboard.getSystemClipboard()
-                if (clipboard.hasString()) field.text = clipboard.string
-            }
-        }
-        val saveButton = Button("Save").apply {
-            prefWidthProperty().bind(buttonWidthBinding)
-            style = """
-                -fx-background-color: $COLOUR_RED;
-            """.trimIndent()
-            setOnAction {
-                onSave(field.text)
-            }
-        }
-        children.addAll(copyButton, pasteButton, saveButton)
+        children.add(button)
+        button.prefWidthProperty().bind(widthProperty().multiply(0.6))
     }
-    box.children.addAll(fieldContainer, buttonsContainer)
-    children.addAll(box)
+    val fieldContainer = HBox(field).apply {
+        alignment = Pos.CENTER
+        padding = Insets(0.0, 20.0, 0.0, 20.0)
+        field.prefWidthProperty().bind(widthProperty().multiply(0.6))
+    }
+    children.addAll(fieldContainer, buttonContainer)
+    return field
+}
+
+fun VBox.addTextFieldWithCopyPasteActionButtons(
+    fieldText: String,
+    lines: Int = 1,
+    buttonTitle: String = "Save",
+    onClicked: (String) -> Unit
+): TextInputControl {
+    val field = if (lines == 1) {
+        TextField(fieldText)
+    } else {
+        TextArea(fieldText).apply {
+            isWrapText = true
+            prefRowCount = lines
+        }
+    }
+    val buttonWidthBinding = field.prefWidthProperty().divide(3)
+    val copyButton = Button("Copy").apply {
+        style = "-fx-background-color: $COLOUR_BLUE"
+        prefWidthProperty().bind(buttonWidthBinding)
+        setOnAction {
+            val content = ClipboardContent()
+            content.putString(field.text)
+            Clipboard.getSystemClipboard().setContent(content)
+        }
+    }
+    val pasteButton = Button("Paste").apply {
+        style = "-fx-background-color: $COLOUR_GREEN"
+        prefWidthProperty().bind(buttonWidthBinding)
+        setOnAction {
+            val clipboard = Clipboard.getSystemClipboard()
+            if (clipboard.hasString()) field.text = clipboard.string
+        }
+    }
+    val saveButton = Button(buttonTitle).apply {
+        style = "-fx-background-color: $COLOUR_RED"
+        prefWidthProperty().bind(buttonWidthBinding)
+        setOnAction {
+            onClicked(field.text)
+        }
+    }
+    val buttonsContainer = HBox(4.0, copyButton, pasteButton, saveButton).apply {
+        alignment = Pos.CENTER
+        padding = Insets(0.0, 20.0, 0.0, 20.0)
+    }
+    val fieldContainer = HBox(field).apply {
+        alignment = Pos.CENTER
+        padding = Insets(0.0, 20.0, 0.0, 20.0)
+        field.prefWidthProperty().bind(widthProperty().multiply(0.6))
+    }
+    children.addAll(fieldContainer, buttonsContainer)
+    return field
 }
 
 fun <T> VBox.addComboBox(
@@ -143,7 +195,6 @@ fun VBox.addButton(
     val buttonContainer = HBox(4.0).apply {
         alignment = Pos.CENTER
         padding = Insets(0.0, 20.0, 0.0, 20.0)
-
         children.add(button)
         button.prefWidthProperty().bind(widthProperty().multiply(0.6))
     }
@@ -151,19 +202,49 @@ fun VBox.addButton(
     return button
 }
 
-fun showAlert(
+fun Stage.showAlert(
     alertTitle: String,
     alertContent: String,
 ) {
     mainThreadScope.launch {
         Alert(Alert.AlertType.WARNING).apply {
-            DialogApplication.ownerStage?.let {
-                initOwner(it)
-            }
+            initOwner(this@showAlert)
             title = alertTitle
             headerText = null
             contentText = alertContent
             showAndWait()
         }
     }
+}
+
+fun Stage.showAlertWithAction(
+    alertTitle: String,
+    alertContent: String,
+    onPositive: () -> Unit
+) {
+    mainThreadScope.launch {
+        val okButton = ButtonType("OK", ButtonBar.ButtonData.OK_DONE)
+        val cancelButton = ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE)
+        val alert = Alert(Alert.AlertType.CONFIRMATION, alertContent, okButton, cancelButton).apply {
+            initOwner(this@showAlertWithAction)
+            title = alertTitle
+            headerText = null
+        }
+        val result = alert.showAndWait()
+        if (result.isPresent && result.get() == okButton) {
+            onPositive()
+        }
+    }
+}
+
+fun Stage.chooseDirectory(
+    title: String
+): File? {
+    val directoryChooser = DirectoryChooser()
+    directoryChooser.title = title
+    val defaultDirectory = File(System.getProperty("user.dir"))
+    if (defaultDirectory.exists()) {
+        directoryChooser.initialDirectory = defaultDirectory
+    }
+    return directoryChooser.showDialog(this)
 }

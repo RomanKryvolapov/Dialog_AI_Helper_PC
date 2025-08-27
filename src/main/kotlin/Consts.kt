@@ -7,13 +7,9 @@ const val COLOUR_GREEN = "#3C713C"
 const val COLOUR_BLUE = "#3C71AC"
 const val COLOUR_RED = "#8C3C3C"
 
-const val TRANSLATE_FROM_LANGUAGE = "{{translate_from_language}}"
-const val TRANSLATE_TO_LANGUAGE = "{{translate_to_language}}"
-const val TRANSLATE_TEXT = "{{translate_text}}"
+const val SOURCE_TEXT = "{{source_text}}"
 
-const val TRANSLATE_FROM_LANGUAGE_CLEAR = "translate_from_language"
-const val TRANSLATE_TO_LANGUAGE_CLEAR = "translate_to_language"
-const val TRANSLATE_TEXT_CLEAR = "translate_text"
+const val SOURCE_TEXT_CLEAR = "source_text"
 
 const val DEFAULT_KEY = "Default"
 
@@ -23,7 +19,7 @@ Role:
 You are a professional text translator.
 
 Task:
-Translate "Text to translate" from $TRANSLATE_FROM_LANGUAGE to $TRANSLATE_TO_LANGUAGE.
+Translate "Text to translate" from English to Russian.
 
 Rules:
 The text is a result of voice recognition, so some words may not be recognized correctly.
@@ -37,7 +33,7 @@ Output:
 
 Input:
 - "Text to translate":
-$TRANSLATE_TEXT
+$SOURCE_TEXT
 """.trimIndent()
 
 val defaultApplicationInfo = ApplicationInfo(
@@ -48,8 +44,6 @@ val defaultApplicationInfo = ApplicationInfo(
         engine = LlmModelEngine.GOOGLE,
         googleAiModel = GoogleAiModelsEnum.GEMMA_3_27B,
     ),
-    selectedFromLanguage = ApplicationLanguage.ENGLISH,
-    selectedToLanguage = ApplicationLanguage.ENGLISH,
     googleCloudToken = "",
     prompt = PROMPT_FULL_SIZE,
     lastOpenedTab = 1,
@@ -57,19 +51,17 @@ val defaultApplicationInfo = ApplicationInfo(
         DEFAULT_KEY to PROMPT_FULL_SIZE
     ),
     lmStudioConfig = LmStudioConfig(
-        ip = "localhost",
-        port = "1234",
+        baseUrl = "http://localhost:1234",
         models = emptyList(),
 
     ),
     ollamaConfig = OllamaConfig(
-        ip = "localhost",
-        port = "11434",
+        baseUrl = "http://localhost:11434",
         models = emptyList(),
     ),
     translateTextEverySymbols = 100,
     translateTextEveryMilliseconds = 10000L,
-    voskModel = VoskModels.VOSK_MODEL_EN_US_0_22,
+    voskModelPath = "",
 )
 
 

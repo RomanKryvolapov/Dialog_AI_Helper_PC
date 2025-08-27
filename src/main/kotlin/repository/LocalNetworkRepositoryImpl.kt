@@ -21,6 +21,7 @@ import models.network.openai.OpenAIGenerationResponse
 import models.network.openai.OpenAIModelsResponse
 import org.slf4j.LoggerFactory
 import utils.ChatLogger
+import java.awt.SystemColor.text
 import java.time.Duration
 
 class LocalNetworkRepositoryImpl(
@@ -31,14 +32,13 @@ class LocalNetworkRepositoryImpl(
     private val openAIGenerationResponseMapper: OpenAIGenerationResponseMapper,
 ): LocalNetworkRepository {
 
-    private val log = LoggerFactory.getLogger("LocalNetworkRepositoryTag")
+    private val log = LoggerFactory.getLogger("LocalNetworkRepositor")
 
     override suspend fun getLmStudioModels(
-        ip: String,
-        port: String,
+        baseUrl: String,
     ): Result<List<LlmModel>> {
-        log.debug("getLmStudioModels port: $port")
-        val url = "http://$ip:$port/v1/models"
+        log.debug("get LM Studio models, base url: $baseUrl")
+        val url = "$baseUrl/v1/models"
         try {
             val response = httpClient.get(url) {
                 contentType(ContentType.Application.Json)
@@ -48,25 +48,24 @@ class LocalNetworkRepositoryImpl(
             }
             val body = response.body<OpenAIModelsResponse>()
             val models = openAIModelsResponseMapper.map(body)
-            log.debug("getLmStudioModels size: ${models.size}")
+            log.debug("get LM Studio models result size: ${models.size}")
             return Result.success(models)
         } catch (e: CancellationException) {
-            log.error("getLmStudioModels CancellationException")
+            log.error("get LM Studio models Cancelled")
             e.printStackTrace()
             return Result.success(emptyList())
         } catch (e: Exception) {
-            log.error("getLmStudioModels exception: ${e.message}")
+            log.error("get LM Studio models exception: ${e.message}")
             e.printStackTrace()
             return Result.failure(e)
         }
     }
 
     override suspend fun getOllamaModels(
-        ip: String,
-        port: String,
+        baseUrl: String,
     ): Result<List<LlmModel>> {
-        log.debug("getOllamaModels port: $port")
-        val url = "http://$ip:$port/api/tags"
+        log.debug("get Ollama models, base url: $baseUrl")
+        val url = "$baseUrl/api/tags"
         try {
             val response = httpClient.get(url) {
                 contentType(ContentType.Application.Json)
@@ -76,25 +75,26 @@ class LocalNetworkRepositoryImpl(
             }
             val body = response.body<OllamaModelsResponse>()
             val models = ollamaModelsResponseMapper.map(body)
-            log.debug("getOllamaModels size: ${models.size}")
+            log.debug("get Ollama models result size: ${models.size}")
             return Result.success(models)
         } catch (e: CancellationException) {
-            log.error("getOllamaModels CancellationException")
+            log.error("get Ollama models Cancelled")
             e.printStackTrace()
             return Result.success(emptyList())
         } catch (e: Exception) {
-            log.error("getOllamaModels exception: ${e.message}")
+            log.error("get Ollama models exception: ${e.message}")
             e.printStackTrace()
             return Result.failure(e)
         }
     }
 
     override suspend fun generateAnswerByLmStudio(
-        port: String,
+        baseUrl: String,
         model: String,
         text: String,
     ): Result<String> {
-        log.debug("generateAnswerByLmStudio port: $port, model: $model")
+        log.debug("Generate answer with LM Studio\nmodel: $model\ntext: $text")
+        val url = "$baseUrl/v1/chat/completions"
         val requestBody = OpenAIGenerationRequest(
             model = model,
             messages = listOf(
@@ -105,7 +105,6 @@ class LocalNetworkRepositoryImpl(
             ),
             stream = false,
         )
-        val url = "http://localhost:$port/v1/chat/completions"
         try {
             val response = httpClient.post(url) {
                 contentType(ContentType.Application.Json)
@@ -116,26 +115,26 @@ class LocalNetworkRepositoryImpl(
             }
             val body = response.body<OpenAIGenerationResponse>()
             val model = openAIGenerationResponseMapper.map(body).normalizeAndRemoveEmptyLines()
-            log.debug("generateAnswerByLmStudio result size: ${model.length}")
+            log.debug("Generate answer with LM Studio result size: ${model.length}")
             return Result.success(model)
         } catch (e: CancellationException) {
-            log.error("generateAnswerByLmStudio CancellationException")
+            log.error("Generate answer with LM Studio Cancelled")
             e.printStackTrace()
             return Result.success("...")
         } catch (e: Exception) {
-            log.error("generateAnswerByLmStudio exception: ${e.message}")
+            log.error("Generate answer with LM Studio exception: ${e.message}")
             e.printStackTrace()
             return Result.failure(e)
         }
     }
 
     override fun generateAnswerByLangChainLmStudio(
-        port: String,
+        baseUrl: String,
         model: String,
         prompt: Prompt,
     ): Result<String> {
-        log.debug("generateAnswerByLangChainLmStudio port: $port, model: $model")
-        val url = "http://localhost:$port/v1"
+        log.debug("Generate answer with LM Studio and LangChain\nmodel: $model\ntext: ${prompt.text()}")
+        val url = "$baseUrl/v1"
         return try {
             val chatModel = OpenAiChatModel.builder()
                 .httpClientBuilder(jdkClientBuilder)
@@ -149,29 +148,28 @@ class LocalNetworkRepositoryImpl(
                 .listeners(listOf(ChatLogger()))
                 .build()
             val response = chatModel.chat(prompt.text())
-            log.debug("generateAnswerByLangChainLmStudio result size: ${response.length}")
+            log.debug("Generate answer with LM Studio and LangChain result size: ${response.length}")
             Result.success(response)
         } catch (e: CancellationException) {
-            log.error("generateAnswerByLangChainLmStudio CancellationException")
+            log.error("Generate answer with LM Studio and LangChain Cancelled")
             e.printStackTrace()
             return Result.success("...")
         } catch (e: Exception) {
-            log.error("generateAnswerByLangChainLmStudio exception: ${e.message}")
+            log.error("Generate answer with LM Studio and LangChain exception: ${e.message}")
             e.printStackTrace()
             return Result.failure(e)
         }
     }
 
     override fun generateAnswerByLangChainOllama(
-        port: String,
+        baseUrl: String,
         model: String,
         prompt: Prompt,
     ): Result<String> {
-        log.debug("generateAnswerByLangChainOllama port: $port, model: $model")
-        val url = "http://localhost:$port"
+        log.debug("Generate answer with Ollama and LangChain\nmodel: $model\ntext: ${prompt.text()}")
         return try {
             val chatModel = OllamaChatModel.builder()
-                .baseUrl(url)
+                .baseUrl(baseUrl)
                 .modelName(model)
                 .temperature(0.8)
                 .timeout(Duration.ofSeconds(90))
@@ -179,14 +177,14 @@ class LocalNetworkRepositoryImpl(
                 .logResponses(true)
                 .build()
             val response = chatModel.chat(prompt.text())
-            log.debug("generateAnswerByLangChainOllama result size: ${response.length}")
+            log.debug("Generate answer with Ollama and LangChain result size: ${response.length}")
             Result.success(response)
         } catch (e: CancellationException) {
-            log.error("generateAnswerByLangChainOllama CancellationException")
+            log.error("Generate answer with Ollama and LangChain Cancelled")
             e.printStackTrace()
             return Result.success("...")
         } catch (e: Exception) {
-            log.error("generateAnswerByLangChainOllama exception: ${e.message}")
+            log.error("Generate answer with Ollama and LangChain exception: ${e.message}")
             e.printStackTrace()
             return Result.failure(e)
         }

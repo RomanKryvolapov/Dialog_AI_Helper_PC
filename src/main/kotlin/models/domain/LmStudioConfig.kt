@@ -1,7 +1,6 @@
 package models.domain
 
 data class LmStudioConfig(
-    val ip: String,
-    val port: String,
+    val baseUrl: String,
     val models: List<LlmModel>,
 )

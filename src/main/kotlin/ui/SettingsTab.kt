@@ -1,24 +1,23 @@
 package ui
 
 import COLOUR_GREEN
+import SOURCE_TEXT
+import app.DialogApplication.Companion.ownerStage
 import backgroundThreadScope
 import extensions.*
 import javafx.collections.FXCollections
 import javafx.geometry.Insets
-import javafx.geometry.Pos
 import javafx.scene.control.ComboBox
-import javafx.scene.control.ListCell
-import javafx.scene.control.ToggleGroup
+import javafx.scene.control.TextInputControl
 import javafx.scene.layout.Background
 import javafx.scene.layout.BackgroundFill
-import javafx.scene.layout.HBox
 import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.javafx.JavaFx
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import models.domain.ApplicationLanguage
+import mainThreadScope
 import models.domain.GoogleAiModelsEnum
 import models.domain.LlmModel
 import models.domain.LlmModelEngine
@@ -26,11 +25,13 @@ import org.slf4j.LoggerFactory
 import repository.LocalNetworkRepository
 import repository.PreferencesRepository
 import ui.base.BaseTab
-import utils.VoskRecognizer
+import utils.VoskVoiceRecognizer
+import java.awt.Desktop
+import java.net.URI
 import javax.sound.sampled.Mixer
 
 class SettingsTab(
-    private val voskRecognizer: VoskRecognizer,
+    private val voskVoiceRecognizer: VoskVoiceRecognizer,
     private val localNetworkRepository: LocalNetworkRepository,
     preferencesRepository: PreferencesRepository
 ) : BaseTab(
@@ -41,12 +42,13 @@ class SettingsTab(
         const val WINDOW_BACKGROUND_COLOUR = "#323232"
     }
 
-    private val log = LoggerFactory.getLogger("SettingsTabTag")
-
-    val currentToggleGroup = ToggleGroup()
-
+    private val log = LoggerFactory.getLogger("SettingsTab")
 
     var modelsBox: ComboBox<LlmModel>? = null
+    var voskModelPathTextInput: TextInputControl? = null
+    var googleCloudTokenTextInput: TextInputControl? = null
+    var lmStudioBaseUrlTextInput: TextInputControl? = null
+    var ollamaBaseUrlTextInput: TextInputControl? = null
 
     val content: VBox = VBox(4.0).apply {
         padding = Insets(0.0, 20.0, 0.0, 20.0)
@@ -56,7 +58,7 @@ class SettingsTab(
 
         addTitleLabel("Audio device for voice recognition:")
 
-        val devices: List<Mixer.Info> = voskRecognizer.getAvailableInputDevices()
+        val devices: List<Mixer.Info> = voskVoiceRecognizer.getAvailableInputDevices()
 
         if (devices.isEmpty()) {
             addLabel("Not found")
@@ -104,63 +106,35 @@ class SettingsTab(
             }
         )
 
-        addTitleLabel("Translate From / To Language:")
-        val translateFromComboBox = ComboBox(
-            FXCollections.observableArrayList(ApplicationLanguage.entries)
-        ).apply {
-            cellFactory = javafx.util.Callback {
-                object : ListCell<ApplicationLanguage>() {
-                    override fun updateItem(item: ApplicationLanguage?, empty: Boolean) {
-                        super.updateItem(item, empty)
-                        text = if (item == null || empty) null else item.name
-                    }
+        addLabel("To use voice recognition, you must download the model for recognition, unzip it to disk and select the folder with it.")
+
+        addButton(
+            title = "Download model",
+            bgColor = COLOUR_GREEN,
+            onClicked = {
+                if (Desktop.isDesktopSupported()) {
+                    Desktop.getDesktop().browse(URI("https://alphacephei.com/vosk/models"))
+                } else {
+                    println("Desktop is not supported")
                 }
             }
-            buttonCell = cellFactory.call(null)
-            selectionModel.select(appInfo.selectedFromLanguage)
-            setOnAction {
-                saveAppInfo(
-                    getAppInfo().copy(
-                        selectedFromLanguage = selectionModel.selectedItem
-                    )
-                )
-            }
-        }
-        val translateToComboBox = ComboBox(
-            FXCollections.observableArrayList(ApplicationLanguage.entries)
-        ).apply {
-            cellFactory = javafx.util.Callback {
-                object : ListCell<ApplicationLanguage>() {
-                    override fun updateItem(item: ApplicationLanguage?, empty: Boolean) {
-                        super.updateItem(item, empty)
-                        text = if (item == null || empty) null else item.name
-                    }
-                }
-            }
-            buttonCell = cellFactory.call(null)
-            selectionModel.select(appInfo.selectedToLanguage)
-            setOnAction {
-                saveAppInfo(
-                    getAppInfo().copy(
-                        selectedToLanguage = selectionModel.selectedItem
-                    )
-                )
-            }
-        }
-        val langContainer = HBox(4.0).apply {
-            alignment = Pos.CENTER
-            padding = Insets(0.0, 20.0, 0.0, 20.0)
-            translateFromComboBox.prefWidthProperty().bind(widthProperty().multiply(0.3))
-            translateToComboBox.prefWidthProperty().bind(widthProperty().multiply(0.3))
-            children.addAll(translateFromComboBox, translateToComboBox)
-        }
-        children.add(langContainer)
+        )
 
-        addTitleLabel("Google CLoud token:")
+        addTitleLabel("VOSK voice recognition model folder:")
 
-        addTextFieldWithButtons(
+        voskModelPathTextInput = addTextFieldWithSaveButton(
+            fieldText = appInfo.voskModelPath,
+            buttonTitle = "Select folder with model files",
+            onClicked = {
+                voskVoiceRecognizer.selectModelFolder()
+            }
+        )
+
+        addTitleLabel("Google Cloud token:")
+
+        googleCloudTokenTextInput = addTextFieldWithCopyPasteActionButtons(
             fieldText = appInfo.googleCloudToken,
-            onSave = {
+            onClicked = {
                 saveAppInfo(
                     getAppInfo().copy(
                         googleCloudToken = it
@@ -169,88 +143,54 @@ class SettingsTab(
             }
         )
 
-        addTitleLabel("LM Studio IP Address / Port")
+        addTitleLabel("LM Studio url")
 
-        addTextFieldWithButtons(
-            fieldText = appInfo.lmStudioConfig.ip,
-            onSave = {
-                val appInfo = getAppInfo()
-                saveAppInfo(
-                    appInfo.copy(
-                        lmStudioConfig = appInfo.lmStudioConfig.copy(
-                            ip = it
-                        ),
-                    )
-                )
-            }
-        )
-
-        addTextFieldWithButtons(
-            fieldText = appInfo.lmStudioConfig.port,
-            onSave = {
-                val appInfo = getAppInfo()
-                saveAppInfo(
-                    appInfo.copy(
-                        lmStudioConfig = appInfo.lmStudioConfig.copy(
-                            port = it
-                        ),
-                    )
-                )
-            }
-        )
-
-        addButton(
-            title = "Update LM Studio models",
-            bgColor = COLOUR_GREEN,
+        lmStudioBaseUrlTextInput = addTextFieldWithSaveButton(
+            fieldText = appInfo.lmStudioConfig.baseUrl,
+            buttonTitle = "Update LM Studio models",
             onClicked = {
                 val appInfo = getAppInfo()
+                saveAppInfo(
+                    appInfo.copy(
+                        lmStudioConfig = appInfo.lmStudioConfig.copy(
+                            baseUrl = it
+                        ),
+                    )
+                )
                 getLmStudioModels(
-                    ip = appInfo.lmStudioConfig.ip,
-                    port = appInfo.lmStudioConfig.port,
+                    baseUrl = appInfo.lmStudioConfig.baseUrl,
                 )
             }
         )
 
-        addTitleLabel("Ollama IP Address / Port")
+        addTitleLabel("Ollama url")
 
-        addTextFieldWithButtons(
-            fieldText = appInfo.ollamaConfig.port,
-            onSave = {
+        ollamaBaseUrlTextInput = addTextFieldWithSaveButton(
+            fieldText = appInfo.ollamaConfig.baseUrl,
+            buttonTitle = "Update Ollama models",
+            onClicked = {
                 val appInfo = getAppInfo()
                 saveAppInfo(
                     appInfo.copy(
                         ollamaConfig = appInfo.ollamaConfig.copy(
-                            port = it
-                        )
-                    )
-                )
-            }
-        )
-
-        addTextFieldWithButtons(
-            fieldText = appInfo.ollamaConfig.ip,
-            onSave = {
-                val appInfo = getAppInfo()
-                saveAppInfo(
-                    appInfo.copy(
-                        ollamaConfig = appInfo.ollamaConfig.copy(
-                            ip = it
+                            baseUrl = it
                         ),
                     )
                 )
-            }
-        )
-
-        addButton(
-            title = "Update Ollama models",
-            bgColor = COLOUR_GREEN,
-            onClicked = {
                 getOllamaModels(
-                    ip = appInfo.ollamaConfig.ip,
-                    port = appInfo.ollamaConfig.port,
+                    baseUrl = appInfo.ollamaConfig.baseUrl,
                 )
             }
         )
+
+        mainThreadScope.launch {
+            preferencesRepository.appInfoFlow.collect { appInfo ->
+                voskModelPathTextInput?.text = appInfo.voskModelPath
+                googleCloudTokenTextInput?.text = appInfo.googleCloudToken
+                lmStudioBaseUrlTextInput?.text = appInfo.lmStudioConfig.baseUrl
+                ollamaBaseUrlTextInput?.text = appInfo.ollamaConfig.baseUrl
+            }
+        }
 
     }
 
@@ -290,18 +230,14 @@ class SettingsTab(
         }
     }
 
-    private fun getLmStudioModels(
-        ip: String,
-        port: String,
-    ) {
+    private fun getLmStudioModels(baseUrl: String) {
         backgroundThreadScope.launch {
             val result = localNetworkRepository.getLmStudioModels(
-                ip = ip,
-                port = port,
+                baseUrl = baseUrl,
             )
             if (!result.isSuccess) {
                 log.error("getLmStudioModels result error: ${result.exceptionOrNull()}")
-                showAlert(
+                ownerStage?.showAlert(
                     alertTitle = "Error",
                     alertContent = result.exceptionOrNull()?.message ?: ""
                 )
@@ -310,7 +246,7 @@ class SettingsTab(
             val resultData = result.getOrNull()
             if (resultData.isNullOrEmpty()) {
                 log.error("getLmStudioModels resultData == null")
-                showAlert(
+                ownerStage?.showAlert(
                     alertTitle = "Error",
                     alertContent = "Empty data received"
                 )
@@ -337,18 +273,14 @@ class SettingsTab(
         }
     }
 
-    private fun getOllamaModels(
-        ip: String,
-        port: String,
-    ){
+    private fun getOllamaModels(baseUrl: String) {
         backgroundThreadScope.launch {
             val result = localNetworkRepository.getOllamaModels(
-                ip = ip,
-                port = port,
+                baseUrl = baseUrl,
             )
             if (!result.isSuccess) {
                 log.error("getOllamaModels result error: ${result.exceptionOrNull()}")
-                showAlert(
+                ownerStage?.showAlert(
                     alertTitle = "Error",
                     alertContent = result.exceptionOrNull()?.message ?: ""
                 )
@@ -357,7 +289,7 @@ class SettingsTab(
             val resultData = result.getOrNull()
             if (resultData.isNullOrEmpty()) {
                 log.error("getOllamaModels resultData == null")
-                showAlert(
+                ownerStage?.showAlert(
                     alertTitle = "Error",
                     alertContent = "Empty data received"
                 )

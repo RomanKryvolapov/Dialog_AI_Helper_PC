@@ -3,8 +3,6 @@ package models.domain
 data class ApplicationInfoNullable(
     val lastSelectedDevice: String?,
     val selectedModel: LlmModel?,
-    val selectedFromLanguage: ApplicationLanguage?,
-    val selectedToLanguage: ApplicationLanguage?,
     val googleCloudToken: String?,
     val prompt: String?,
     val lastOpenedTab: Int?,
@@ -13,5 +11,5 @@ data class ApplicationInfoNullable(
     val ollamaConfig: OllamaConfig?,
     val translateTextEverySymbols: Int?,
     val translateTextEveryMilliseconds: Long?,
-    val voskModel: VoskModels?,
+    val voskModelPath: String?,
 )

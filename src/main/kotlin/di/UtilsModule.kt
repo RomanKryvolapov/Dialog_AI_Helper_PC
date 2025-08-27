@@ -14,14 +14,14 @@ import models.domain.ApplicationInfoNullable
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
-import utils.VoskRecognizer
-import utils.VoskRecognizerImpl
+import utils.VoskVoiceRecognizer
+import utils.VoskVoiceRecognizerImpl
 import java.time.Duration
 import java.util.prefs.Preferences
 
 val utilsModule = module {
 
-    singleOf(::VoskRecognizerImpl) bind VoskRecognizer::class
+    singleOf(::VoskVoiceRecognizerImpl) bind VoskVoiceRecognizer::class
 
     single<Preferences> {
         Preferences.userRoot().node("PREFERENCES_DATABASE")

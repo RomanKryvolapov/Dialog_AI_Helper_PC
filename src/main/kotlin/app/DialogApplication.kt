@@ -2,6 +2,7 @@ package app
 
 import PROMPT_FULL_SIZE
 import di.allModules
+import extensions.showAlertWithAction
 import ui.MessagesTab
 import ui.SettingsTab
 import javafx.application.Application
@@ -17,18 +18,20 @@ import org.koin.core.component.inject
 import ui.PromptTab
 import org.koin.core.context.startKoin
 import repository.PreferencesRepository
-import utils.VoskRecognizer
+import ui.ConsoleTab
+import utils.VoskVoiceRecognizer
 
 class DialogApplication : Application(), KoinComponent {
 
-    private val voskRecognizer: VoskRecognizer by inject()
+    private val voskVoiceRecognizer: VoskVoiceRecognizer by inject()
     private val preferencesRepository: PreferencesRepository by inject()
 
     private val messagesTab: MessagesTab by inject()
     private val promptTab: PromptTab by inject()
     private val settingsTab: SettingsTab by inject()
+    private val consoleTab: ConsoleTab by inject()
 
-    companion object{
+    companion object {
         var ownerStage: Stage? = null
     }
 
@@ -57,12 +60,21 @@ class DialogApplication : Application(), KoinComponent {
             tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
             tabs.addAll(
                 Tab("Messages", messagesTab.content),
-                Tab("Prompt", promptTab.content),
+                Tab("Prompt", ScrollPane(promptTab.content).apply {
+                    fitToWidthProperty().set(true)
+                    fitToHeightProperty().set(true)
+                    isPannable = true
+                }),
                 Tab("Settings", ScrollPane(settingsTab.content).apply {
                     fitToWidthProperty().set(true)
                     fitToHeightProperty().set(true)
                     isPannable = true
-                })
+                }),
+                Tab("Console", ScrollPane(consoleTab.content).apply {
+                    fitToWidthProperty().set(true)
+                    fitToHeightProperty().set(true)
+                    isPannable = true
+                }),
             )
             selectionModel.select(appInfo.lastOpenedTab)
             selectionModel.selectedIndexProperty().addListener { _, _, newValue ->
@@ -90,6 +102,17 @@ class DialogApplication : Application(), KoinComponent {
             this.scene = scene
             show()
         }
-        voskRecognizer.init(appInfo.voskModel)
+        if (appInfo.voskModelPath.isNotEmpty()) {
+            voskVoiceRecognizer.init(appInfo.voskModelPath)
+        } else {
+            ownerStage?.showAlertWithAction(
+                alertTitle = "VOSK recognizer error",
+                alertContent = "Please select VOSK voice recognition model folder",
+                onPositive = {
+                    voskVoiceRecognizer.selectModelFolder()
+                }
+            )
+        }
     }
+
 }

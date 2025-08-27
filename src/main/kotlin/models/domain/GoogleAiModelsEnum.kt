@@ -8,12 +8,6 @@ enum class GoogleAiModelsEnum(
     val limitRequestsInDay: Int?,
     val limitTokensInMinute: Int?,
 ) : TypeEnum {
-    LM_STUDIO_LOCAL_MODEL(
-        type = "LM Studio Local Model",
-        limitRequestsInMinute = null,
-        limitRequestsInDay = null,
-        limitTokensInMinute = null,
-    ),
     GEMINI_2_5_FLASH(
         type = "gemini-2.5-flash",
         limitRequestsInMinute = 10, // ok
