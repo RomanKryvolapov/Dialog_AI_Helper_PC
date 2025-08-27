@@ -59,8 +59,8 @@ val defaultApplicationInfo = ApplicationInfo(
         baseUrl = "http://localhost:11434",
         models = emptyList(),
     ),
-    translateTextEverySymbols = 100,
-    translateTextEveryMilliseconds = 10000L,
+    sendTextEverySymbols = 100,
+    sendTextEveryMilliseconds = 10000L,
     voskModelPath = "",
 )
 

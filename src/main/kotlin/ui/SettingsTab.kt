@@ -1,7 +1,7 @@
 package ui
 
+import COLOUR_BLUE
 import COLOUR_GREEN
-import SOURCE_TEXT
 import app.DialogApplication.Companion.ownerStage
 import backgroundThreadScope
 import extensions.*
@@ -49,6 +49,8 @@ class SettingsTab(
     var googleCloudTokenTextInput: TextInputControl? = null
     var lmStudioBaseUrlTextInput: TextInputControl? = null
     var ollamaBaseUrlTextInput: TextInputControl? = null
+    var sendTextEverySymbolsTextInput: TextInputControl? = null
+    var sendTextEveryMillisecondsTextInput: TextInputControl? = null
 
     val content: VBox = VBox(4.0).apply {
         padding = Insets(0.0, 20.0, 0.0, 20.0)
@@ -106,11 +108,79 @@ class SettingsTab(
             }
         )
 
+        addTitleLabel("Send to AI model every N characters, 0 - do not use:")
+
+        sendTextEverySymbolsTextInput = addTextFieldWithSaveButton(
+            fieldText = appInfo.sendTextEverySymbols.toString(),
+            buttonTitle = "Save",
+            buttonColor = COLOUR_GREEN,
+            onClicked = {
+                try {
+                    val result = it.toIntOrNull()
+                    if (result == null) {
+                        ownerStage?.showAlert(
+                            alertTitle = "Error",
+                            alertContent = "Can not get number"
+                        )
+                        return@addTextFieldWithSaveButton
+                    }
+                    val appInfo = getAppInfo()
+                    saveAppInfo(
+                        appInfo.copy(
+                            sendTextEverySymbols = result,
+                        )
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    log.error(e.message)
+                    ownerStage?.showAlert(
+                        alertTitle = "Error",
+                        alertContent = e.message ?: "Can not get number"
+                    )
+                }
+            }
+        )
+
+        addTitleLabel("Send to AI model every N milliseconds, 0 - do not use:")
+
+        sendTextEveryMillisecondsTextInput = addTextFieldWithSaveButton(
+            fieldText = appInfo.sendTextEveryMilliseconds.toString(),
+            buttonTitle = "Save",
+            buttonColor = COLOUR_GREEN,
+            onClicked = {
+                try {
+                    val result = it.toLongOrNull()
+                    if (result == null) {
+                        ownerStage?.showAlert(
+                            alertTitle = "Error",
+                            alertContent = "Can not get number"
+                        )
+                        return@addTextFieldWithSaveButton
+                    }
+                    val appInfo = getAppInfo()
+                    saveAppInfo(
+                        appInfo.copy(
+                            sendTextEveryMilliseconds = result,
+                        )
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    log.error(e.message)
+                    ownerStage?.showAlert(
+                        alertTitle = "Error",
+                        alertContent = e.message ?: "Can not get number"
+                    )
+                }
+            }
+        )
+
+        addTitleLabel("VOSK voice recognition model:")
+
         addLabel("To use voice recognition, you must download the model for recognition, unzip it to disk and select the folder with it.")
 
         addButton(
             title = "Download model",
-            bgColor = COLOUR_GREEN,
+            buttonColor = COLOUR_BLUE,
             onClicked = {
                 if (Desktop.isDesktopSupported()) {
                     Desktop.getDesktop().browse(URI("https://alphacephei.com/vosk/models"))
@@ -125,12 +195,13 @@ class SettingsTab(
         voskModelPathTextInput = addTextFieldWithSaveButton(
             fieldText = appInfo.voskModelPath,
             buttonTitle = "Select folder with model files",
+            buttonColor = COLOUR_GREEN,
             onClicked = {
                 voskVoiceRecognizer.selectModelFolder()
             }
         )
 
-        addTitleLabel("Google Cloud token:")
+        addTitleLabel("Google Cloud API key:")
 
         googleCloudTokenTextInput = addTextFieldWithCopyPasteActionButtons(
             fieldText = appInfo.googleCloudToken,
@@ -143,11 +214,24 @@ class SettingsTab(
             }
         )
 
+        addButton(
+            title = "Get API key",
+            buttonColor = COLOUR_BLUE,
+            onClicked = {
+                if (Desktop.isDesktopSupported()) {
+                    Desktop.getDesktop().browse(URI("https://cloud.google.com/docs/authentication/api-keys"))
+                } else {
+                    println("Desktop is not supported")
+                }
+            }
+        )
+
         addTitleLabel("LM Studio url")
 
         lmStudioBaseUrlTextInput = addTextFieldWithSaveButton(
             fieldText = appInfo.lmStudioConfig.baseUrl,
             buttonTitle = "Update LM Studio models",
+            buttonColor = COLOUR_GREEN,
             onClicked = {
                 val appInfo = getAppInfo()
                 saveAppInfo(
@@ -168,6 +252,7 @@ class SettingsTab(
         ollamaBaseUrlTextInput = addTextFieldWithSaveButton(
             fieldText = appInfo.ollamaConfig.baseUrl,
             buttonTitle = "Update Ollama models",
+            buttonColor = COLOUR_GREEN,
             onClicked = {
                 val appInfo = getAppInfo()
                 saveAppInfo(
@@ -189,6 +274,8 @@ class SettingsTab(
                 googleCloudTokenTextInput?.text = appInfo.googleCloudToken
                 lmStudioBaseUrlTextInput?.text = appInfo.lmStudioConfig.baseUrl
                 ollamaBaseUrlTextInput?.text = appInfo.ollamaConfig.baseUrl
+                sendTextEverySymbolsTextInput?.text = appInfo.sendTextEverySymbols.toString()
+                sendTextEveryMillisecondsTextInput?.text = appInfo.sendTextEveryMilliseconds.toString()
             }
         }
 

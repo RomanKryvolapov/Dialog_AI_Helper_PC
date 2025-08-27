@@ -1,6 +1,5 @@
 package ui
 
-import COLOUR_GREEN
 import COLOUR_RED
 import extensions.addButton
 import extensions.addTitleLabel
@@ -43,7 +42,7 @@ class ConsoleTab(
 
         addButton(
             title = "Clear",
-            bgColor = COLOUR_RED,
+            buttonColor = COLOUR_RED,
             onClicked = {
                 logArea.text = ""
             }
@@ -59,16 +58,37 @@ class ConsoleTab(
     }
 
     private fun redirectSystemStreams(logConsumer: (String) -> Unit) {
-        val out = object : OutputStream() {
-            override fun write(b: Int) {
-                logConsumer(b.toChar().toString())
-            }
+        val originalOut = System.out
+        val originalErr = System.err
 
-            override fun write(b: ByteArray, off: Int, len: Int) {
-                logConsumer(String(b, off, len))
-            }
+        val teeOut = TeeOutputStream(originalOut) { logConsumer(it) }
+        val teeErr = TeeOutputStream(originalErr) { logConsumer(it) }
+
+        System.setOut(PrintStream(teeOut, true))
+        System.setErr(PrintStream(teeErr, true))
+    }
+
+    private class TeeOutputStream(
+        private val original: OutputStream,
+        private val consumer: (String) -> Unit
+    ) : OutputStream() {
+
+        override fun write(b: Int) {
+            original.write(b)
+            consumer(b.toChar().toString())
         }
-        System.setOut(PrintStream(out, true))
-        System.setErr(PrintStream(out, true))
+
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            original.write(b, off, len)
+            consumer(String(b, off, len))
+        }
+
+        override fun flush() {
+            original.flush()
+        }
+
+        override fun close() {
+            original.close()
+        }
     }
 }

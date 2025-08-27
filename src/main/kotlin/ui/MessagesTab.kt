@@ -55,13 +55,15 @@ class MessagesTab(
     val content: Pane
     val scrollPane: ScrollPane
 
-    private var originalMessageBuffer = ""
-    private var translatedMessageBuffer = "..."
+    private var originalMessage = ""
+    private var lastMessageToAI = "..."
+    private var lastMessageFromAI = "..."
 
     private val lastTranslatedLength = AtomicInteger(0)
     private val lastTranslatedTime = AtomicLong(System.currentTimeMillis())
 
     private var translateMessageJob: Job? = null
+    private var translateTimerJob: Job? = null
 
     private var listeningButton = Button("Wait for init").apply {
         style += "-fx-background-color: $COLOUR_RED;"
@@ -92,12 +94,15 @@ class MessagesTab(
                     style += "-fx-background-color: $COLOUR_RED;"
                     setOnAction {
                         messageBox.children.clear()
-                        originalMessageBuffer = "..."
-                        translatedMessageBuffer = "..."
+                        originalMessage = "..."
+                        lastMessageFromAI = "..."
+                        lastMessageToAI = ""
                         lastTranslatedLength.set(0)
                         lastTranslatedTime.set(System.currentTimeMillis())
                         translateMessageJob?.cancel()
                         translateMessageJob = null
+                        translateTimerJob?.cancel()
+                        translateTimerJob = null
                     }
                 },
                 Button("Restart engine").apply {
@@ -116,18 +121,18 @@ class MessagesTab(
                         voskVoiceRecognizer.runRecognition(device)
                     }
                 },
-                Button("Restart recognition").apply {
+                Button("Split sentence").apply {
                     style += "-fx-background-color: $COLOUR_BLUE;"
                     setOnAction {
                         voskVoiceRecognizer.splitUtterance()
                     }
                 },
-                Button("Translate now").apply {
+                Button("Send now").apply {
                     style += "-fx-background-color: $COLOUR_GREEN;"
                     setOnAction {
                         translateMessage(
                             index = messageBox.children.size - 1,
-                            message = originalMessageBuffer,
+                            message = originalMessage,
                             writeResultToMessageBuffer = true,
                         )
                     }
@@ -169,10 +174,10 @@ class MessagesTab(
 
             !voskVoiceRecognizer.inRunning() -> {
                 voskVoiceRecognizer.runRecognition(device)
-                backgroundThreadScope.launch {
-                    val translateTextEveryMilliseconds = getAppInfo().translateTextEveryMilliseconds
+                translateTimerJob?.cancel()
+                translateTimerJob = backgroundThreadScope.launch {
+                    val translateTextEveryMilliseconds = getAppInfo().sendTextEveryMilliseconds
                     if (translateTextEveryMilliseconds != 0L) {
-                        delay(3000L)
                         while (voskVoiceRecognizer.inRunning()) {
                             delay(TRANSLATE_CHECK_DELAY)
                             val currentTime = System.currentTimeMillis()
@@ -180,7 +185,7 @@ class MessagesTab(
                                 log.debug("Translate text by timer")
                                 translateMessage(
                                     index = messageBox.children.size - 1,
-                                    message = originalMessageBuffer,
+                                    message = originalMessage,
                                     writeResultToMessageBuffer = true,
                                 )
                             }
@@ -235,15 +240,16 @@ class MessagesTab(
         }
         voskVoiceRecognizer.onPartialResultListener = { result ->
             val resultString = JSONObject(result).optString("partial").normalizeAndRemoveEmptyLines()
-            if (resultString.isNotEmpty() && resultString != "the" && originalMessageBuffer != result) {
+            if (resultString.isNotEmpty() && resultString != "the" && originalMessage != result) {
                 mainThreadScope.launch {
                     listeningButton.text = "Stop dialog"
                     listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
                 }
-                val translateTextEverySymbols = getAppInfo().translateTextEverySymbols
+                val translateTextEverySymbols = getAppInfo().sendTextEverySymbols
                 val currentMessageIndex = messageBox.children.size - 1
                 when {
-                    originalMessageBuffer.length > resultString.length + 16 -> {
+                    // New message
+                    originalMessage.length > resultString.length + 16 -> {
                         updateMessageAt(
                             index = currentMessageIndex + 1,
                             newItem = DialogItem(
@@ -253,24 +259,25 @@ class MessagesTab(
                         )
                         translateMessage(
                             index = currentMessageIndex,
-                            message = originalMessageBuffer,
+                            message = originalMessage,
                             writeResultToMessageBuffer = false,
                         )
-                        originalMessageBuffer = resultString
-                        translatedMessageBuffer = "..."
+                        originalMessage = resultString
+                        lastMessageFromAI = "..."
+                        lastMessageToAI = ""
                         lastTranslatedLength.set(0)
                     }
 
                     translateTextEverySymbols != 0 &&
-                            (originalMessageBuffer.length / translateTextEverySymbols) > (lastTranslatedLength.get() / translateTextEverySymbols) -> {
+                            (originalMessage.length / translateTextEverySymbols) > (lastTranslatedLength.get() / translateTextEverySymbols) -> {
                         log.debug("Translate text by text size")
-                        lastTranslatedLength.set(originalMessageBuffer.length)
-                        originalMessageBuffer = resultString
+                        lastTranslatedLength.set(originalMessage.length)
+                        originalMessage = resultString
                         updateMessageAt(
                             index = currentMessageIndex,
                             newItem = DialogItem(
                                 originalMessage = resultString,
-                                answerMessage = translatedMessageBuffer,
+                                answerMessage = lastMessageFromAI,
                             )
                         )
                         translateMessage(
@@ -281,12 +288,12 @@ class MessagesTab(
                     }
 
                     else -> {
-                        originalMessageBuffer = resultString
+                        originalMessage = resultString
                         updateMessageAt(
                             index = currentMessageIndex,
                             newItem = DialogItem(
                                 originalMessage = resultString,
-                                answerMessage = translatedMessageBuffer,
+                                answerMessage = lastMessageFromAI,
                             )
                         )
                     }
@@ -301,7 +308,13 @@ class MessagesTab(
         writeResultToMessageBuffer: Boolean,
     ) {
         if (message.isEmpty() || message == "the") {
+            lastTranslatedTime.set(System.currentTimeMillis())
             log.error("Translate message is empty")
+            return
+        }
+        if (lastMessageToAI == message) {
+            lastTranslatedTime.set(System.currentTimeMillis())
+            log.error("Translate message is already translated")
             return
         }
         translateMessageJob?.cancel()
@@ -372,7 +385,8 @@ class MessagesTab(
                 return@launch
             }
             log.debug("Translate message result:\n$resultMessage")
-            translatedMessageBuffer = if (writeResultToMessageBuffer) {
+            lastMessageToAI = message
+            lastMessageFromAI = if (writeResultToMessageBuffer) {
                 resultMessage
             } else {
                 "..."
@@ -432,4 +446,5 @@ class MessagesTab(
             BorderWidths(1.0)
         )
     )
+
 }

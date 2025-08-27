@@ -9,7 +9,7 @@ data class ApplicationInfoNullable(
     val promptsMap: Map<String, String>?,
     val lmStudioConfig: LmStudioConfig?,
     val ollamaConfig: OllamaConfig?,
-    val translateTextEverySymbols: Int?,
-    val translateTextEveryMilliseconds: Long?,
+    val sendTextEverySymbols: Int?,
+    val sendTextEveryMilliseconds: Long?,
     val voskModelPath: String?,
 )

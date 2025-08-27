@@ -11,10 +11,10 @@ import javafx.scene.control.TextInputControl
 import javafx.scene.input.Clipboard
 import javafx.scene.input.ClipboardContent
 import javafx.scene.layout.HBox
+import javafx.scene.layout.Region
 import javafx.scene.layout.VBox
 import javafx.stage.DirectoryChooser
 import javafx.stage.Stage
-import kotlinx.coroutines.NonCancellable.children
 import kotlinx.coroutines.launch
 import mainThreadScope
 import java.io.File
@@ -58,7 +58,8 @@ fun VBox.addTextFieldWithSaveButton(
     fieldText: String,
     lines: Int = 1,
     buttonTitle: String,
-    onClicked: (String) -> Unit
+    buttonColor: String,
+    onClicked: (String) -> Unit,
 ): TextInputControl {
     val field = if (lines == 1) {
         TextField(fieldText)
@@ -70,7 +71,7 @@ fun VBox.addTextFieldWithSaveButton(
     }
     val buttonWidthBinding = field.prefWidthProperty().divide(3)
     val button = Button(buttonTitle).apply {
-        style = "-fx-background-color: $COLOUR_BLUE"
+        style = "-fx-background-color: $buttonColor"
         prefWidthProperty().bind(buttonWidthBinding)
         setOnAction {
             onClicked(field.text)
@@ -107,7 +108,7 @@ fun VBox.addTextFieldWithCopyPasteActionButtons(
     }
     val buttonWidthBinding = field.prefWidthProperty().divide(3)
     val copyButton = Button("Copy").apply {
-        style = "-fx-background-color: $COLOUR_BLUE"
+        style += "-fx-background-color: $COLOUR_BLUE"
         prefWidthProperty().bind(buttonWidthBinding)
         setOnAction {
             val content = ClipboardContent()
@@ -116,7 +117,7 @@ fun VBox.addTextFieldWithCopyPasteActionButtons(
         }
     }
     val pasteButton = Button("Paste").apply {
-        style = "-fx-background-color: $COLOUR_GREEN"
+        style += "-fx-background-color: $COLOUR_GREEN"
         prefWidthProperty().bind(buttonWidthBinding)
         setOnAction {
             val clipboard = Clipboard.getSystemClipboard()
@@ -124,7 +125,7 @@ fun VBox.addTextFieldWithCopyPasteActionButtons(
         }
     }
     val saveButton = Button(buttonTitle).apply {
-        style = "-fx-background-color: $COLOUR_RED"
+        style += "-fx-background-color: $COLOUR_RED"
         prefWidthProperty().bind(buttonWidthBinding)
         setOnAction {
             onClicked(field.text)
@@ -180,12 +181,12 @@ fun <T> VBox.addComboBox(
 
 fun VBox.addButton(
     title: String,
-    bgColor: String,
+    buttonColor: String,
     onClicked: () -> Unit
 ): Button {
     val button = Button(title).apply {
         style = """
-            -fx-background-color: $bgColor;
+            -fx-background-color: $buttonColor;
         """.trimIndent()
         prefWidthProperty().bind(widthProperty().multiply(0.6))
         setOnAction {
@@ -205,14 +206,30 @@ fun VBox.addButton(
 fun Stage.showAlert(
     alertTitle: String,
     alertContent: String,
+    buttonText: String = "OK",
+    onPositive: (() -> Unit)? = null
 ) {
     mainThreadScope.launch {
-        Alert(Alert.AlertType.WARNING).apply {
+        val okButtonType = ButtonType(buttonText, ButtonBar.ButtonData.OK_DONE)
+        val alert = Alert(Alert.AlertType.WARNING, "", okButtonType).apply {
             initOwner(this@showAlert)
             title = alertTitle
             headerText = null
-            contentText = alertContent
-            showAndWait()
+            dialogPane.content = Label(alertContent).apply {
+                isWrapText = true
+                minHeight = Region.USE_PREF_SIZE
+            }
+        }
+
+        val dialogButton = alert.dialogPane.lookupButton(okButtonType)
+        dialogButton.style += """
+            -fx-background-color: $COLOUR_GREEN;
+            -fx-padding: 0 20 0 20;
+        """.trimIndent()
+
+        val result = alert.showAndWait()
+        if (result.isPresent && result.get() == okButtonType) {
+            onPositive?.invoke()
         }
     }
 }
@@ -220,18 +237,34 @@ fun Stage.showAlert(
 fun Stage.showAlertWithAction(
     alertTitle: String,
     alertContent: String,
+    positiveButtonText: String = "OK",
+    negativeButtonText: String = "Cancel",
     onPositive: () -> Unit
 ) {
     mainThreadScope.launch {
-        val okButton = ButtonType("OK", ButtonBar.ButtonData.OK_DONE)
-        val cancelButton = ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE)
-        val alert = Alert(Alert.AlertType.CONFIRMATION, alertContent, okButton, cancelButton).apply {
+        val okButtonType = ButtonType(positiveButtonText, ButtonBar.ButtonData.OK_DONE)
+        val cancelButtonType = ButtonType(negativeButtonText, ButtonBar.ButtonData.CANCEL_CLOSE)
+        val alert = Alert(Alert.AlertType.CONFIRMATION, "", okButtonType, cancelButtonType).apply {
             initOwner(this@showAlertWithAction)
             title = alertTitle
             headerText = null
+            dialogPane.content = Label(alertContent).apply {
+                isWrapText = true
+                minHeight = Region.USE_PREF_SIZE
+            }
         }
+        val dialogButtons = alert.dialogPane.lookupButton(okButtonType)
+        dialogButtons.style += """
+            -fx-background-color: $COLOUR_GREEN;
+            -fx-padding: 0 20 0 20;
+        """.trimIndent()
+        val cancelButton = alert.dialogPane.lookupButton(cancelButtonType)
+        cancelButton.style += """
+            -fx-background-color: $COLOUR_RED;
+            -fx-padding: 0 20 0 20;
+        """.trimIndent()
         val result = alert.showAndWait()
-        if (result.isPresent && result.get() == okButton) {
+        if (result.isPresent && result.get() == okButtonType) {
             onPositive()
         }
     }

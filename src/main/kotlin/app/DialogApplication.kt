@@ -2,6 +2,7 @@ package app
 
 import PROMPT_FULL_SIZE
 import di.allModules
+import extensions.showAlert
 import extensions.showAlertWithAction
 import ui.MessagesTab
 import ui.SettingsTab
@@ -20,6 +21,8 @@ import org.koin.core.context.startKoin
 import repository.PreferencesRepository
 import ui.ConsoleTab
 import utils.VoskVoiceRecognizer
+import java.awt.Desktop
+import java.net.URI
 
 class DialogApplication : Application(), KoinComponent {
 
@@ -106,10 +109,15 @@ class DialogApplication : Application(), KoinComponent {
             voskVoiceRecognizer.init(appInfo.voskModelPath)
         } else {
             ownerStage?.showAlertWithAction(
-                alertTitle = "VOSK recognizer error",
-                alertContent = "Please select VOSK voice recognition model folder",
+                alertTitle = "Voice recognizer error",
+                alertContent = "To use voice recognition, you must download the model for recognition, unzip it to disk and select the folder with it.",
+                positiveButtonText = "Show models",
                 onPositive = {
-                    voskVoiceRecognizer.selectModelFolder()
+                    if (Desktop.isDesktopSupported()) {
+                        Desktop.getDesktop().browse(URI("https://alphacephei.com/vosk/models"))
+                    } else {
+                        println("Desktop is not supported")
+                    }
                 }
             )
         }

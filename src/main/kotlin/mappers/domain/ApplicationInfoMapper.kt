@@ -23,10 +23,10 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                 lmStudioConfig = lmStudioConfig ?: defaultApplicationInfo.lmStudioConfig,
                 promptsMap = promptsMap ?: defaultApplicationInfo.promptsMap,
                 ollamaConfig = ollamaConfig ?: defaultApplicationInfo.ollamaConfig,
-                translateTextEverySymbols = translateTextEverySymbols
-                    ?: defaultApplicationInfo.translateTextEverySymbols,
-                translateTextEveryMilliseconds = translateTextEveryMilliseconds
-                    ?: defaultApplicationInfo.translateTextEveryMilliseconds,
+                sendTextEverySymbols = sendTextEverySymbols
+                    ?: defaultApplicationInfo.sendTextEverySymbols,
+                sendTextEveryMilliseconds = sendTextEveryMilliseconds
+                    ?: defaultApplicationInfo.sendTextEveryMilliseconds,
                 voskModelPath = voskModelPath
                     ?: defaultApplicationInfo.voskModelPath
             )
@@ -44,8 +44,8 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                 ollamaConfig = ollamaConfig,
                 promptsMap = promptsMap,
                 lmStudioConfig = lmStudioConfig,
-                translateTextEverySymbols = translateTextEverySymbols,
-                translateTextEveryMilliseconds = translateTextEveryMilliseconds,
+                sendTextEverySymbols = sendTextEverySymbols,
+                sendTextEveryMilliseconds = sendTextEveryMilliseconds,
                 voskModelPath = voskModelPath,
             )
         }
