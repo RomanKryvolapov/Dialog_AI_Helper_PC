@@ -6,6 +6,7 @@ import defaultThreadScope
 import extensions.normalizeAndRemoveEmptyLines
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
 import repository.PreferencesRepository
@@ -56,6 +57,7 @@ class AudioChunkerImpl(
         log.debug("start listening")
         recognitionJob?.cancel()
         recognitionJob = defaultThreadScope.launch {
+            onStartListener?.invoke()
             val appInfo = preferencesRepository.getAppInfo()
             modelPath = appInfo.whisperModelPath
             silenceThresholdPercents = appInfo.whisperModelConfig.silenceThresholdPercents
@@ -84,8 +86,7 @@ class AudioChunkerImpl(
             var speechDetected = false
             var lastVoiceTime = 0L
             var chunkStartTime = 0L
-            onStartListener?.invoke()
-            while (true) {
+            while (isActive) {
                 val bytesRead = line.read(buffer, 0, buffer.size)
                 if (bytesRead <= 0) continue
                 val amplitude = calculateRMS(buffer)
