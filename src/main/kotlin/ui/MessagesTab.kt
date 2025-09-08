@@ -60,7 +60,7 @@ class MessagesTab(
     private var originalMessage = ""
 
     @Volatile
-    private var lastMessageToAI = "..."
+    private var lastMessageToAI = ""
 
     @Volatile
     private var lastMessageFromAI = "..."
@@ -327,7 +327,7 @@ class MessagesTab(
         translateMessageJob = backgroundThreadScope.launch {
             lastTranslatedTime.set(System.currentTimeMillis())
             val appInfo = getAppInfo()
-            log.debug("Translate text: $message")
+            log.debug("Translate position: $index text: $message")
             val template = PromptTemplate.from(PROMPT_FULL_SIZE)
             val prompt = template.apply(mapOf(SOURCE_TEXT_CLEAR to message))
             val result = when (appInfo.selectedModel.engine) {
@@ -357,10 +357,10 @@ class MessagesTab(
             }
             if (!result.isSuccess) {
                 log.error("Translate message error: ${result.exceptionOrNull()}")
-                ownerStage?.showAlert(
-                    alertTitle = "Error",
-                    alertContent = result.exceptionOrNull()?.message ?: ""
-                )
+//                ownerStage?.showAlert(
+//                    alertTitle = "Error",
+//                    alertContent = result.exceptionOrNull()?.message ?: ""
+//                )
                 updateMessageAt(
                     index = index,
                     newItem = DialogItem(
@@ -370,7 +370,7 @@ class MessagesTab(
                 )
                 return@launch
             }
-            val resultMessage = result.getOrNull()
+            val resultMessage = result.getOrNull()?.normalizeAndRemoveEmptyLines()
             if (resultMessage.isNullOrBlank()) {
                 log.error("Translate message result is null")
                 ownerStage?.showAlert(
@@ -388,7 +388,8 @@ class MessagesTab(
             }
             log.debug("Translate message result:\n$resultMessage")
             lastMessageToAI = message
-            lastMessageFromAI = if (writeResultToMessageBuffer) {
+            lastMessageFromAI = if (writeResultToMessageBuffer
+                && index == messageBox.children.size - 1) {
                 resultMessage
             } else {
                 "..."
