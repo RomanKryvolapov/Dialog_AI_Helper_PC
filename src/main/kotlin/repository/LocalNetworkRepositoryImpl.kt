@@ -21,7 +21,6 @@ import models.network.openai.OpenAIGenerationResponse
 import models.network.openai.OpenAIModelsResponse
 import org.slf4j.LoggerFactory
 import utils.ChatLogger
-import java.awt.SystemColor.text
 import java.time.Duration
 
 class LocalNetworkRepositoryImpl(
@@ -141,7 +140,6 @@ class LocalNetworkRepositoryImpl(
                 .baseUrl(url)
                 .apiKey("lm-studio")
                 .modelName(model)
-                .temperature(0.8)
                 .logRequests(true)
                 .logResponses(true)
                 .timeout(Duration.ofSeconds(90))
@@ -171,7 +169,6 @@ class LocalNetworkRepositoryImpl(
             val chatModel = OllamaChatModel.builder()
                 .baseUrl(baseUrl)
                 .modelName(model)
-                .temperature(0.8)
                 .timeout(Duration.ofSeconds(90))
                 .logRequests(true)
                 .logResponses(true)

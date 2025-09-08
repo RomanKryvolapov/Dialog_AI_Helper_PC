@@ -254,7 +254,7 @@ class MessagesTab(
                             index = currentMessageIndex + 1,
                             newItem = DialogItem(
                                 originalMessage = resultString,
-                                answerMessage = "...",
+                                messageFromAi = "...",
                             )
                         )
                         translateMessage(
@@ -277,7 +277,7 @@ class MessagesTab(
                             index = currentMessageIndex,
                             newItem = DialogItem(
                                 originalMessage = resultString,
-                                answerMessage = lastMessageFromAI,
+                                messageFromAi = lastMessageFromAI,
                             )
                         )
                         translateMessage(
@@ -293,7 +293,7 @@ class MessagesTab(
                             index = currentMessageIndex,
                             newItem = DialogItem(
                                 originalMessage = resultString,
-                                answerMessage = lastMessageFromAI,
+                                messageFromAi = lastMessageFromAI,
                             )
                         )
                     }
@@ -363,7 +363,7 @@ class MessagesTab(
                     index = index,
                     newItem = DialogItem(
                         originalMessage = message,
-                        answerMessage = "...",
+                        messageFromAi = "...",
                     )
                 )
                 return@launch
@@ -379,7 +379,7 @@ class MessagesTab(
                     index = index,
                     newItem = DialogItem(
                         originalMessage = message,
-                        answerMessage = "...",
+                        messageFromAi = "...",
                     )
                 )
                 return@launch
@@ -395,7 +395,7 @@ class MessagesTab(
                 index = index,
                 newItem = DialogItem(
                     originalMessage = message,
-                    answerMessage = resultMessage,
+                    messageFromAi = resultMessage,
                 )
             )
         }
@@ -419,7 +419,7 @@ class MessagesTab(
             isWrapText = true
             maxWidth = Double.MAX_VALUE
         }
-        val descLabel = Label(item.answerMessage).apply {
+        val descLabel = Label(item.messageFromAi).apply {
             styleClass.add("answer-message-label")
             isWrapText = true
             maxWidth = Double.MAX_VALUE
