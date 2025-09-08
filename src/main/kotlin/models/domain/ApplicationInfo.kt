@@ -12,4 +12,7 @@ data class ApplicationInfo(
     val sendTextEverySymbols: Int,
     val sendTextEveryMilliseconds: Long,
     val voskModelPath: String,
+    val whisperModelPath: String,
+    val whisperModelConfig: WhisperModelConfig,
+    val voiceRecognizer: VoiceRecognizer,
 )

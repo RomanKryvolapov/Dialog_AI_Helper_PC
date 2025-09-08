@@ -14,6 +14,7 @@ import javafx.scene.control.Tab
 import javafx.scene.control.TabPane
 import javafx.stage.Screen
 import javafx.stage.Stage
+import models.domain.VoiceRecognizer
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import ui.PromptTab
@@ -105,21 +106,23 @@ class DialogApplication : Application(), KoinComponent {
             this.scene = scene
             show()
         }
-        if (appInfo.voskModelPath.isNotEmpty()) {
-            voskVoiceRecognizer.init(appInfo.voskModelPath)
-        } else {
-            ownerStage?.showAlertWithAction(
-                alertTitle = "Voice recognizer error",
-                alertContent = "To use voice recognition, you must download the model for recognition, unzip it to disk and select the folder with it.",
-                positiveButtonText = "Show models",
-                onPositive = {
-                    if (Desktop.isDesktopSupported()) {
-                        Desktop.getDesktop().browse(URI("https://alphacephei.com/vosk/models"))
-                    } else {
-                        println("Desktop is not supported")
+        if (appInfo.voiceRecognizer == VoiceRecognizer.VOSK) {
+            if (appInfo.voskModelPath.isNotEmpty()) {
+                voskVoiceRecognizer.init(appInfo.voskModelPath)
+            } else {
+                ownerStage?.showAlertWithAction(
+                    alertTitle = "Voice recognizer error",
+                    alertContent = "To use voice recognition, you must download the model for recognition, unzip it to disk and select the folder with it.",
+                    positiveButtonText = "Show models",
+                    onPositive = {
+                        if (Desktop.isDesktopSupported()) {
+                            Desktop.getDesktop().browse(URI("https://alphacephei.com/vosk/models"))
+                        } else {
+                            println("Desktop is not supported")
+                        }
                     }
-                }
-            )
+                )
+            }
         }
     }
 

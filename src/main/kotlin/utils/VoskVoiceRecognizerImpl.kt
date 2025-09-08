@@ -27,6 +27,7 @@ class VoskVoiceRecognizerImpl(
     private var model: Model? = null
     private var recognizer: Recognizer? = null
 
+    override var onInitInProcess: (() -> Unit)? = null
     override var onInitReady: (() -> Unit)? = null
     override var onStopListener: (() -> Unit)? = null
     override var onStartListener: (() -> Unit)? = null
@@ -41,6 +42,7 @@ class VoskVoiceRecognizerImpl(
         log.debug("Init with model path: $voskModelPath")
         initJob?.cancel()
         initJob = defaultThreadScope.launch {
+            onInitInProcess?.invoke()
             try {
                 model?.close()
                 model = Model(voskModelPath)

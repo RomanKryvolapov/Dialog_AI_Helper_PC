@@ -24,19 +24,23 @@ import kotlinx.coroutines.launch
 import mainThreadScope
 import models.domain.DialogItem
 import models.domain.LlmModelEngine
+import models.domain.VoiceRecognizer
 import org.json.JSONObject
 import org.slf4j.LoggerFactory
 import repository.CloudRepository
 import repository.LocalNetworkRepository
 import repository.PreferencesRepository
 import ui.base.BaseTab
+import utils.AudioChunker
 import utils.VoskVoiceRecognizer
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import javax.sound.sampled.Mixer
 
 class MessagesTab(
-    private val voskVoiceRecognizer: VoskVoiceRecognizer,
+    private val audioChunker: AudioChunker,
     private val cloudRepository: CloudRepository,
+    private val voskVoiceRecognizer: VoskVoiceRecognizer,
     private val localNetworkRepository: LocalNetworkRepository,
     preferencesRepository: PreferencesRepository
 ) : BaseTab(
@@ -157,11 +161,23 @@ class MessagesTab(
             bottom = buttonBar
             background = Background(BackgroundFill(Color.web("#2b2b2b"), null, null))
         }
+        val appInfo = getAppInfo()
+        if (appInfo.voiceRecognizer == VoiceRecognizer.WHISPER) {
+            listeningButton.text = "Start dialog"
+            listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
+        }
+
+//        mainThreadScope.launch {
+//            audioChunker.noiceLevelFlow.collect {
+//                listeningButton.text = it.toString()
+//            }
+//        }
     }
 
     private fun startListening() {
+        val appInfo = getAppInfo()
         val device = voskVoiceRecognizer.getAvailableInputDevices().firstOrNull {
-            getAppInfo().lastSelectedDevice == it.name
+            appInfo.lastSelectedDevice == it.name
         }
         if (device == null) {
             ownerStage?.showAlert(
@@ -170,6 +186,13 @@ class MessagesTab(
             )
             return
         }
+        when (appInfo.voiceRecognizer) {
+            VoiceRecognizer.VOSK -> startListeningVosk(device)
+            VoiceRecognizer.WHISPER -> startListeningWhisper(device)
+        }
+    }
+
+    private fun startListeningVosk(device: Mixer.Info) {
         when {
             voskVoiceRecognizer.inInit() -> {
                 ownerStage?.showAlert(
@@ -206,7 +229,21 @@ class MessagesTab(
         }
     }
 
+    private fun startListeningWhisper(device: Mixer.Info) {
+        if (audioChunker.inRunning()) {
+            audioChunker.stopListening()
+        } else {
+            audioChunker.startListening(device)
+        }
+    }
+
     private fun setupListeners() {
+        voskVoiceRecognizer.onInitInProcess = {
+            mainThreadScope.launch {
+                listeningButton.text = "Wait for init"
+                listeningButton.style += "-fx-background-color: $COLOUR_RED;"
+            }
+        }
         voskVoiceRecognizer.onInitReady = {
             mainThreadScope.launch {
                 listeningButton.text = "Start dialog"
@@ -306,6 +343,37 @@ class MessagesTab(
                 }
             }
         }
+        audioChunker.onResultListener = { resultString ->
+            val currentMessageIndex = messageBox.children.size - 1
+            updateMessageAt(
+                index = currentMessageIndex + 1,
+                newItem = DialogItem(
+                    originalMessage = resultString,
+                    messageFromAi = lastMessageFromAI,
+                )
+            )
+            translateMessage(
+                index = currentMessageIndex,
+                message = originalMessage,
+                writeResultToMessageBuffer = false,
+            )
+            originalMessage = resultString
+            lastMessageFromAI = "..."
+            lastMessageToAI = ""
+            lastTranslatedLength.set(0)
+        }
+        audioChunker.onStartListener = {
+            mainThreadScope.launch {
+                listeningButton.text = "Stop dialog"
+                listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
+            }
+        }
+        audioChunker.onStopListener = {
+            mainThreadScope.launch {
+                listeningButton.text = "Start dialog"
+                listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
+            }
+        }
     }
 
     private fun translateMessage(
@@ -389,7 +457,8 @@ class MessagesTab(
             log.debug("Translate message result:\n$resultMessage")
             lastMessageToAI = message
             lastMessageFromAI = if (writeResultToMessageBuffer
-                && index == messageBox.children.size - 1) {
+                && index == messageBox.children.size - 1
+            ) {
                 resultMessage
             } else {
                 "..."

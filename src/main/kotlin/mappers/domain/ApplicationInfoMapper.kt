@@ -28,7 +28,13 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                 sendTextEveryMilliseconds = sendTextEveryMilliseconds
                     ?: defaultApplicationInfo.sendTextEveryMilliseconds,
                 voskModelPath = voskModelPath
-                    ?: defaultApplicationInfo.voskModelPath
+                    ?: defaultApplicationInfo.voskModelPath,
+                whisperModelPath = whisperModelPath
+                    ?: defaultApplicationInfo.whisperModelPath,
+                whisperModelConfig = whisperModelConfig
+                    ?: defaultApplicationInfo.whisperModelConfig,
+                voiceRecognizer = voiceRecognizer
+                    ?: defaultApplicationInfo.voiceRecognizer
             )
         }
     }
@@ -47,6 +53,9 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                 sendTextEverySymbols = sendTextEverySymbols,
                 sendTextEveryMilliseconds = sendTextEveryMilliseconds,
                 voskModelPath = voskModelPath,
+                whisperModelPath = whisperModelPath,
+                whisperModelConfig = whisperModelConfig,
+                voiceRecognizer = voiceRecognizer,
             )
         }
     }

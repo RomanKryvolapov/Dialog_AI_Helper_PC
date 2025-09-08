@@ -4,6 +4,7 @@ import javax.sound.sampled.Mixer
 
 interface VoskVoiceRecognizer {
 
+    var onInitInProcess: (() -> Unit)?
     var onInitReady: (() -> Unit)?
     var onStopListener: (() -> Unit)?
     var onStartListener: (() -> Unit)?

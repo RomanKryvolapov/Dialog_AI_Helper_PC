@@ -53,7 +53,6 @@ val defaultApplicationInfo = ApplicationInfo(
     lmStudioConfig = LmStudioConfig(
         baseUrl = "http://localhost:1234",
         models = emptyList(),
-
     ),
     ollamaConfig = OllamaConfig(
         baseUrl = "http://localhost:11434",
@@ -62,6 +61,13 @@ val defaultApplicationInfo = ApplicationInfo(
     sendTextEverySymbols = 100,
     sendTextEveryMilliseconds = 10000L,
     voskModelPath = "",
+    whisperModelPath = "",
+    whisperModelConfig = WhisperModelConfig(
+        silenceThresholdPercents = 10,
+        maxSilenceMilliseconds = 500L,
+        maxChunkDurationMilliseconds = 5000L,
+    ),
+    voiceRecognizer = VoiceRecognizer.VOSK,
 )
 
 

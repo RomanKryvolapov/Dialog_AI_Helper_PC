@@ -21,6 +21,7 @@ import mainThreadScope
 import models.domain.GoogleAiModelsEnum
 import models.domain.LlmModel
 import models.domain.LlmModelEngine
+import models.domain.VoiceRecognizer
 import org.slf4j.LoggerFactory
 import repository.LocalNetworkRepository
 import repository.PreferencesRepository
@@ -46,11 +47,15 @@ class SettingsTab(
 
     var modelsBox: ComboBox<LlmModel>? = null
     var voskModelPathTextInput: TextInputControl? = null
+    var whisperModelPathTextInput: TextInputControl? = null
     var googleCloudTokenTextInput: TextInputControl? = null
     var lmStudioBaseUrlTextInput: TextInputControl? = null
     var ollamaBaseUrlTextInput: TextInputControl? = null
     var sendTextEverySymbolsTextInput: TextInputControl? = null
     var sendTextEveryMillisecondsTextInput: TextInputControl? = null
+    var silenceThresholdPercentsTextInput: TextInputControl? = null
+    var maxSilenceMillisecondsTextInput: TextInputControl? = null
+    var maxChunkDurationMillisecondsTextInput: TextInputControl? = null
 
     val content: VBox = VBox(4.0).apply {
         padding = Insets(0.0, 20.0, 0.0, 20.0)
@@ -90,6 +95,29 @@ class SettingsTab(
                 }
             )
         }
+
+        addTitleLabel("Voice recognizer:")
+
+        addComboBox(
+            items = VoiceRecognizer.entries,
+            selectedItem = appInfo.voiceRecognizer,
+            toStringFn = { voiceRecognizer ->
+                voiceRecognizer.type
+            },
+            onSelected = { voiceRecognizer ->
+                saveAppInfo(
+                    getAppInfo().copy(
+                        voiceRecognizer = voiceRecognizer
+                    )
+                )
+                if (voiceRecognizer == VoiceRecognizer.VOSK) {
+                    val appInfo = getAppInfo()
+                    if (appInfo.voskModelPath.isNotEmpty()) {
+                        voskVoiceRecognizer.init(appInfo.voskModelPath)
+                    }
+                }
+            }
+        )
 
         addTitleLabel("AI model:")
 
@@ -174,6 +202,111 @@ class SettingsTab(
             }
         )
 
+        addTitleLabel("Silence threshold percents for Whisper")
+
+        silenceThresholdPercentsTextInput = addTextFieldWithSaveButton(
+            fieldText = appInfo.whisperModelConfig.silenceThresholdPercents.toString(),
+            buttonTitle = "Save",
+            buttonColor = COLOUR_GREEN,
+            onClicked = {
+                try {
+                    val result = it.toIntOrNull()
+                    if (result == null) {
+                        ownerStage?.showAlert(
+                            alertTitle = "Error",
+                            alertContent = "Can not get number"
+                        )
+                        return@addTextFieldWithSaveButton
+                    }
+                    val appInfo = getAppInfo()
+                    saveAppInfo(
+                        appInfo.copy(
+                            whisperModelConfig = appInfo.whisperModelConfig.copy(
+                                silenceThresholdPercents = result
+                            )
+                        )
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    log.error(e.message)
+                    ownerStage?.showAlert(
+                        alertTitle = "Error",
+                        alertContent = e.message ?: "Can not get number"
+                    )
+                }
+            }
+        )
+
+        addTitleLabel("Max silence milliseconds for Whisper")
+
+        maxSilenceMillisecondsTextInput = addTextFieldWithSaveButton(
+            fieldText = appInfo.whisperModelConfig.maxSilenceMilliseconds.toString(),
+            buttonTitle = "Save",
+            buttonColor = COLOUR_GREEN,
+            onClicked = {
+                try {
+                    val result = it.toLongOrNull()
+                    if (result == null) {
+                        ownerStage?.showAlert(
+                            alertTitle = "Error",
+                            alertContent = "Can not get number"
+                        )
+                        return@addTextFieldWithSaveButton
+                    }
+                    val appInfo = getAppInfo()
+                    saveAppInfo(
+                        appInfo.copy(
+                            whisperModelConfig = appInfo.whisperModelConfig.copy(
+                                maxSilenceMilliseconds = result
+                            )
+                        )
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    log.error(e.message)
+                    ownerStage?.showAlert(
+                        alertTitle = "Error",
+                        alertContent = e.message ?: "Can not get number"
+                    )
+                }
+            }
+        )
+
+        addTitleLabel("Max chunk duration milliseconds for Whisper")
+
+        maxChunkDurationMillisecondsTextInput = addTextFieldWithSaveButton(
+            fieldText = appInfo.whisperModelConfig.maxChunkDurationMilliseconds.toString(),
+            buttonTitle = "Save",
+            buttonColor = COLOUR_GREEN,
+            onClicked = {
+                try {
+                    val result = it.toLongOrNull()
+                    if (result == null) {
+                        ownerStage?.showAlert(
+                            alertTitle = "Error",
+                            alertContent = "Can not get number"
+                        )
+                        return@addTextFieldWithSaveButton
+                    }
+                    val appInfo = getAppInfo()
+                    saveAppInfo(
+                        appInfo.copy(
+                            whisperModelConfig = appInfo.whisperModelConfig.copy(
+                                maxChunkDurationMilliseconds = result
+                            )
+                        )
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    log.error(e.message)
+                    ownerStage?.showAlert(
+                        alertTitle = "Error",
+                        alertContent = e.message ?: "Can not get number"
+                    )
+                }
+            }
+        )
+
         addTitleLabel("VOSK voice recognition model:")
 
         addLabel("To use voice recognition, you must download the model for recognition, unzip it to disk and select the folder with it.")
@@ -198,6 +331,28 @@ class SettingsTab(
             buttonColor = COLOUR_GREEN,
             onClicked = {
                 voskVoiceRecognizer.selectModelFolder()
+            }
+        )
+
+        addTitleLabel("Whisper voice recognition model folder:")
+
+        whisperModelPathTextInput = addTextFieldWithSaveButton(
+            fieldText = appInfo.whisperModelPath,
+            buttonTitle = "Select folder with model files",
+            buttonColor = COLOUR_GREEN,
+            onClicked = {
+                val selectedDirectory = ownerStage?.chooseDirectory(
+                    title = "Select Folder"
+                )
+                if (selectedDirectory == null) {
+                    log.error("Select model folder but selected directory is null")
+                    return@addTextFieldWithSaveButton
+                }
+                preferencesRepository.saveAppInfo(
+                    preferencesRepository.getAppInfo().copy(
+                        whisperModelPath = selectedDirectory.absolutePath
+                    )
+                )
             }
         )
 
@@ -276,6 +431,11 @@ class SettingsTab(
                 ollamaBaseUrlTextInput?.text = appInfo.ollamaConfig.baseUrl
                 sendTextEverySymbolsTextInput?.text = appInfo.sendTextEverySymbols.toString()
                 sendTextEveryMillisecondsTextInput?.text = appInfo.sendTextEveryMilliseconds.toString()
+                whisperModelPathTextInput?.text = appInfo.whisperModelPath
+                silenceThresholdPercentsTextInput?.text = appInfo.whisperModelConfig.silenceThresholdPercents.toString()
+                maxSilenceMillisecondsTextInput?.text = appInfo.whisperModelConfig.maxSilenceMilliseconds.toString()
+                maxChunkDurationMillisecondsTextInput?.text =
+                    appInfo.whisperModelConfig.maxChunkDurationMilliseconds.toString()
             }
         }
 

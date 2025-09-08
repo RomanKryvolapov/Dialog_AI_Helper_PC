@@ -14,6 +14,8 @@ import models.domain.ApplicationInfoNullable
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
+import utils.AudioChunker
+import utils.AudioChunkerImpl
 import utils.VoskVoiceRecognizer
 import utils.VoskVoiceRecognizerImpl
 import java.time.Duration
@@ -22,6 +24,7 @@ import java.util.prefs.Preferences
 val utilsModule = module {
 
     singleOf(::VoskVoiceRecognizerImpl) bind VoskVoiceRecognizer::class
+    singleOf(::AudioChunkerImpl) bind AudioChunker::class
 
     single<Preferences> {
         Preferences.userRoot().node("PREFERENCES_DATABASE")
