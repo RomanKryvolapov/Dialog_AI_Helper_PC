@@ -50,13 +50,19 @@ class MessagesTab(
         const val FIELD_BACKGROUND_COLOUR = "#323232"
         const val BUTTONS_BACKGROUND_COLOUR = "#323232"
         private const val TRANSLATE_CHECK_DELAY = 1000L
+        private const val NEW_MESSAGE_DELTA = 16
     }
 
     val content: Pane
     val scrollPane: ScrollPane
 
+    @Volatile
     private var originalMessage = ""
+
+    @Volatile
     private var lastMessageToAI = "..."
+
+    @Volatile
     private var lastMessageFromAI = "..."
 
     private val lastTranslatedLength = AtomicInteger(0)
@@ -240,7 +246,7 @@ class MessagesTab(
         }
         voskVoiceRecognizer.onPartialResultListener = { result ->
             val resultString = JSONObject(result).optString("partial").normalizeAndRemoveEmptyLines()
-            if (resultString.isNotEmpty() && resultString != "the" && originalMessage != result) {
+            if (resultString.isNotEmpty() && resultString != "the" && originalMessage != resultString) {
                 mainThreadScope.launch {
                     listeningButton.text = "Stop dialog"
                     listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
@@ -249,7 +255,7 @@ class MessagesTab(
                 val currentMessageIndex = messageBox.children.size - 1
                 when {
                     // New message
-                    originalMessage.length > resultString.length + 16 -> {
+                    originalMessage.length > resultString.length + NEW_MESSAGE_DELTA -> {
                         updateMessageAt(
                             index = currentMessageIndex + 1,
                             newItem = DialogItem(
@@ -307,7 +313,7 @@ class MessagesTab(
         message: String,
         writeResultToMessageBuffer: Boolean,
     ) {
-        if (message.isEmpty() || message == "the") {
+        if (message.isBlank() || message == "the") {
             lastTranslatedTime.set(System.currentTimeMillis())
             log.error("Translate message is empty")
             return
@@ -321,10 +327,6 @@ class MessagesTab(
         translateMessageJob = backgroundThreadScope.launch {
             lastTranslatedTime.set(System.currentTimeMillis())
             val appInfo = getAppInfo()
-//            val text = appInfo.prompt
-//                .replace(TRANSLATE_FROM_LANGUAGE, appInfo.selectedFromLanguage.englishNameString)
-//                .replace(TRANSLATE_TO_LANGUAGE, appInfo.selectedToLanguage.englishNameString)
-//                .replace(TRANSLATE_TEXT, message)
             log.debug("Translate text: $message")
             val template = PromptTemplate.from(PROMPT_FULL_SIZE)
             val prompt = template.apply(mapOf(SOURCE_TEXT_CLEAR to message))
