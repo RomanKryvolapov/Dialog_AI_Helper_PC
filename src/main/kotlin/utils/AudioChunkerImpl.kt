@@ -35,7 +35,7 @@ class AudioChunkerImpl(
 
     override var onStopListener: (() -> Unit)? = null
     override var onStartListener: (() -> Unit)? = null
-    override var onResultListener: ((String) -> Unit)? = null
+    override var onResultListener: ((wavFile: File) -> Unit)? = null
 
     private var silenceThresholdPercents = defaultApplicationInfo.whisperModelConfig.silenceThresholdPercents
     private var maxSilenceMilliseconds = defaultApplicationInfo.whisperModelConfig.maxSilenceMilliseconds
@@ -161,49 +161,9 @@ class AudioChunkerImpl(
             val bais = ByteArrayInputStream(audioBytes)
             val audioStream = AudioInputStream(bais, format, (audioBytes.size / format.frameSize).toLong())
             AudioSystem.write(audioStream, AudioFileFormat.Type.WAVE, outputFile)
-            runFasterWhisper(outputFile)
+            onResultListener?.invoke(outputFile)
         } catch (e: IOException) {
             e.printStackTrace()
-        }
-    }
-
-    private fun runFasterWhisper(wavFile: File) {
-        defaultThreadScope.launch {
-            log.debug("run whisper")
-            try {
-                val projectRoot = File("").absolutePath
-                val scriptPath = "$projectRoot/python/transcribe.py"
-                val processBuilder = ProcessBuilder(
-                    "python",
-                    "-Xutf8",
-                    scriptPath,
-                    wavFile.absolutePath,
-                    modelPath
-                ).apply {
-                    directory(File(projectRoot))
-                    redirectErrorStream(true)
-                }
-                val process = processBuilder.start()
-                val output = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
-                val result = StringBuilder()
-                var line: String?
-                while (output.readLine().also { line = it } != null) {
-                    result.appendLine(line)
-                }
-                val exitCode = process.waitFor()
-                if (exitCode != 0) {
-                    log.error("Python script exited with code $exitCode")
-                } else {
-                    val text = result.toString().normalizeAndRemoveEmptyLines()
-                    log.debug("text: $text")
-                    if (text.isNotBlank()) {
-                        onResultListener?.invoke(text)
-                    }
-                }
-                wavFile.delete()
-            } catch (e: Exception) {
-                log.error("Exception during whisper execution", e)
-            }
         }
     }
 

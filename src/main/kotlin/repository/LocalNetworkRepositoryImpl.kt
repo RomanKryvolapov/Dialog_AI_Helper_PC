@@ -5,15 +5,17 @@ import dev.langchain4j.model.input.Prompt
 import dev.langchain4j.model.ollama.OllamaChatModel
 import dev.langchain4j.model.openai.OpenAiChatModel
 import extensions.normalizeAndRemoveEmptyLines
-import io.ktor.client.HttpClient
+import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.utils.io.*
+import kotlinx.serialization.json.Json
 import mappers.network.OllamaModelsResponseMapper
 import mappers.network.OpenAIGenerationResponseMapper
 import mappers.network.OpenAIModelsResponseMapper
 import models.domain.LlmModel
+import models.network.AnswerWithEmotion
 import models.network.ollama.OllamaModelsResponse
 import models.network.openai.OpenAIGenerationRequest
 import models.network.openai.OpenAIGenerationRequestMessage
@@ -154,6 +156,44 @@ class LocalNetworkRepositoryImpl(
             return Result.success("...")
         } catch (e: Exception) {
             log.error("Generate answer with LM Studio and LangChain exception: ${e.message}")
+            e.printStackTrace()
+            return Result.failure(e)
+        }
+    }
+
+    override fun generateAnswerByLangChainWithGradeLmStudio(
+        baseUrl: String,
+        model: String,
+        prompt: Prompt,
+    ): Result<AnswerWithEmotion> {
+        log.debug("Generate answer with LM Studio and Emotion and LangChain\nmodel: $model\ntext: ${prompt.text()}")
+        val url = "$baseUrl/v1"
+        return try {
+            val chatModel = OpenAiChatModel.builder()
+                .httpClientBuilder(jdkClientBuilder)
+                .baseUrl(url)
+                .apiKey("lm-studio")
+                .modelName(model)
+                .logRequests(true)
+                .logResponses(true)
+                .timeout(Duration.ofSeconds(90))
+                .listeners(listOf(ChatLogger()))
+                .build()
+            val rawResponse = chatModel.chat(prompt.text()).trim()
+            val json = rawResponse
+                .removePrefix("```json")
+                .removePrefix("```")
+                .removeSuffix("```")
+                .trim()
+            val response = Json.decodeFromString<AnswerWithEmotion>(json)
+            log.debug("Generate answer with LM Studio and Emotion and LangChain result size: ${response.answer.length}")
+            Result.success(response)
+        } catch (e: CancellationException) {
+            log.error("Generate answer with LM Studio and Emotion and LangChain Cancelled")
+            e.printStackTrace()
+            return Result.success(AnswerWithEmotion("", ""))
+        } catch (e: Exception) {
+            log.error("Generate answer with LM Studio and Emotion and LangChain exception: ${e.message}")
             e.printStackTrace()
             return Result.failure(e)
         }

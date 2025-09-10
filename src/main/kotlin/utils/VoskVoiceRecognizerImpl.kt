@@ -12,6 +12,7 @@ import org.vosk.Recognizer
 import org.vosk.Model
 import repository.PreferencesRepository
 import java.io.File
+import java.nio.charset.Charset
 import javax.sound.sampled.*
 
 class VoskVoiceRecognizerImpl(
@@ -60,6 +61,8 @@ class VoskVoiceRecognizerImpl(
 
     override fun runRecognition(selectedMixerInfo: Mixer.Info) {
         log.debug("Run recognition")
+        println("Default charset: ${Charset.defaultCharset()}")
+        println("file.encoding: ${Charset.defaultCharset().displayName()}")
         if (initJob?.isActive == true) {
             log.error("Run recognition but init is running, wait")
             ownerStage?.showAlert(
@@ -109,13 +112,16 @@ class VoskVoiceRecognizerImpl(
                     val bytesRead = microphone.read(buffer, 0, buffer.size)
                     if (bytesRead > 0) {
                         if (recognizer.acceptWaveForm(buffer, bytesRead)) {
-                            onResultListener?.invoke(recognizer.result)
+                            val result = recognizer.result
+                            log.debug("Vosk result: $result")
+                            onResultListener?.invoke(result)
                         } else {
-                            onPartialResultListener?.invoke(recognizer.partialResult)
+                            val result = recognizer.partialResult
+                            log.debug("Vosk partial result: $result")
+                            onPartialResultListener?.invoke(result)
                         }
                     }
                 }
-
             } catch (e: Exception) {
                 log.error("Run recognition error: ${e.message}")
                 e.printStackTrace()

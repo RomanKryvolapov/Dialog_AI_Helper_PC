@@ -18,6 +18,10 @@ import utils.AudioChunker
 import utils.AudioChunkerImpl
 import utils.VoskVoiceRecognizer
 import utils.VoskVoiceRecognizerImpl
+import utils.WhisperUtil
+import utils.WhisperUtilImpl
+import utils.XttsUtil
+import utils.XttsUtilImpl
 import java.time.Duration
 import java.util.prefs.Preferences
 
@@ -25,6 +29,8 @@ val utilsModule = module {
 
     singleOf(::VoskVoiceRecognizerImpl) bind VoskVoiceRecognizer::class
     singleOf(::AudioChunkerImpl) bind AudioChunker::class
+    singleOf(::WhisperUtilImpl) bind WhisperUtil::class
+    singleOf(::XttsUtilImpl) bind XttsUtil::class
 
     single<Preferences> {
         Preferences.userRoot().node("PREFERENCES_DATABASE")

@@ -1,9 +1,8 @@
 import sys
 import os
 import traceback
-from faster_whisper import WhisperModel
 import torch
-
+from faster_whisper import WhisperModel
 
 def main():
     # print("Torch version:", torch.__version__)

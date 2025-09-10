@@ -36,6 +36,16 @@ Input:
 $SOURCE_TEXT
 """.trimIndent()
 
+val PROMPT_FULL_SIZE_WITH_EMOTION = """
+     Ответь на вопрос и оцени эмоциональный тон.
+        Важно: верни только JSON, без markdown, без пояснений. Пример:
+        {
+          "answer": "Ответ здесь",
+          "emotion": "эмоция здесь"
+        }
+        Вопрос: $SOURCE_TEXT
+""".trimIndent()
+
 val defaultApplicationInfo = ApplicationInfo(
     lastSelectedDevice = "",
     selectedModel = LlmModel(

@@ -4,6 +4,7 @@ import COLOUR_BLUE
 import COLOUR_GREEN
 import COLOUR_RED
 import PROMPT_FULL_SIZE
+import PROMPT_FULL_SIZE_WITH_EMOTION
 import SOURCE_TEXT_CLEAR
 import app.DialogApplication.Companion.ownerStage
 import backgroundThreadScope
@@ -33,11 +34,16 @@ import repository.PreferencesRepository
 import ui.base.BaseTab
 import utils.AudioChunker
 import utils.VoskVoiceRecognizer
+import utils.WhisperUtil
+import utils.XttsUtil
+import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import javax.sound.sampled.Mixer
 
 class MessagesTab(
+    private val xttsUtil: XttsUtil,
+    private val whisperUtil: WhisperUtil,
     private val audioChunker: AudioChunker,
     private val cloudRepository: CloudRepository,
     private val voskVoiceRecognizer: VoskVoiceRecognizer,
@@ -74,6 +80,8 @@ class MessagesTab(
 
     private var translateMessageJob: Job? = null
     private var translateTimerJob: Job? = null
+
+    private var voiceSample: File? = null
 
     private var listeningButton = Button("Wait for init").apply {
         style += "-fx-background-color: $COLOUR_RED;"
@@ -140,7 +148,7 @@ class MessagesTab(
                 Button("Send now").apply {
                     style += "-fx-background-color: $COLOUR_GREEN;"
                     setOnAction {
-                        translateMessage(
+                        processMessage(
                             index = messageBox.children.size - 1,
                             message = originalMessage,
                             writeResultToMessageBuffer = true,
@@ -212,7 +220,7 @@ class MessagesTab(
                             val currentTime = System.currentTimeMillis()
                             if (lastTranslatedTime.get() + translateTextEveryMilliseconds < currentTime) {
                                 log.debug("Translate text by timer")
-                                translateMessage(
+                                processMessage(
                                     index = messageBox.children.size - 1,
                                     message = originalMessage,
                                     writeResultToMessageBuffer = true,
@@ -300,7 +308,7 @@ class MessagesTab(
                                 messageFromAi = "...",
                             )
                         )
-                        translateMessage(
+                        processMessage(
                             index = currentMessageIndex,
                             message = originalMessage,
                             writeResultToMessageBuffer = false,
@@ -323,7 +331,7 @@ class MessagesTab(
                                 messageFromAi = lastMessageFromAI,
                             )
                         )
-                        translateMessage(
+                        processMessage(
                             index = currentMessageIndex,
                             message = resultString,
                             writeResultToMessageBuffer = true,
@@ -343,25 +351,6 @@ class MessagesTab(
                 }
             }
         }
-        audioChunker.onResultListener = { resultString ->
-            val currentMessageIndex = messageBox.children.size - 1
-            updateMessageAt(
-                index = currentMessageIndex + 1,
-                newItem = DialogItem(
-                    originalMessage = resultString,
-                    messageFromAi = lastMessageFromAI,
-                )
-            )
-            translateMessage(
-                index = currentMessageIndex,
-                message = originalMessage,
-                writeResultToMessageBuffer = false,
-            )
-            originalMessage = resultString
-            lastMessageFromAI = "..."
-            lastMessageToAI = ""
-            lastTranslatedLength.set(0)
-        }
         audioChunker.onStartListener = {
             mainThreadScope.launch {
                 listeningButton.text = "Stop dialog"
@@ -374,9 +363,32 @@ class MessagesTab(
                 listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
             }
         }
+        audioChunker.onResultListener = { outputFile ->
+            voiceSample = outputFile
+            whisperUtil.runFasterWhisper(outputFile)
+        }
+        whisperUtil.onResultListener = { resultString ->
+            val messageIndex = messageBox.children.size
+            updateMessageAt(
+                index = messageIndex,
+                newItem = DialogItem(
+                    originalMessage = resultString,
+                    messageFromAi = lastMessageFromAI,
+                )
+            )
+            processMessage(
+                index = messageIndex,
+                message = resultString,
+                writeResultToMessageBuffer = false,
+            )
+            originalMessage = resultString
+            lastMessageFromAI = "..."
+            lastMessageToAI = ""
+            lastTranslatedLength.set(0)
+        }
     }
 
-    private fun translateMessage(
+    private fun processMessage(
         index: Int,
         message: String,
         writeResultToMessageBuffer: Boolean,
@@ -395,9 +407,13 @@ class MessagesTab(
         translateMessageJob = backgroundThreadScope.launch {
             lastTranslatedTime.set(System.currentTimeMillis())
             val appInfo = getAppInfo()
-            log.debug("Translate position: $index text: $message")
-            val template = PromptTemplate.from(PROMPT_FULL_SIZE)
+            log.debug("Message position: $index text: $message")
+
+//            val template = PromptTemplate.from(PROMPT_FULL_SIZE)
+
+            val template = PromptTemplate.from(PROMPT_FULL_SIZE_WITH_EMOTION)
             val prompt = template.apply(mapOf(SOURCE_TEXT_CLEAR to message))
+
             val result = when (appInfo.selectedModel.engine) {
                 LlmModelEngine.GOOGLE -> {
                     cloudRepository.generateAnswerByLangChainByGoogleAI(
@@ -408,11 +424,22 @@ class MessagesTab(
                 }
 
                 LlmModelEngine.LM_STUDIO -> {
-                    localNetworkRepository.generateAnswerByLangChainLmStudio(
+                    localNetworkRepository.generateAnswerByLangChainWithGradeLmStudio(
                         prompt = prompt,
                         baseUrl = appInfo.lmStudioConfig.baseUrl,
                         model = appInfo.selectedModel.id,
-                    )
+                    ).map {
+                        log.debug("Emotion: ${it.emotion}")
+                        ownerStage?.showAlert(
+                            alertTitle = "Emotion",
+                            alertContent = it.emotion
+                        )
+                        xttsUtil.speak(
+                            message = it.answer,
+                            voiceSample = voiceSample
+                        )
+                        it.answer
+                    }
                 }
 
                 LlmModelEngine.OLLAMA -> {

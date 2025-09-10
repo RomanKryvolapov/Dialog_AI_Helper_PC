@@ -2,6 +2,7 @@ package repository
 
 import dev.langchain4j.model.input.Prompt
 import models.domain.LlmModel
+import models.network.AnswerWithEmotion
 
 interface LocalNetworkRepository {
 
@@ -24,6 +25,12 @@ interface LocalNetworkRepository {
         model: String,
         prompt: Prompt,
     ): Result<String>
+
+    fun generateAnswerByLangChainWithGradeLmStudio(
+        baseUrl: String,
+        model: String,
+        prompt: Prompt,
+    ): Result<AnswerWithEmotion>
 
     fun generateAnswerByLangChainOllama(
         baseUrl: String,

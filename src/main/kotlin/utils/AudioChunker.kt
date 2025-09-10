@@ -1,6 +1,7 @@
 package utils
 
 import kotlinx.coroutines.flow.Flow
+import java.io.File
 import javax.sound.sampled.Mixer
 
 interface AudioChunker {
@@ -8,7 +9,7 @@ interface AudioChunker {
     val noiceLevelFlow: Flow<Int>
     var onStopListener: (() -> Unit)?
     var onStartListener: (() -> Unit)?
-    var onResultListener: ((String) -> Unit)?
+    var onResultListener: ((wavFile: File) -> Unit)?
 
     fun startListening(selectedMixerInfo: Mixer.Info)
     fun stopListening()
