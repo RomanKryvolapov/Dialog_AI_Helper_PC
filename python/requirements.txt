@@ -1,4 +1,11 @@
 torch==2.5.1+cu121
+torchaudio==2.5.1+cu121
 faster_whisper
 transformers==4.37.2
 TTS==0.22.0
+numpy==1.25.2
+chatterbox-tts==-0.1.4
+sounddevice
+scipy
+
+# pip install torch==2.5.1+cu121 torchaudio==2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121

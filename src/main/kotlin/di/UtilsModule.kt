@@ -16,6 +16,8 @@ import org.koin.dsl.bind
 import org.koin.dsl.module
 import utils.AudioChunker
 import utils.AudioChunkerImpl
+import utils.ChatterboxUtil
+import utils.ChatterboxUtilImpl
 import utils.VoskVoiceRecognizer
 import utils.VoskVoiceRecognizerImpl
 import utils.WhisperUtil
@@ -31,6 +33,7 @@ val utilsModule = module {
     singleOf(::AudioChunkerImpl) bind AudioChunker::class
     singleOf(::WhisperUtilImpl) bind WhisperUtil::class
     singleOf(::XttsUtilImpl) bind XttsUtil::class
+    singleOf(::ChatterboxUtilImpl) bind ChatterboxUtil::class
 
     single<Preferences> {
         Preferences.userRoot().node("PREFERENCES_DATABASE")

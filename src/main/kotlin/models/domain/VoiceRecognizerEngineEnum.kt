@@ -2,7 +2,7 @@ package models.domain
 
 import models.common.TypeEnum
 
-enum class VoiceRecognizer (
+enum class VoiceRecognizerEngineEnum(
     override val type: String,
 ) : TypeEnum {
     VOSK("Vosk"),

@@ -21,13 +21,15 @@ import mainThreadScope
 import models.domain.GoogleAiModelsEnum
 import models.domain.LlmModel
 import models.domain.LlmModelEngine
-import models.domain.VoiceRecognizer
+import models.domain.VoiceRecognizerEngineEnum
+import models.domain.VoiceSpeakerEngineEnum
 import org.slf4j.LoggerFactory
 import repository.LocalNetworkRepository
 import repository.PreferencesRepository
 import ui.base.BaseTab
 import utils.VoskVoiceRecognizer
 import java.awt.Desktop
+import java.io.File
 import java.net.URI
 import javax.sound.sampled.Mixer
 
@@ -46,6 +48,7 @@ class SettingsTab(
     private val log = LoggerFactory.getLogger("SettingsTab")
 
     var modelsBox: ComboBox<LlmModel>? = null
+    var soundDevicesBox: ComboBox<Mixer.Info>? = null
     var voskModelPathTextInput: TextInputControl? = null
     var whisperModelPathTextInput: TextInputControl? = null
     var googleCloudTokenTextInput: TextInputControl? = null
@@ -65,7 +68,7 @@ class SettingsTab(
 
         addTitleLabel("Audio device for voice recognition:")
 
-        val devices: List<Mixer.Info> = voskVoiceRecognizer.getAvailableInputDevices()
+        var devices: List<Mixer.Info> = voskVoiceRecognizer.getAvailableInputDevices()
 
         if (devices.isEmpty()) {
             addLabel("Not found")
@@ -80,7 +83,7 @@ class SettingsTab(
                     )
                 )
             }
-            addComboBox(
+            soundDevicesBox = addComboBox(
                 items = devices,
                 selectedItem = lastSelected ?: devices.first(),
                 toStringFn = { mixerInfo ->
@@ -92,6 +95,7 @@ class SettingsTab(
                             lastSelectedDevice = mixerInfo.name
                         )
                     )
+
                 }
             )
         }
@@ -99,7 +103,7 @@ class SettingsTab(
         addTitleLabel("Voice recognizer:")
 
         addComboBox(
-            items = VoiceRecognizer.entries,
+            items = VoiceRecognizerEngineEnum.entries,
             selectedItem = appInfo.voiceRecognizer,
             toStringFn = { voiceRecognizer ->
                 voiceRecognizer.type
@@ -110,12 +114,31 @@ class SettingsTab(
                         voiceRecognizer = voiceRecognizer
                     )
                 )
-                if (voiceRecognizer == VoiceRecognizer.VOSK) {
+                if (voiceRecognizer == VoiceRecognizerEngineEnum.VOSK) {
                     val appInfo = getAppInfo()
                     if (appInfo.voskModelPath.isNotEmpty()) {
                         voskVoiceRecognizer.init(appInfo.voskModelPath)
                     }
+                } else {
+                    voskVoiceRecognizer.close()
                 }
+            }
+        )
+
+        addTitleLabel("Voice speaker:")
+
+        addComboBox(
+            items = VoiceSpeakerEngineEnum.entries,
+            selectedItem = appInfo.voiceSpeaker,
+            toStringFn = { voiceSpeaker ->
+                voiceSpeaker.type
+            },
+            onSelected = { voiceSpeaker ->
+                saveAppInfo(
+                    getAppInfo().copy(
+                        voiceSpeaker = voiceSpeaker
+                    )
+                )
             }
         )
 
@@ -131,6 +154,38 @@ class SettingsTab(
                 saveAppInfo(
                     getAppInfo().copy(
                         selectedModel = it
+                    )
+                )
+            }
+        )
+
+        addTitleLabel("Question language")
+
+        sendTextEverySymbolsTextInput = addTextFieldWithSaveButton(
+            fieldText = appInfo.questionLanguage,
+            buttonTitle = "Save",
+            buttonColor = COLOUR_GREEN,
+            onClicked = { result ->
+                val appInfo = getAppInfo()
+                saveAppInfo(
+                    appInfo.copy(
+                        questionLanguage = result,
+                    )
+                )
+            }
+        )
+
+        addTitleLabel("Answer language")
+
+        sendTextEverySymbolsTextInput = addTextFieldWithSaveButton(
+            fieldText = appInfo.answerLanguage,
+            buttonTitle = "Save",
+            buttonColor = COLOUR_GREEN,
+            onClicked = { result ->
+                val appInfo = getAppInfo()
+                saveAppInfo(
+                    appInfo.copy(
+                        answerLanguage = result,
                     )
                 )
             }
@@ -307,12 +362,10 @@ class SettingsTab(
             }
         )
 
-        addTitleLabel("VOSK voice recognition model:")
-
-        addLabel("To use voice recognition, you must download the model for recognition, unzip it to disk and select the folder with it.")
+        addTitleLabel("VOSK voice recognition model download:")
 
         addButton(
-            title = "Download model",
+            title = "Download VOSK model",
             buttonColor = COLOUR_BLUE,
             onClicked = {
                 if (Desktop.isDesktopSupported()) {
@@ -330,7 +383,42 @@ class SettingsTab(
             buttonTitle = "Select folder with model files",
             buttonColor = COLOUR_GREEN,
             onClicked = {
-                voskVoiceRecognizer.selectModelFolder()
+                val selectedDirectory = ownerStage?.chooseDirectory(
+                    title = "Select Folder"
+                )
+                if (selectedDirectory == null) {
+                    log.error("Select model folder but selected directory is null")
+                    return@addTextFieldWithSaveButton
+                }
+                val uuidFile = File(selectedDirectory, "uuid")
+                if (!uuidFile.exists()) {
+                    uuidFile.writeText("00000000-0000-0000-0000-000000000000")
+                }
+                val appInfo = getAppInfo()
+                saveAppInfo(
+                    appInfo.copy(
+                        voskModelPath = selectedDirectory.absolutePath
+                    )
+                )
+                if (appInfo.voiceRecognizer == VoiceRecognizerEngineEnum.VOSK) {
+                    voskVoiceRecognizer.init(
+                        voskModelPath = selectedDirectory.absolutePath
+                    )
+                }
+            }
+        )
+
+        addTitleLabel("Whisper voice recognition model download:")
+
+        addButton(
+            title = "Download Whisper model",
+            buttonColor = COLOUR_BLUE,
+            onClicked = {
+                if (Desktop.isDesktopSupported()) {
+                    Desktop.getDesktop().browse(URI("https://huggingface.co/guillaumekln/models"))
+                } else {
+                    println("Desktop is not supported")
+                }
             }
         )
 

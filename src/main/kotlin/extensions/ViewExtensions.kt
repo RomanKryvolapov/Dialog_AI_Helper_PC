@@ -7,7 +7,6 @@ import javafx.collections.FXCollections
 import javafx.geometry.Insets
 import javafx.geometry.Pos
 import javafx.scene.control.*
-import javafx.scene.control.TextInputControl
 import javafx.scene.input.Clipboard
 import javafx.scene.input.ClipboardContent
 import javafx.scene.layout.HBox
@@ -19,10 +18,12 @@ import kotlinx.coroutines.launch
 import mainThreadScope
 import java.io.File
 
-fun VBox.addLabel(text: String) {
-    children.add(Label(text).apply {
+fun VBox.addLabel(text: String): Label {
+    val label = Label(text)
+    children.add(label.apply {
         maxWidth = Double.MAX_VALUE
     })
+    return label
 }
 
 
@@ -55,8 +56,8 @@ fun VBox.addTextField(
 }
 
 fun VBox.addTextFieldWithSaveButton(
-    fieldText: String,
     lines: Int = 1,
+    fieldText: String,
     buttonTitle: String,
     buttonColor: String,
     onClicked: (String) -> Unit,

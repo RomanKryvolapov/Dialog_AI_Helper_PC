@@ -16,42 +16,50 @@ torch.serialization.add_safe_globals([
     BaseDatasetConfig
 ])
 
+base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+speaker_wav = os.path.join(base_dir, "voice", "voice_sample_ru.wav")
+output_path = os.path.join(base_dir, "cache", "output_xtts.wav")
+
 def main():
 
     if len(sys.argv) < 3:
-        print("Usage: xtts_util.py <text> <speaker_wav>", file=sys.stderr)
+        print("Xtts: Arguments not found")
         sys.exit(1)
 
     text = sys.argv[1]
-    speaker_wav = sys.argv[2]
+    language = sys.argv[2]
 
     if not os.path.isfile(speaker_wav):
-        print(f"Audio file not found: {speaker_wav}", file=sys.stderr)
+        print("Xtts: Voice sample audio file not found")
         sys.exit(1)
 
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    output_path = os.path.join(base_dir, "cache", "output.wav")
+    if not text:
+        print("Xtts: Text is empty", file=sys.stderr)
+        sys.exit(1)
 
-    print(f"Synthesizing text: {text}")
-    print(f"Using speaker: {speaker_wav}")
+    if not language:
+        print("Xtts: Language is empty", file=sys.stderr)
+        sys.exit(1)
 
-    tts = TTS(
-        model_name="tts_models/multilingual/multi-dataset/xtts_v2",
-        gpu=torch.cuda.is_available()
-    )
+    try:
+        tts = TTS(
+            model_name="tts_models/multilingual/multi-dataset/xtts_v2",
+            gpu=torch.cuda.is_available()
+        )
 
-    tts.tts_to_file(
-        text=text,
-        file_path=output_path,
-        language="ru",
-        speaker_wav=speaker_wav
-    )
+        tts.tts_to_file(
+            text=text,
+            file_path=output_path,
+            language=language,
+            speaker_wav=speaker_wav
+        )
 
-    print("Playing audio...")
-    samplerate, data = read(output_path)
-    sd.play(data, samplerate=samplerate)
-    sd.wait()
-    print("Done.")
+        samplerate, data = read(output_path)
+        sd.play(data, samplerate=samplerate)
+        sd.wait()
+    except Exception as e:
+        print("Xtts: Exception ", str(e), file=sys.stderr)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

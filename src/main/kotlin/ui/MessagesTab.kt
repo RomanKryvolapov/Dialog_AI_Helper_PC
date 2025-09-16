@@ -3,8 +3,6 @@ package ui
 import COLOUR_BLUE
 import COLOUR_GREEN
 import COLOUR_RED
-import PROMPT_FULL_SIZE
-import PROMPT_FULL_SIZE_WITH_EMOTION
 import SOURCE_TEXT_CLEAR
 import app.DialogApplication.Companion.ownerStage
 import backgroundThreadScope
@@ -25,7 +23,8 @@ import kotlinx.coroutines.launch
 import mainThreadScope
 import models.domain.DialogItem
 import models.domain.LlmModelEngine
-import models.domain.VoiceRecognizer
+import models.domain.VoiceRecognizerEngineEnum
+import models.domain.VoiceSpeakerEngineEnum
 import org.json.JSONObject
 import org.slf4j.LoggerFactory
 import repository.CloudRepository
@@ -33,6 +32,7 @@ import repository.LocalNetworkRepository
 import repository.PreferencesRepository
 import ui.base.BaseTab
 import utils.AudioChunker
+import utils.ChatterboxUtil
 import utils.VoskVoiceRecognizer
 import utils.WhisperUtil
 import utils.XttsUtil
@@ -45,6 +45,7 @@ class MessagesTab(
     private val xttsUtil: XttsUtil,
     private val whisperUtil: WhisperUtil,
     private val audioChunker: AudioChunker,
+    private val chatterboxUtil: ChatterboxUtil,
     private val cloudRepository: CloudRepository,
     private val voskVoiceRecognizer: VoskVoiceRecognizer,
     private val localNetworkRepository: LocalNetworkRepository,
@@ -53,14 +54,13 @@ class MessagesTab(
     preferencesRepository = preferencesRepository,
 ) {
 
-
     private val log = LoggerFactory.getLogger("MessagesTab")
 
     companion object {
         const val FIELD_BACKGROUND_COLOUR = "#323232"
         const val BUTTONS_BACKGROUND_COLOUR = "#323232"
         private const val TRANSLATE_CHECK_DELAY = 1000L
-        private const val NEW_MESSAGE_DELTA = 16
+        private const val NEW_MESSAGE_DELTA = 8
     }
 
     val content: Pane
@@ -83,6 +83,13 @@ class MessagesTab(
 
     private var voiceSample: File? = null
 
+    private val label: Label
+
+    private var labelMessagePartVoiceRecognition = ""
+    private var labelMessagePartProcessMessage = ""
+    private var labelMessagePartRecord = ""
+    private var labelMessagePartNoiceLevel = ""
+
     private var listeningButton = Button("Wait for init").apply {
         style += "-fx-background-color: $COLOUR_RED;"
         setOnAction {
@@ -97,6 +104,18 @@ class MessagesTab(
 
     init {
         setupListeners()
+
+        label = Label(labelMessagePartVoiceRecognition).apply {
+            maxWidth = Double.MAX_VALUE
+        }
+        val pane = Pane(label).apply {
+            maxWidth = Double.MAX_VALUE
+            prefHeight = 32.0
+            minHeight = 32.0
+            maxHeight = 32.0
+            label.layoutXProperty().bind(widthProperty().subtract(label.widthProperty()).divide(2))
+            label.layoutYProperty().bind(heightProperty().subtract(label.heightProperty()).divide(2))
+        }
 
         scrollPane = ScrollPane(messageBox).apply {
             isFitToWidth = true
@@ -165,21 +184,23 @@ class MessagesTab(
         }
 
         content = BorderPane().apply {
+            top = pane
             center = scrollPane
             bottom = buttonBar
             background = Background(BackgroundFill(Color.web("#2b2b2b"), null, null))
         }
         val appInfo = getAppInfo()
-        if (appInfo.voiceRecognizer == VoiceRecognizer.WHISPER) {
+        if (appInfo.voiceRecognizer == VoiceRecognizerEngineEnum.WHISPER) {
             listeningButton.text = "Start dialog"
             listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
         }
 
-//        mainThreadScope.launch {
-//            audioChunker.noiceLevelFlow.collect {
-//                listeningButton.text = it.toString()
-//            }
-//        }
+        mainThreadScope.launch {
+            audioChunker.noiceLevelFlow.collect {
+                labelMessagePartNoiceLevel = if (it != 0) "Noice level: $it" else ""
+                updateLabelMessage()
+            }
+        }
     }
 
     private fun startListening() {
@@ -195,14 +216,16 @@ class MessagesTab(
             return
         }
         when (appInfo.voiceRecognizer) {
-            VoiceRecognizer.VOSK -> startListeningVosk(device)
-            VoiceRecognizer.WHISPER -> startListeningWhisper(device)
+            VoiceRecognizerEngineEnum.VOSK -> startListeningVosk(device)
+            VoiceRecognizerEngineEnum.WHISPER -> startListeningWhisper(device)
         }
     }
 
     private fun startListeningVosk(device: Mixer.Info) {
         when {
             voskVoiceRecognizer.inInit() -> {
+                labelMessagePartVoiceRecognition = "Please wait for the initialization to complete."
+                updateLabelMessage()
                 ownerStage?.showAlert(
                     alertTitle = "Error",
                     alertContent = "Please wait for the initialization to complete."
@@ -247,30 +270,40 @@ class MessagesTab(
 
     private fun setupListeners() {
         voskVoiceRecognizer.onInitInProcess = {
+            labelMessagePartVoiceRecognition = "Vosk voice recognizer initialization"
+            updateLabelMessage()
             mainThreadScope.launch {
                 listeningButton.text = "Wait for init"
                 listeningButton.style += "-fx-background-color: $COLOUR_RED;"
             }
         }
         voskVoiceRecognizer.onInitReady = {
+            labelMessagePartVoiceRecognition = "Vosk voice recognizer initialization ready"
+            updateLabelMessage()
             mainThreadScope.launch {
                 listeningButton.text = "Start dialog"
                 listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
             }
         }
         voskVoiceRecognizer.onStartListener = {
+            labelMessagePartVoiceRecognition = "Vosk voice recognizer in process"
+            updateLabelMessage()
             mainThreadScope.launch {
                 listeningButton.text = "Stop dialog"
                 listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
             }
         }
         voskVoiceRecognizer.onStopListener = {
+            labelMessagePartVoiceRecognition = "Vosk voice recognizer ready"
+            updateLabelMessage()
             mainThreadScope.launch {
                 listeningButton.text = "Start dialog"
                 listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
             }
         }
         voskVoiceRecognizer.onErrorListener = { message ->
+            labelMessagePartVoiceRecognition = "Vosk voice recognizer error: $message"
+            updateLabelMessage()
             mainThreadScope.launch {
                 listeningButton.text = "Error init"
                 listeningButton.style += "-fx-background-color: $COLOUR_RED;"
@@ -281,6 +314,8 @@ class MessagesTab(
             )
         }
         voskVoiceRecognizer.onResultListener = { result ->
+            labelMessagePartVoiceRecognition = "Vosk voice recognizer on result"
+            updateLabelMessage()
             val resultString = JSONObject(result).optString("partial").normalizeAndRemoveEmptyLines()
             if (resultString.isNotEmpty()) {
                 mainThreadScope.launch {
@@ -290,6 +325,8 @@ class MessagesTab(
             }
         }
         voskVoiceRecognizer.onPartialResultListener = { result ->
+            labelMessagePartVoiceRecognition = "Vosk voice recognizer on partial result"
+            updateLabelMessage()
             val resultString = JSONObject(result).optString("partial").normalizeAndRemoveEmptyLines()
             if (resultString.isNotEmpty() && resultString != "the" && originalMessage != resultString) {
                 mainThreadScope.launch {
@@ -351,23 +388,49 @@ class MessagesTab(
                 }
             }
         }
+        voskVoiceRecognizer.onCloseReady = {
+            mainThreadScope.launch {
+                listeningButton.text = "Start dialog"
+                listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
+            }
+        }
         audioChunker.onStartListener = {
+            labelMessagePartVoiceRecognition = "Whisper start listening"
+            updateLabelMessage()
             mainThreadScope.launch {
                 listeningButton.text = "Stop dialog"
                 listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
             }
         }
         audioChunker.onStopListener = {
+            labelMessagePartVoiceRecognition = "Whisper stop listening"
+            updateLabelMessage()
             mainThreadScope.launch {
                 listeningButton.text = "Start dialog"
                 listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
             }
         }
         audioChunker.onResultListener = { outputFile ->
+            labelMessagePartVoiceRecognition = "Whisper process voice"
+            updateLabelMessage()
             voiceSample = outputFile
-            whisperUtil.runFasterWhisper(outputFile)
+            val appInfo = getAppInfo()
+            whisperUtil.runFasterWhisper(
+                wavFile = outputFile,
+                language = appInfo.questionLanguage,
+            )
+        }
+        audioChunker.onRecordStart = {
+            labelMessagePartRecord = "Audio chunker in record"
+            updateLabelMessage()
+        }
+        audioChunker.onRecordStop = {
+            labelMessagePartRecord = ""
+            updateLabelMessage()
         }
         whisperUtil.onResultListener = { resultString ->
+            labelMessagePartVoiceRecognition = "Whisper result ready"
+            updateLabelMessage()
             val messageIndex = messageBox.children.size
             updateMessageAt(
                 index = messageIndex,
@@ -403,15 +466,16 @@ class MessagesTab(
             log.error("Translate message is already translated")
             return
         }
+        labelMessagePartProcessMessage = "Process message"
+        updateLabelMessage()
         translateMessageJob?.cancel()
         translateMessageJob = backgroundThreadScope.launch {
             lastTranslatedTime.set(System.currentTimeMillis())
             val appInfo = getAppInfo()
             log.debug("Message position: $index text: $message")
 
-//            val template = PromptTemplate.from(PROMPT_FULL_SIZE)
+            val template = PromptTemplate.from(appInfo.prompt.prompt)
 
-            val template = PromptTemplate.from(PROMPT_FULL_SIZE_WITH_EMOTION)
             val prompt = template.apply(mapOf(SOURCE_TEXT_CLEAR to message))
 
             val result = when (appInfo.selectedModel.engine) {
@@ -424,22 +488,11 @@ class MessagesTab(
                 }
 
                 LlmModelEngine.LM_STUDIO -> {
-                    localNetworkRepository.generateAnswerByLangChainWithGradeLmStudio(
+                    localNetworkRepository.generateAnswerByLangChainLmStudio(
                         prompt = prompt,
                         baseUrl = appInfo.lmStudioConfig.baseUrl,
                         model = appInfo.selectedModel.id,
-                    ).map {
-                        log.debug("Emotion: ${it.emotion}")
-                        ownerStage?.showAlert(
-                            alertTitle = "Emotion",
-                            alertContent = it.emotion
-                        )
-                        xttsUtil.speak(
-                            message = it.answer,
-                            voiceSample = voiceSample
-                        )
-                        it.answer
-                    }
+                    )
                 }
 
                 LlmModelEngine.OLLAMA -> {
@@ -463,6 +516,8 @@ class MessagesTab(
                         messageFromAi = "...",
                     )
                 )
+                labelMessagePartProcessMessage = "Process message error, result is null"
+                updateLabelMessage()
                 return@launch
             }
             val resultMessage = result.getOrNull()?.normalizeAndRemoveEmptyLines()
@@ -479,6 +534,8 @@ class MessagesTab(
                         messageFromAi = "...",
                     )
                 )
+                labelMessagePartProcessMessage = "Process message error, result is empty"
+                updateLabelMessage()
                 return@launch
             }
             log.debug("Translate message result:\n$resultMessage")
@@ -490,6 +547,22 @@ class MessagesTab(
             } else {
                 "..."
             }
+            when (appInfo.voiceSpeaker) {
+                VoiceSpeakerEngineEnum.NONE -> {}
+                VoiceSpeakerEngineEnum.XTTS -> {
+                    xttsUtil.speak(
+                        message = resultMessage,
+                        language = appInfo.answerLanguage,
+                    )
+                }
+
+                VoiceSpeakerEngineEnum.CHATTERBOX -> {
+                    chatterboxUtil.speak(
+                        message = resultMessage,
+                        language = appInfo.answerLanguage,
+                    )
+                }
+            }
             updateMessageAt(
                 index = index,
                 newItem = DialogItem(
@@ -497,6 +570,8 @@ class MessagesTab(
                     messageFromAi = resultMessage,
                 )
             )
+            labelMessagePartProcessMessage = ""
+            updateLabelMessage()
         }
     }
 
@@ -545,5 +620,12 @@ class MessagesTab(
             BorderWidths(1.0)
         )
     )
+
+    private fun updateLabelMessage() {
+        mainThreadScope.launch {
+            label.text =
+                "$labelMessagePartVoiceRecognition $labelMessagePartProcessMessage $labelMessagePartRecord $labelMessagePartNoiceLevel"
+        }
+    }
 
 }

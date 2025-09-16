@@ -2,22 +2,17 @@ package utils
 
 import app.DialogApplication.Companion.ownerStage
 import defaultThreadScope
-import extensions.chooseDirectory
 import extensions.showAlert
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
-import org.vosk.Recognizer
 import org.vosk.Model
-import repository.PreferencesRepository
-import java.io.File
+import org.vosk.Recognizer
 import java.nio.charset.Charset
 import javax.sound.sampled.*
 
-class VoskVoiceRecognizerImpl(
-    private val preferencesRepository: PreferencesRepository
-) : VoskVoiceRecognizer {
+class VoskVoiceRecognizerImpl : VoskVoiceRecognizer {
 
     private val log = LoggerFactory.getLogger("VoskVoiceRecognizer")
 
@@ -35,6 +30,7 @@ class VoskVoiceRecognizerImpl(
     override var onErrorListener: ((String) -> Unit)? = null
     override var onResultListener: ((String) -> Unit)? = null
     override var onPartialResultListener: ((String) -> Unit)? = null
+    override var onCloseReady: (() -> Unit)? = null
 
     private var initJob: Job? = null
     private var recognitionJob: Job? = null
@@ -147,7 +143,10 @@ class VoskVoiceRecognizerImpl(
             job.join()
             recognizer?.let {
                 runCatching {
-                    onResultListener?.invoke(it.finalResult)
+                    val result = recognizer?.finalResult
+                    if (result != null && result.isNotBlank() && result != "{\"text\": \"\"}") {
+                        onResultListener?.invoke(result)
+                    }
                 }.onFailure {
                     log.error("Stop recognition error getting final result: ${it.message}")
                 }
@@ -164,6 +163,7 @@ class VoskVoiceRecognizerImpl(
         recognizer = null
         model?.close()
         model = null
+        onCloseReady?.invoke()
     }
 
     override fun inInit() = initJob?.isActive == true
@@ -172,27 +172,22 @@ class VoskVoiceRecognizerImpl(
 
     override fun splitUtterance() {
         log.debug("Split utterance")
-        if (initJob?.isActive == true) {
-            log.error("Split utterance but init is running, wait")
-            ownerStage?.showAlert(
-                alertTitle = "Recognizer error",
-                alertContent = "Please wait for the initialization to complete."
-            )
-            return
-        }
-        if (recognitionJob?.isActive != true) {
-            log.error("Split utterance but recognition is not running")
-            ownerStage?.showAlert(
-                alertTitle = "Recognizer error",
-                alertContent = "Please first run recognition"
-            )
+        if (initJob?.isActive == true || recognitionJob?.isActive != true) {
+            log.error("splitUtterance called while recognizer is not ready")
             return
         }
         val recognizer = recognizer ?: return
         defaultThreadScope.launch {
-            val partial = recognizer.partialResult
-            if (partial.isNotBlank()) onResultListener?.invoke(partial)
-            recognizer.reset()
+            try {
+                val partial = recognizer.partialResult
+                if (partial.isNotBlank() && partial != "{}") {
+                    onResultListener?.invoke(partial)
+                }
+                recognizer.reset()
+            } catch (e: Exception) {
+                log.error("splitUtterance error: ${e.message}")
+                onErrorListener?.invoke("Failed to split utterance: ${e.message}")
+            }
         }
     }
 
@@ -201,30 +196,6 @@ class VoskVoiceRecognizerImpl(
         return mixers.filter {
             AudioSystem.getMixer(it).targetLineInfo.any { info -> info.lineClass == TargetDataLine::class.java }
         }
-    }
-
-    override fun selectModelFolder() {
-        log.debug("Select model folder")
-        val selectedDirectory = ownerStage?.chooseDirectory(
-            title = "Select Folder"
-        )
-        if (selectedDirectory == null) {
-            log.error("Select model folder but selected directory is null")
-            return
-        }
-        val uuidFile = File(selectedDirectory, "uuid")
-        if (!uuidFile.exists()) {
-            uuidFile.writeText("00000000-0000-0000-0000-000000000000")
-        }
-        preferencesRepository.saveAppInfo(
-            preferencesRepository.getAppInfo().copy(
-                voskModelPath = selectedDirectory.absolutePath
-            )
-        )
-        close()
-        init(
-            voskModelPath = selectedDirectory.absolutePath
-        )
     }
 
 }

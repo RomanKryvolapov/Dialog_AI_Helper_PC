@@ -1,43 +1,47 @@
 import sys
 import os
-import traceback
 import torch
 from faster_whisper import WhisperModel
 
 def main():
-    # print("Torch version:", torch.__version__)
-    # print("Torch CUDA version:", torch.version.cuda)
-    # print("CUDA available:", torch.cuda.is_available())
-    if len(sys.argv) < 2:
-        print("No audio path provided", file=sys.stderr)
+
+    if len(sys.argv) < 4:
+        print("Whisper: Arguments not found")
         sys.exit(1)
+
     audio_path = sys.argv[1]
     model_dir = sys.argv[2]
+    language = sys.argv[3]
+
     if not os.path.isfile(audio_path):
-        print(f"Audio file not found: {audio_path}", file=sys.stderr)
+        print("Whisper: Audio file not found:")
         sys.exit(1)
+
     if not os.path.isdir(model_dir):
-        print(f"Model directory not found: {model_dir}", file=sys.stderr)
+        print("Whisper: Model directory not found:")
         sys.exit(1)
+
+    if not language:
+        print("Whisper: Language is empty", file=sys.stderr)
+        sys.exit(1)
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     try:
-        # base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        # model_dir = os.path.join(base_dir, "models", "faster-whisper-base.en")
-        # if not os.path.isdir(model_dir):
-        #     print(f"Model directory not found: {model_dir}", file=sys.stderr)
-        #     sys.exit(1)
         model = WhisperModel(
             model_size_or_path=model_dir,
             compute_type="int8",
-            device="cuda" if torch.cuda.is_available() else "cpu"
+            device=device
         )
-        segments, _ = model.transcribe(audio_path)
+        segments, _ = model.transcribe(
+            audio_path,
+            language=language
+        )
         text = " ".join([seg.text for seg in segments])
         print(text)
     except Exception as e:
-        print("Exception occurred:", file=sys.stderr)
-        traceback.print_exc()
-        sys.exit(2)
-
+        print("Whisper: Exception ", str(e), file=sys.stderr)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

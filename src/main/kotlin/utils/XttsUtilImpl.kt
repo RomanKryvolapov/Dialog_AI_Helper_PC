@@ -11,20 +11,27 @@ class XttsUtilImpl : XttsUtil {
 
     private val log = LoggerFactory.getLogger("XttsUtil")
 
-    override fun speak(message: String, voiceSample: File?) {
+    override fun speak(message: String, language: String) {
         defaultThreadScope.launch {
             log.debug("Speaking: $message")
             try {
                 val projectRoot = File("").absolutePath
+                val venvPythonPath = "$projectRoot/python/.venv/Scripts/python.exe"
                 val scriptPath = "$projectRoot/python/xtts_util.py"
-                val pythonPath = "C:/Users/Roman/AppData/Local/Programs/Python/Python311/python.exe"
+
+                val pythonExecutable = File(venvPythonPath)
+
+                if (!pythonExecutable.exists()) {
+                    log.error("Python executable not found at: $venvPythonPath")
+                    return@launch
+                }
 
                 val command = listOf(
-                    pythonPath,
+                    pythonExecutable.absolutePath,
                     "-Xutf8",
                     scriptPath,
                     message,
-                    voiceSample?.absolutePath ?: "$projectRoot/cache/chunk_0.wav"
+                    language,
                 )
 
                 val processBuilder = ProcessBuilder(command).apply {
@@ -40,7 +47,7 @@ class XttsUtilImpl : XttsUtil {
                 val output = StringBuilder()
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
-                    log.debug(line)
+                    log.error(line)
                     output.appendLine(line)
                 }
 
