@@ -11,9 +11,7 @@ const val SOURCE_TEXT = "{{source_text}}"
 
 const val SOURCE_TEXT_CLEAR = "source_text"
 
-const val DEFAULT_KEY = "Default"
-
-val PROMPT_FULL_SIZE = """
+val PROMPT_TRANSLATE_TEXT = """
 Role:
 
 You are a professional text translator.
@@ -36,14 +34,12 @@ Input:
 $SOURCE_TEXT
 """.trimIndent()
 
-val PROMPT_FULL_SIZE_WITH_EMOTION = """
-     Ответь на вопрос и оцени эмоциональный тон.
-        Важно: верни только JSON, без markdown, без пояснений. Пример:
-        {
-          "answer": "Ответ здесь",
-          "emotion": "эмоция здесь"
-        }
-        Вопрос: $SOURCE_TEXT
+val PROMPT_ANSWER_TO_QUESTIONS = """
+    You are AI assistant
+    You need to answer the question in Russian
+    If you don't know the answer or the question is not a question, write about it in Russian
+    Your answer should contain only a short and informative answer to the question, nothing extra, or the text I don't know the answer to the question
+    Question : $SOURCE_TEXT
 """.trimIndent()
 
 val defaultApplicationInfo = ApplicationInfo(
@@ -55,10 +51,20 @@ val defaultApplicationInfo = ApplicationInfo(
         googleAiModel = GoogleAiModelsEnum.GEMMA_3_27B,
     ),
     googleCloudToken = "",
-    prompt = PROMPT_FULL_SIZE,
+    prompt = PromptModel(
+        name = "Translate text",
+        prompt = PROMPT_TRANSLATE_TEXT,
+    ),
     lastOpenedTab = 1,
     promptsMap = mapOf(
-        DEFAULT_KEY to PROMPT_FULL_SIZE
+        "Translate text" to PromptModel(
+            name = "Translate text",
+            prompt = PROMPT_TRANSLATE_TEXT,
+        ),
+        "Answer the question" to PromptModel(
+            name =  "Answer the question",
+            prompt = PROMPT_ANSWER_TO_QUESTIONS,
+        ),
     ),
     lmStudioConfig = LmStudioConfig(
         baseUrl = "http://localhost:1234",
@@ -77,7 +83,10 @@ val defaultApplicationInfo = ApplicationInfo(
         maxSilenceMilliseconds = 500L,
         maxChunkDurationMilliseconds = 5000L,
     ),
-    voiceRecognizer = VoiceRecognizer.VOSK,
+    voiceRecognizer = VoiceRecognizerEngineEnum.VOSK,
+    voiceSpeaker = VoiceSpeakerEngineEnum.NONE,
+    questionLanguage = "en",
+    answerLanguage = "ru",
 )
 
 

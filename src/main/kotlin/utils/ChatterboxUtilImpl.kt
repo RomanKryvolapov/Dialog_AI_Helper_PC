@@ -7,9 +7,9 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 
-class XttsUtilImpl : XttsUtil {
+class ChatterboxUtilImpl: ChatterboxUtil {
 
-    private val log = LoggerFactory.getLogger("XttsUtil")
+    private val log = LoggerFactory.getLogger("ChatterboxUtil")
 
     override fun speak(message: String, language: String) {
         defaultThreadScope.launch {
@@ -17,7 +17,7 @@ class XttsUtilImpl : XttsUtil {
             try {
                 val projectRoot = File("").absolutePath
                 val venvPythonPath = "$projectRoot/python/.venv/Scripts/python.exe"
-                val scriptPath = "$projectRoot/python/xtts_util.py"
+                val scriptPath = "$projectRoot/python/chatterbox_util.py"
 
                 val pythonExecutable = File(venvPythonPath)
 
@@ -53,11 +53,11 @@ class XttsUtilImpl : XttsUtil {
 
                 val exitCode = process.waitFor()
                 if (exitCode != 0) {
-                    log.error("XTTS process exited with code $exitCode")
+                    log.error("Chatterbox process exited with code $exitCode")
                 }
 
             } catch (e: Exception) {
-                log.error("Exception during XTTS execution", e)
+                log.error("Exception during Chatterbox execution", e)
             }
         }
     }

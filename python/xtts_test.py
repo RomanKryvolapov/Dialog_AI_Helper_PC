@@ -3,6 +3,7 @@ import torch
 from TTS.api import TTS
 from scipy.io.wavfile import read
 import sounddevice as sd
+import sys
 
 from TTS.tts.configs.xtts_config import XttsConfig
 from TTS.tts.models.xtts import XttsAudioConfig, XttsArgs
@@ -14,14 +15,22 @@ torch.serialization.add_safe_globals([
     XttsArgs,
     BaseDatasetConfig
 ])
+base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+speaker_wav = os.path.join(base_dir, "voice", "voice_sample_ru.wav")
+output_path = os.path.join(base_dir, "cache", "output_xtts_test.wav")
 
 def main():
+    print("Torch version:", torch.__version__)
+    print("Cuda version:", torch.version.cuda)
+    print("CUDA available:", torch.cuda.is_available())
+    print("Current device:", torch.cuda.current_device())
+    print("Device name:", torch.cuda.get_device_name(0))
 
-    text = "Тестовый текст"
+    text = "Привет! Это тест с использованием XTTS."
 
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    speaker_wav = os.path.join(base_dir, "cache", "chunk_0.wav")
-    output_path = os.path.join(base_dir, "cache", "output_0.wav")
+    if not os.path.isfile(speaker_wav):
+        print(f"Audio file not found: {speaker_wav}", file=sys.stderr)
+        sys.exit(1)
 
     print(f"Synthesizing text: {text}")
     print(f"Using speaker: {speaker_wav}")

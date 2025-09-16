@@ -11,6 +11,7 @@ interface VoskVoiceRecognizer {
     var onErrorListener: ((String) -> Unit)?
     var onResultListener: ((String) -> Unit)?
     var onPartialResultListener: ((String) -> Unit)?
+    var onCloseReady: (() -> Unit)?
 
     fun init(voskModelPath: String)
     fun runRecognition(selectedMixerInfo: Mixer.Info)
@@ -20,6 +21,5 @@ interface VoskVoiceRecognizer {
     fun inRunning(): Boolean
     fun splitUtterance()
     fun getAvailableInputDevices(): List<Mixer.Info>
-    fun selectModelFolder()
 
 }

@@ -1,8 +1,9 @@
 package app
 
-import PROMPT_FULL_SIZE
+import PROMPT_ANSWER_TO_QUESTIONS
+import PROMPT_TRANSLATE_TEXT
+import defaultApplicationInfo
 import di.allModules
-import extensions.showAlert
 import extensions.showAlertWithAction
 import ui.MessagesTab
 import ui.SettingsTab
@@ -14,7 +15,8 @@ import javafx.scene.control.Tab
 import javafx.scene.control.TabPane
 import javafx.stage.Screen
 import javafx.stage.Stage
-import models.domain.VoiceRecognizer
+import models.domain.PromptModel
+import models.domain.VoiceRecognizerEngineEnum
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import ui.PromptTab
@@ -52,13 +54,26 @@ class DialogApplication : Application(), KoinComponent {
 
         val appInfo = preferencesRepository.getAppInfo()
 
-        if (appInfo.prompt.isBlank()) {
+        if (appInfo.prompt.prompt.isBlank()) {
             preferencesRepository.saveAppInfo(
                 preferencesRepository.getAppInfo().copy(
-                    prompt = PROMPT_FULL_SIZE
+                    prompt = PromptModel(
+                        name = "Translate text",
+                        prompt = PROMPT_TRANSLATE_TEXT,
+                    )
                 )
             )
         }
+
+//        preferencesRepository.saveAppInfo(
+//            preferencesRepository.getAppInfo().copy(
+//                promptsMap = defaultApplicationInfo.promptsMap,
+//                prompt = PromptModel(
+//                    name =  "Translate text",
+//                    prompt = PROMPT_TRANSLATE_TEXT,
+//                )
+//            )
+//        )
 
         val tabPane = TabPane().apply {
             tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
@@ -106,7 +121,7 @@ class DialogApplication : Application(), KoinComponent {
             this.scene = scene
             show()
         }
-        if (appInfo.voiceRecognizer == VoiceRecognizer.VOSK) {
+        if (appInfo.voiceRecognizer == VoiceRecognizerEngineEnum.VOSK) {
             if (appInfo.voskModelPath.isNotEmpty()) {
                 voskVoiceRecognizer.init(appInfo.voskModelPath)
             } else {

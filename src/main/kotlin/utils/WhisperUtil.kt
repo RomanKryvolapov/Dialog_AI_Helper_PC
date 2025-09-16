@@ -6,6 +6,6 @@ interface WhisperUtil {
 
     var onResultListener: ((String) -> Unit)?
 
-    fun runFasterWhisper(wavFile: File)
+    fun runFasterWhisper(wavFile: File, language: String)
 
 }

@@ -1,6 +1,6 @@
 package utils
 
-interface XttsUtil {
+interface ChatterboxUtil {
 
     fun speak(message: String, language: String)
 

@@ -3,19 +3,18 @@ package utils
 import backgroundThreadScope
 import defaultApplicationInfo
 import defaultThreadScope
-import extensions.normalizeAndRemoveEmptyLines
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
 import repository.PreferencesRepository
-import java.io.BufferedReader
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
-import java.io.InputStreamReader
+import java.time.Duration
+import java.time.Instant
 import javax.sound.sampled.*
 import kotlin.math.sqrt
 
@@ -26,6 +25,15 @@ class AudioChunkerImpl(
     companion object {
         private const val SAMPLE_RATE = 16000.0f
         private const val CHUNK_MILLIS = 100
+        private const val MIN_CHUNK_DURATION_MILLISECONDS = 500L
+        private val format = AudioFormat(
+            SAMPLE_RATE,
+            16,
+            1,
+            true,
+            false
+        )
+        private val chunkSize = ((format.sampleRate * CHUNK_MILLIS / 1000).toInt()) * 2
     }
 
     private val log = LoggerFactory.getLogger("AudioChunker")
@@ -35,6 +43,10 @@ class AudioChunkerImpl(
 
     override var onStopListener: (() -> Unit)? = null
     override var onStartListener: (() -> Unit)? = null
+
+    override var onRecordStart: (() -> Unit)? = null
+    override var onRecordStop: (() -> Unit)? = null
+
     override var onResultListener: ((wavFile: File) -> Unit)? = null
 
     private var silenceThresholdPercents = defaultApplicationInfo.whisperModelConfig.silenceThresholdPercents
@@ -58,69 +70,98 @@ class AudioChunkerImpl(
         recognitionJob?.cancel()
         recognitionJob = defaultThreadScope.launch {
             onStartListener?.invoke()
+
             val appInfo = preferencesRepository.getAppInfo()
             modelPath = appInfo.whisperModelPath
             silenceThresholdPercents = appInfo.whisperModelConfig.silenceThresholdPercents
             maxSilenceMilliseconds = appInfo.whisperModelConfig.maxSilenceMilliseconds
             maxChunkDurationMilliseconds = appInfo.whisperModelConfig.maxChunkDurationMilliseconds
-            val format = AudioFormat(
-                SAMPLE_RATE,
-                16,
-                1,
-                true,
-                false
-            )
+
             val mixer = AudioSystem.getMixer(selectedMixerInfo)
             val dataLineInfo = DataLine.Info(TargetDataLine::class.java, format)
             if (!mixer.isLineSupported(dataLineInfo)) {
                 log.error("Run recognition but selected device does not support the required format.")
                 return@launch
             }
-            val line = mixer.getLine(dataLineInfo) as TargetDataLine
-            line.open(format)
-            line.start()
-            val chunkSize = ((format.sampleRate * CHUNK_MILLIS / 1000).toInt()) * 2
-            val buffer = ByteArray(chunkSize)
-            val currentChunk = mutableListOf<ByteArray>()
-            var chunkIndex = 0
-            var speechDetected = false
-            var lastVoiceTime = 0L
-            var chunkStartTime = 0L
-            while (isActive) {
-                val bytesRead = line.read(buffer, 0, buffer.size)
-                if (bytesRead <= 0) continue
-                val amplitude = calculateRMS(buffer)
-                noiceLevelFlow.value = amplitude
-                val now = System.currentTimeMillis()
-                if (amplitude > silenceThresholdPercents) {
-                    currentChunk.add(buffer.copyOf())
-                    if (!speechDetected) {
-                        speechDetected = true
-                        chunkStartTime = now
-                        lastVoiceTime = now
-                    } else {
-                        lastVoiceTime = now
-                    }
-                } else {
-                    if (speechDetected) {
+
+            var line: TargetDataLine? = null
+
+            try {
+                line = mixer.getLine(dataLineInfo) as TargetDataLine
+                line.open(format)
+                line.start()
+
+                val buffer = ByteArray(chunkSize)
+                var isRecording = false
+                val currentChunk = mutableListOf<ByteArray>()
+                var recordingStartTime: Instant? = null
+                var lastSoundTime: Instant = Instant.now()
+                var chunkIndex = 0
+
+                while (isActive) {
+                    val bytesRead = line.read(buffer, 0, buffer.size)
+                    if (bytesRead <= 0) continue
+
+                    val amplitude = calculateVoiceLevel(buffer)
+                    noiceLevelFlow.value = amplitude
+
+                    val currentTime = Instant.now()
+
+                    if (!isRecording && amplitude > silenceThresholdPercents) {
+                        onRecordStart?.invoke()
+                        isRecording = true
+                        recordingStartTime = currentTime
                         currentChunk.add(buffer.copyOf())
-                    }
-                }
-                if (speechDetected) {
-                    val maxDurationReached = now - chunkStartTime > maxChunkDurationMilliseconds
-                    val silenceReached = now - lastVoiceTime > maxSilenceMilliseconds
-                    if (maxDurationReached || silenceReached) {
-                        val chunkFile = File("cache/chunk_$chunkIndex.wav")
-                        saveChunk(currentChunk, format, chunkFile)
-                        chunkIndex++
-                        currentChunk.clear()
-                        if (silenceReached) {
-                            speechDetected = false
-                        } else {
-                            chunkStartTime = now
+                        lastSoundTime = currentTime
+                    } else if (isRecording) {
+                        currentChunk.add(buffer.copyOf())
+
+                        if (amplitude > silenceThresholdPercents) {
+                            lastSoundTime = currentTime
+                        }
+
+                        val silenceDuration = Duration.between(lastSoundTime, currentTime).toMillis()
+                        val recordingDuration = Duration.between(recordingStartTime, currentTime).toMillis()
+
+                        val shouldStopDueToSilence = silenceDuration > maxSilenceMilliseconds
+                        val shouldStopDueToMaxDuration = recordingDuration >= maxChunkDurationMilliseconds
+
+                        if (shouldStopDueToSilence || shouldStopDueToMaxDuration) {
+                            if (recordingDuration >= MIN_CHUNK_DURATION_MILLISECONDS) {
+                                val chunkFile = File("cache/chunk_$chunkIndex.wav")
+                                chunkIndex++
+                                saveChunk(currentChunk, format, chunkFile)
+                            }
+
+                            currentChunk.clear()
+                            isRecording = false
+                            recordingStartTime = null
+                            onRecordStop?.invoke()
+
+                            if (shouldStopDueToMaxDuration) {
+                                onRecordStart?.invoke()
+                                isRecording = true
+                                recordingStartTime = currentTime
+                                currentChunk.add(buffer.copyOf())
+                                lastSoundTime = currentTime
+                            }
                         }
                     }
                 }
+
+            } catch (e: Exception) {
+                log.error("Audio capture error: ${e.message}", e)
+            } finally {
+                try {
+                    line?.stop()
+                    line?.close()
+                    log.debug("Microphone closed")
+                } catch (e: Exception) {
+                    log.warn("Error while closing microphone: ${e.message}", e)
+                }
+                noiceLevelFlow.value = 0
+                onRecordStop?.invoke()
+                onStopListener?.invoke()
             }
         }
     }
@@ -133,7 +174,7 @@ class AudioChunkerImpl(
         onStopListener?.invoke()
     }
 
-    private fun calculateRMS(audioData: ByteArray): Int {
+    private fun calculateVoiceLevel(audioData: ByteArray): Int {
         var sum = 0L
         var count = 0
         for (i in audioData.indices step 2) {

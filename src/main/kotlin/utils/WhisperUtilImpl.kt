@@ -28,18 +28,29 @@ class WhisperUtilImpl(
         }
     }
 
-    override fun runFasterWhisper(wavFile: File) {
+    override fun runFasterWhisper(wavFile: File, language: String) {
         defaultThreadScope.launch {
             log.debug("run whisper")
             try {
+
                 val projectRoot = File("").absolutePath
+                val venvPythonPath = "$projectRoot/python/.venv/Scripts/python.exe"
                 val scriptPath = "$projectRoot/python/whisper_util.py"
+
+                val pythonExecutable = File(venvPythonPath)
+
+                if (!pythonExecutable.exists()) {
+                    log.error("Python executable not found at: $venvPythonPath")
+                    return@launch
+                }
+
                 val processBuilder = ProcessBuilder(
-                    "python",
+                    pythonExecutable.absolutePath,
                     "-Xutf8",
                     scriptPath,
                     wavFile.absolutePath,
-                    modelPath
+                    modelPath,
+                    language
                 ).apply {
                     directory(File(projectRoot))
                     redirectErrorStream(true)
@@ -55,7 +66,7 @@ class WhisperUtilImpl(
                 if (exitCode != 0) {
                     log.error("Python script exited with code $exitCode")
                 } else {
-                    val text = result.toString().normalizeAndRemoveEmptyLines()
+                    val text = result.toString().replace(Regex("""(\.\s*){2,}"""), "").normalizeAndRemoveEmptyLines()
                     log.debug("text: $text")
                     if (text.isNotBlank()) {
                         onResultListener?.invoke(text)
