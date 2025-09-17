@@ -1,12 +1,8 @@
 package app
 
-import PROMPT_ANSWER_TO_QUESTIONS
 import PROMPT_TRANSLATE_TEXT
-import defaultApplicationInfo
 import di.allModules
 import extensions.showAlertWithAction
-import ui.MessagesTab
-import ui.SettingsTab
 import javafx.application.Application
 import javafx.geometry.Rectangle2D
 import javafx.scene.Scene
@@ -19,10 +15,12 @@ import models.domain.PromptModel
 import models.domain.VoiceRecognizerEngineEnum
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
-import ui.PromptTab
 import org.koin.core.context.startKoin
 import repository.PreferencesRepository
 import ui.ConsoleTab
+import ui.MessagesTab
+import ui.PromptTab
+import ui.SettingsTab
 import utils.VoskVoiceRecognizer
 import java.awt.Desktop
 import java.net.URI

@@ -72,7 +72,7 @@ class WhisperUtilImpl(
                         onResultListener?.invoke(text)
                     }
                 }
-//                wavFile.delete()
+                wavFile.delete()
             } catch (e: Exception) {
                 log.error("Exception during whisper execution", e)
             }
