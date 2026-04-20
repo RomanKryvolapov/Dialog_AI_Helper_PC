@@ -64,61 +64,69 @@ Standard tools (Read, Edit, Grep, Glob, Bash) are ONLY allowed for:
 **ALWAYS call this first** when exploring any Kotlin or Python file.
 
 ```
-relative_path: "src/main/kotlin/app/MainApp.kt"
-depth: 0    # top-level symbols only (functions, classes, constants)
-depth: 1    # include children (methods of classes)
+relative_path: "src/main/kotlin/app/DialogApplication.kt"
+depth: 0    # top-level symbols only (classes, interfaces, top-level functions/properties)
+depth: 1    # include children (methods and properties inside classes)
 ```
+
+Kotlin symbol kinds returned: `Class`, `Interface`, `Object` (for `companion object` and `object` declarations), `Constructor`, `Method`, `Property`, `Constant` (for top-level `const val`), `Function` (top-level functions).
 
 ### find_symbol
 
 Find symbols by name path pattern. Use this instead of Grep for finding code entities.
 
 ```
-name_path_pattern: "MainViewModel"                 # any symbol with this name
-name_path_pattern: "MainViewModel/onMessage"       # method inside class (relative)
-name_path_pattern: "/MainViewModel"                # exact full path (absolute)
-relative_path: "src/main/kotlin/ui"                # restrict search scope (ALWAYS set this)
-include_body: true                                 # get source code
-include_info: true                                 # get docstring/signature
-depth: 1                                           # retrieve children
-max_matches: 5                                     # limit results
-substring_matching: true                           # "View" matches "MainViewModel"
+name_path_pattern: "DialogApplication"                   # any symbol with this name
+name_path_pattern: "DialogApplication/start"             # method inside class (relative)
+name_path_pattern: "/DialogApplication"                  # exact full path (absolute)
+relative_path: "src/main/kotlin/app"                     # restrict search scope (ALWAYS set this)
+include_body: true                                       # get source code
+include_info: true                                       # get signature/KDoc (Kotlin) or docstring (Python)
+depth: 1                                                 # retrieve children
+max_matches: 5                                           # limit results
+substring_matching: true                                 # "Dialog" matches "DialogApplication"
 ```
 
 **Name path patterns:**
-- `"myFunction"` — any symbol named myFunction
-- `"MyClass/myMethod"` — myMethod inside MyClass (relative)
-- `"/MyClass/myMethod"` — exact full path (absolute)
+- `"startListening"` — any symbol named startListening
+- `"MessagesTab/startListening"` — startListening inside MessagesTab (relative)
+- `"/MessagesTab/startListening"` — exact full path (absolute)
+
+**Multiple matches are common.** E.g., `find_symbol("main")` returns one hit per `*_util.py` and `*_test.py` plus `Main.kt`. Always pass `relative_path` to narrow the scope, or use `max_matches=1` when you want exactly one.
 
 ### find_referencing_symbols
 
 Find all code locations referencing a symbol. Use instead of Grep for finding usages.
 
 ```
-name_path: "MainViewModel"
-relative_path: "src/main/kotlin/ui/MainViewModel.kt"  # file where symbol is DEFINED
+name_path: "DialogApplication"
+relative_path: "src/main/kotlin/app/DialogApplication.kt"  # file where symbol is DEFINED
 ```
+
+**Kotlin note:** references to an *interface method* may return an empty list — the JetBrains backend tracks call sites against concrete symbols. To find who calls a method in practice, look up the *implementation* (e.g., `CloudRepositoryImpl/generateAnswerByGoogleAI` rather than `CloudRepository/generateAnswerByGoogleAI`).
+
+**Path note:** results from the JetBrains backend on Windows often contain backslashes (`src\\main\\kotlin\\...`). This is cosmetic — forward slashes always work as input to any Serena tool.
 
 ### replace_symbol_body
 
 Replace the entire definition of a symbol. **MUST read the symbol first** with `find_symbol(include_body=true)`.
 
 ```
-name_path: "onMessage"
-relative_path: "src/main/kotlin/ui/MainViewModel.kt"
-body: "fun onMessage(text: String) {\n    ...\n}"
+name_path: "DialogApplication/start"
+relative_path: "src/main/kotlin/app/DialogApplication.kt"
+body: "override fun start(primaryStage: Stage) {\n    ...\n}"
 ```
 
-**IMPORTANT:** Body includes the `fun`/`class` line but does NOT include preceding comments, KDoc, annotations placed on separate lines, or imports.
+**IMPORTANT:** Body includes the `fun`/`class` line but does NOT include preceding comments, KDoc, or annotations placed on separate lines above the declaration. Re-reading those with `find_symbol(include_body=true)` shows what's inside the body vs. outside.
 
 ### insert_before_symbol / insert_after_symbol
 
 Insert new code before or after a symbol definition.
 
 ```
-name_path: "onMessage"
-relative_path: "src/main/kotlin/ui/MainViewModel.kt"
-body: "\nfun newHelper(): String = \"hello\"\n"
+name_path: "DialogApplication/start"
+relative_path: "src/main/kotlin/app/DialogApplication.kt"
+body: "\nprivate fun newHelper(): String = \"hello\"\n"
 ```
 
 Use cases:
@@ -131,9 +139,9 @@ Use cases:
 LSP-powered rename across the entire codebase.
 
 ```
-name_path: "onMessage"
-relative_path: "src/main/kotlin/ui/MainViewModel.kt"
-new_name: "handleMessage"
+name_path: "DialogApplication/start"
+relative_path: "src/main/kotlin/app/DialogApplication.kt"
+new_name: "launch"
 ```
 
 **WARNING:** Modifies files across the codebase. Verify scope before using.
@@ -144,7 +152,7 @@ Delete a symbol only if no references exist. Returns reference list if still use
 
 ```
 name_path_pattern: "oldUnusedFunction"
-relative_path: "src/main/kotlin/utils/Helpers.kt"
+relative_path: "src/main/kotlin/utils/CommonExtensions.kt"
 ```
 
 **WARNING:** If it returns "OK", the code is already deleted.
@@ -195,9 +203,11 @@ Load the Serena Instructions Manual. Call once if you haven't read it in this co
 
 Double-check the parameter name before each call. Calling `find_symbol` with `name_path=...` fails with a pydantic validation error.
 
-### `replace_symbol_body` on multi-line top-level constants is broken
+### `replace_symbol_body` on multi-line top-level constants (Python/Jedi only)
 
-When a top-level constant is assigned to a multi-line literal (dict/list/tuple/long string), Jedi reports `body_location` as the NAME line only, not the full literal. `replace_symbol_body` then inserts the new body BEFORE the old literal, producing invalid syntax like:
+This gotcha is **Python-Jedi specific**; the JetBrains backend handles Kotlin `const val` correctly.
+
+In Python, when a top-level constant is assigned to a multi-line literal (dict/list/tuple/long string), Jedi reports `body_location` as the NAME line only, not the full literal. `replace_symbol_body` then inserts the new body BEFORE the old literal, producing invalid syntax like:
 
 ```python
 X = {              # new body
@@ -208,32 +218,45 @@ X = {              # new body
 ```
 
 **Workarounds:**
-- For multi-line constants, use `Write` to rewrite the whole file, OR
+- For multi-line Python constants, use `Write` to rewrite the whole file, OR
 - Wrap the constant in a function and `replace_symbol_body` on the function, OR
 - `safe_delete_symbol` first, then `insert_before_symbol` / `insert_after_symbol` to add it fresh.
 
-Single-line constants (`MAX_HISTORY = 20`) work fine.
+Single-line constants (`MAX_HISTORY = 20`) work fine in both languages.
 
-### `replace_symbol_body` does NOT include preceding docstrings/comments
+### `replace_symbol_body` does NOT include preceding docstrings/KDoc/annotations
 
-If the original has a docstring above the `def`, it is outside the symbol body and will survive the replacement. Don't duplicate it in your new body.
+If the original has a docstring above a Python `def`, or KDoc / separate-line annotation above a Kotlin `fun`/`class`, those lines sit *outside* the symbol body and will survive the replacement. Don't duplicate them in your new body.
 
 ### `insert_before_symbol` with imports
 
-Imports are not symbols. To add `import` lines, use `insert_before_symbol` targeting the first top-level symbol (constant/function) in the file, and include the imports in the inserted body with a trailing blank line. Don't try to `find_symbol` an import.
+Imports are not symbols. To add `import` lines, use `insert_before_symbol` targeting the first top-level symbol (constant/function/class) in the file, and include the imports in the inserted body with a trailing blank line. Don't try to `find_symbol` an import.
+
+### `find_symbol` needs enough context
+
+Calling `find_symbol("main")` with no `relative_path` and no `max_matches` returns matches across every `*_util.py`, `*_test.py`, and `Main.kt`. Always scope: `relative_path="python/whisper_util.py"` or `relative_path="src/main/kotlin/app"`. Use `substring_matching=true` sparingly — Kotlin class names (`MessagesTab`, `SettingsTab`, `PromptTab`, `ConsoleTab`) collide easily.
+
+### Companion objects and Kotlin `object`
+
+Singletons declared as `companion object { ... }` or `object Foo { ... }` show up with kind `Object` in `get_symbols_overview`. To reach a member, use `ClassName/Companion/member` or `Foo/member` as the name path.
 
 ## Project-specific notes
 
-- Primary language: Kotlin (JVM desktop app, Gradle-built)
-- Secondary language: Python (voice-recognition / TTS utilities under `python/`)
-- Language backend: JetBrains (Serena MCP is launched with `--language-backend JetBrains`)
+- Primary language: **Kotlin** (JVM 24, Gradle, `application` plugin, main class `app.MainKt`)
+- UI framework: **JavaFX** (not Compose Desktop) — `Stage`, `Scene`, `TabPane`, `.css` stylesheets from `src/main/resources/styles/`
+- Secondary language: Python — standalone scripts under `python/` (Whisper / Chatterbox / XTTS experiments, invoked as subprocesses from Kotlin)
+- Serena backend: JetBrains (`claude mcp list` shows `--language-backend JetBrains`)
 - Key Kotlin directories under `src/main/kotlin/`:
-  - `app/` — application entry point
-  - `ui/` — Compose Desktop UI and view models
-  - `di/` — dependency injection
-  - `repository/` — data access layer
-  - `models/` — data classes
-  - `mappers/`, `extensions/`, `utils/` — helpers
-- Python directory: `python/` — standalone scripts for Whisper / Chatterbox / XTTS experimentation
+  - `app/` — `Main.kt` entry, `DialogApplication.kt` JavaFX application
+  - `ui/` — tab screens: `MessagesTab.kt`, `PromptTab.kt`, `SettingsTab.kt`, `ConsoleTab.kt` (+ `base/`)
+  - `di/` — Koin modules: `AllModules.kt`, `RepositoryModule.kt`, `UiModule.kt`, `UtilsModule.kt`, `MappersModule.kt`
+  - `repository/` — `CloudRepository`, `LocalNetworkRepository`, `PreferencesRepository` (+ impls)
+  - `models/common`, `models/domain`, `models/network/{googleai,googletranslate,ollama,openai}`
+  - `mappers/{base,domain,network}`
+  - `utils/` — `Assistant.kt`, `AudioChunker.kt`, `ChatLogger.kt`, `ChatterboxUtil.kt`, `VoskVoiceRecognizer.kt`, `WhisperUtil.kt`, `XttsUtil.kt` (+ impls)
+  - `extensions/` — `CommonExtensions.kt`, `ViewExtensions.kt`
+  - `Consts.kt` — colours, prompts, default `ApplicationInfo`, coroutine scopes
+- Python directory: `python/` — `whisper_util.py`, `chatterbox_util.py`, `xtts_util.py` (plus `_test.py` counterparts), each exposes a `main()` that reads CLI args
+- Libraries in play (helpful when reading code): Koin (DI), Ktor client (HTTP), Moshi + kotlinx.serialization (JSON), langchain4j (Gemini / OpenAI / Ollama), Vosk (voice recognition), Logback (logging)
 - Non-code files (use standard tools): `build.gradle`, `settings.gradle`, `gradle.properties`, `requirements.txt`, `README.md`, `.gitignore`, files under `src/main/resources/`
-- Binary / generated directories to stay out of: `build/`, `.gradle/`, `.kotlin/`, `.venv/`, `models/`, `cache/`
+- Stay out of: `build/`, `.gradle/`, `.kotlin/`, `.venv/`, `.idea/`, `models/`, `cache/`

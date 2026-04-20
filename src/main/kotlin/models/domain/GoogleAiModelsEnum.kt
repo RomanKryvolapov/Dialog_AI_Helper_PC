@@ -55,6 +55,30 @@ enum class GoogleAiModelsEnum(
         limitRequestsInMinute = 30,
         limitRequestsInDay = 14400,
         limitTokensInMinute = 15000,
+    ),
+    GEMMA_3N_E2B(
+        type = "gemma-3n-e2b-it",
+        limitRequestsInMinute = 30,
+        limitRequestsInDay = 14400,
+        limitTokensInMinute = 15000,
+    ),
+    GEMMA_3N_E4B(
+        type = "gemma-3n-e4b-it",
+        limitRequestsInMinute = 30,
+        limitRequestsInDay = 14400,
+        limitTokensInMinute = 15000,
+    ),
+    GEMMA_4_26B_A4B(
+        type = "gemma-4-26b-a4b-it",
+        limitRequestsInMinute = 30,
+        limitRequestsInDay = 14400,
+        limitTokensInMinute = 15000,
+    ),
+    GEMMA_4_31B(
+        type = "gemma-4-31b-it",
+        limitRequestsInMinute = 30,
+        limitRequestsInDay = 14400,
+        limitTokensInMinute = 15000,
     );
 
     fun getDescription() = "Google Cloud: $type (Free: Requests/min=$limitRequestsInMinute, Requests/day=$limitRequestsInDay, Tokens/min=$limitTokensInMinute)"
