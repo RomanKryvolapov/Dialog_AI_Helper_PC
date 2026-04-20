@@ -90,6 +90,36 @@ python chatterbox_util.py <text> <speaker_wav> <output_path>
 - JavaFX, not Compose Desktop — don't suggest Compose APIs for UI changes.
 - Heavy work goes on coroutine scopes defined in `Consts.kt` (`backgroundThreadScope`, `defaultThreadScope`); UI updates go through `mainThreadScope`.
 - Preferences live behind `PreferencesRepository` — always round-trip through it, don't touch storage directly.
+- **After every batch of edits:** stop any currently running `./gradlew run` instance and relaunch it in the background. A stale JVM holds the mic device and blocks the new instance from opening it. See **How to restart the app** below.
+
+## How to restart the app
+
+1. If a previous `./gradlew run` was launched via the `Bash` tool with `run_in_background: true`, you have its task id. Call `TaskStop <task_id>` — this kills the gradle wrapper.
+2. **On Windows**, `TaskStop` alone does **not** kill the child JVM that holds the JavaFX window and the mic line. You must additionally kill every `app.MainKt` process. **Do NOT use `tasklist //V`** — its command-line column is truncated at ~72 chars so `grep app.MainKt` finds nothing even when 4 zombies are alive. Use `wmic` with a server-side `CommandLine like` filter:
+   ```bash
+   for pid in $(wmic process where "name='java.exe' and CommandLine like '%%app.MainKt%%'" get ProcessId /format:value 2>&1 \
+                | tr -d '\r' | grep -oE '[0-9]+'); do
+       taskkill //F //PID $pid
+   done
+   # verify:
+   wmic process where "name='java.exe' and CommandLine like '%%app.MainKt%%'" get ProcessId /format:value 2>&1 \
+     | tr -d '\r' | grep -oE '[0-9]+' | wc -l
+   # should print 0
+   ```
+   Double `%%` is required because bash eats single `%`. Filter on the exact `app.MainKt` main-class token — never match by `Dialog_AI_Translator` (sweeps up IntelliJ Kotlin/Serena language servers).
+   Also kill any orphaned gradle wrapper for this project:
+   ```bash
+   for pid in $(wmic process where "name='java.exe' and CommandLine like '%%GradleWrapperMain%%' and CommandLine like '%%Dialog_AI_Translator%%'" get ProcessId /format:value 2>&1 \
+                | tr -d '\r' | grep -oE '[0-9]+'); do
+       taskkill //F //PID $pid
+   done
+   ```
+3. Launch fresh:
+   ```bash
+   ./gradlew --no-daemon run
+   ```
+   with `run_in_background: true`. Record the new task id for the next restart cycle.
+4. Verify the launch reached `> Task :run` in the output file, then report back. The gradle task will hang there until the user closes the window or you `TaskStop` it next round — this is expected for a GUI app.
 
 ## Pointers
 

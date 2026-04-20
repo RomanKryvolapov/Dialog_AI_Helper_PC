@@ -1,12 +1,17 @@
 plugins {
     id 'application'
-    id 'org.jetbrains.kotlin.jvm' version '2.2.20'
-    id 'org.jetbrains.kotlin.plugin.serialization' version '2.2.20'
+    id 'org.jetbrains.kotlin.jvm' version '2.3.20'
+    id 'org.jetbrains.kotlin.plugin.serialization' version '2.3.20'
     id 'org.openjfx.javafxplugin' version '0.1.0'
 }
 
 application {
     mainClass = "app.MainKt"
+}
+
+javafx {
+    version = '26'
+    modules = ['javafx.controls', 'javafx.base', 'javafx.graphics']
 }
 
 group = 'com.romankryvolapov.shortcuts'
@@ -17,16 +22,15 @@ repositories {
 }
 
 ext {
-    kotlinVersion = '2.2.20'
+    kotlinVersion = '2.3.20'
     kotlinxCoroutines = '1.10.2'
-    javaFxVersion =  '26-ea+7'
-    ktor_version = "3.3.0"
-    logback_version = '1.5.13'
-    gson_version = '2.13.1'
-    kotlinx_serialization_json_version = "1.9.0"
+    javaFxVersion =  '26'
+    ktor_version = "3.4.2"
+    logback_version = '1.5.32'
+    kotlinx_serialization_json_version = "1.11.0"
     moshi_version = '1.15.2'
-    lc_4_j_version = '1.4.0'
-    koin_version = '4.1.1'
+    lc_4_j_version = '1.13.0'
+    koin_version = '4.2.1'
 }
 
 
@@ -41,10 +45,9 @@ dependencies {
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-javafx:$kotlinxCoroutines"
     implementation "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:$kotlinx_serialization_json_version"
 
-    implementation 'net.java.dev.jna:jna:5.17.0'
-    implementation 'com.alphacephei:vosk:0.3.45'
+    implementation 'net.java.dev.jna:jna:5.18.1'
 
-    implementation("org.json:json:20250517")
+    implementation("org.json:json:20251224")
 
     implementation "io.ktor:ktor-client-core:$ktor_version"
     implementation "io.ktor:ktor-client-cio:$ktor_version"
@@ -52,7 +55,6 @@ dependencies {
     implementation "io.ktor:ktor-serialization-kotlinx-json:$ktor_version"
     implementation "io.ktor:ktor-client-logging:$ktor_version"
     implementation "ch.qos.logback:logback-classic:$logback_version"
-//    implementation "com.google.code.gson:gson:$gson_version"
     implementation "com.squareup.moshi:moshi:$moshi_version"
     implementation "com.squareup.moshi:moshi-kotlin:$moshi_version"
     implementation "org.slf4j:slf4j-api:2.0.17"
@@ -61,7 +63,7 @@ dependencies {
     implementation "dev.langchain4j:langchain4j-open-ai:$lc_4_j_version"
     implementation "dev.langchain4j:langchain4j-google-ai-gemini:$lc_4_j_version"
     implementation("dev.langchain4j:langchain4j-http-client-jdk:$lc_4_j_version")
-    implementation "dev.langchain4j:langchain4j-ollama:$lc_4_j_version"
+    implementation "dev.langchain4j:langchain4j-anthropic:$lc_4_j_version"
 
     implementation "io.insert-koin:koin-core:$koin_version"
     implementation "io.insert-koin:koin-core-coroutines:$koin_version"

@@ -51,6 +51,8 @@ val defaultApplicationInfo = ApplicationInfo(
         googleAiModel = GoogleAiModelsEnum.GEMMA_3_27B,
     ),
     googleCloudToken = "",
+    openAiToken = "",
+    claudeToken = "",
     prompt = PromptModel(
         name = "Translate text",
         prompt = PROMPT_TRANSLATE_TEXT,
@@ -62,31 +64,20 @@ val defaultApplicationInfo = ApplicationInfo(
             prompt = PROMPT_TRANSLATE_TEXT,
         ),
         "Answer the question" to PromptModel(
-            name =  "Answer the question",
+            name = "Answer the question",
             prompt = PROMPT_ANSWER_TO_QUESTIONS,
         ),
     ),
-    lmStudioConfig = LmStudioConfig(
-        baseUrl = "http://localhost:1234",
-        models = emptyList(),
-    ),
-    ollamaConfig = OllamaConfig(
-        baseUrl = "http://localhost:11434",
-        models = emptyList(),
-    ),
     sendTextEverySymbols = 100,
     sendTextEveryMilliseconds = 10000L,
-    voskModelPath = "",
     whisperModelPath = "",
     whisperModelConfig = WhisperModelConfig(
         silenceThresholdPercents = 10,
         maxSilenceMilliseconds = 500L,
         maxChunkDurationMilliseconds = 5000L,
+        maxConcurrentProcesses = 5,
     ),
-    voiceRecognizer = VoiceRecognizerEngineEnum.VOSK,
-    voiceSpeaker = VoiceSpeakerEngineEnum.NONE,
     questionLanguage = "en",
-    answerLanguage = "ru",
 )
 
 

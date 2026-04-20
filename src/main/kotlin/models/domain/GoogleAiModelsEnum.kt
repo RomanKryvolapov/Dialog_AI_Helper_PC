@@ -8,62 +8,8 @@ enum class GoogleAiModelsEnum(
     val limitRequestsInDay: Int?,
     val limitTokensInMinute: Int?,
 ) : TypeEnum {
-    GEMINI_2_5_FLASH(
-        type = "gemini-2.5-flash",
-        limitRequestsInMinute = 10, // ok
-        limitRequestsInDay = 250, // ok
-        limitTokensInMinute = 250000, // ok
-    ),
-    GEMINI_2_5_FLASH_LITE(
-        type = "gemini-2.5-flash-lite",
-        limitRequestsInMinute = 15, // ok
-        limitRequestsInDay = 1000, // ok
-        limitTokensInMinute = 250000, // ok
-    ),
-    GEMINI_2_0_FLASH(
-        type = "gemini-2.0-flash",
-        limitRequestsInMinute = 30, // ok
-        limitRequestsInDay = 200, // ok
-        limitTokensInMinute = null,
-    ),
-    GEMINI_2_0_FLASH_LITE(
-        type = "gemini-2.0-flash-lite",
-        limitRequestsInMinute = 0,
-        limitRequestsInDay = 200,
-        limitTokensInMinute = 1000000,
-    ),
-    GEMMA_3_1B(
-        type = "gemma-3-1b-it",
-        limitRequestsInMinute = 30,
-        limitRequestsInDay = 14400,
-        limitTokensInMinute = 15000,
-    ),
-    GEMMA_3_4B(
-        type = "gemma-3-4b-it",
-        limitRequestsInMinute = 30,
-        limitRequestsInDay = 14400,
-        limitTokensInMinute = 15000,
-    ),
-    GEMMA_3_12B(
-        type = "gemma-3-12b-it",
-        limitRequestsInMinute = 30,
-        limitRequestsInDay = 14400,
-        limitTokensInMinute = 15000,
-    ),
-    GEMMA_3_27B(
-        type = "gemma-3-27b-it",
-        limitRequestsInMinute = 30,
-        limitRequestsInDay = 14400,
-        limitTokensInMinute = 15000,
-    ),
-    GEMMA_3N_E2B(
-        type = "gemma-3n-e2b-it",
-        limitRequestsInMinute = 30,
-        limitRequestsInDay = 14400,
-        limitTokensInMinute = 15000,
-    ),
-    GEMMA_3N_E4B(
-        type = "gemma-3n-e4b-it",
+    GEMMA_4_31B(
+        type = "gemma-4-31b-it",
         limitRequestsInMinute = 30,
         limitRequestsInDay = 14400,
         limitTokensInMinute = 15000,
@@ -74,13 +20,66 @@ enum class GoogleAiModelsEnum(
         limitRequestsInDay = 14400,
         limitTokensInMinute = 15000,
     ),
-    GEMMA_4_31B(
-        type = "gemma-4-31b-it",
+    GEMMA_3N_E4B(
+        type = "gemma-3n-e4b-it",
         limitRequestsInMinute = 30,
         limitRequestsInDay = 14400,
         limitTokensInMinute = 15000,
+    ),
+    GEMMA_3N_E2B(
+        type = "gemma-3n-e2b-it",
+        limitRequestsInMinute = 30,
+        limitRequestsInDay = 14400,
+        limitTokensInMinute = 15000,
+    ),
+    GEMMA_3_27B(
+        type = "gemma-3-27b-it",
+        limitRequestsInMinute = 30,
+        limitRequestsInDay = 14400,
+        limitTokensInMinute = 15000,
+    ),
+    GEMMA_3_12B(
+        type = "gemma-3-12b-it",
+        limitRequestsInMinute = 30,
+        limitRequestsInDay = 14400,
+        limitTokensInMinute = 15000,
+    ),
+    GEMMA_3_4B(
+        type = "gemma-3-4b-it",
+        limitRequestsInMinute = 30,
+        limitRequestsInDay = 14400,
+        limitTokensInMinute = 15000,
+    ),
+    GEMMA_3_1B(
+        type = "gemma-3-1b-it",
+        limitRequestsInMinute = 30,
+        limitRequestsInDay = 14400,
+        limitTokensInMinute = 15000,
+    ),
+    GEMINI_2_5_FLASH(
+        type = "gemini-2.5-flash",
+        limitRequestsInMinute = 10,
+        limitRequestsInDay = 250,
+        limitTokensInMinute = 250000,
+    ),
+    GEMINI_2_5_FLASH_LITE(
+        type = "gemini-2.5-flash-lite",
+        limitRequestsInMinute = 15,
+        limitRequestsInDay = 1000,
+        limitTokensInMinute = 250000,
+    ),
+    GEMINI_2_0_FLASH(
+        type = "gemini-2.0-flash",
+        limitRequestsInMinute = 30,
+        limitRequestsInDay = 200,
+        limitTokensInMinute = null,
+    ),
+    GEMINI_2_0_FLASH_LITE(
+        type = "gemini-2.0-flash-lite",
+        limitRequestsInMinute = 0,
+        limitRequestsInDay = 200,
+        limitTokensInMinute = 1000000,
     );
 
     fun getDescription() = "Google Cloud: $type (Free: Requests/min=$limitRequestsInMinute, Requests/day=$limitRequestsInDay, Tokens/min=$limitTokensInMinute)"
-
 }

@@ -1,18 +1,29 @@
 package app
 
 import PROMPT_TRANSLATE_TEXT
+import com.sun.management.OperatingSystemMXBean
 import di.allModules
-import extensions.showAlertWithAction
+import javafx.animation.KeyFrame
+import javafx.animation.Timeline
 import javafx.application.Application
+import javafx.geometry.Insets
+import javafx.geometry.Pos
 import javafx.geometry.Rectangle2D
 import javafx.scene.Scene
+import javafx.scene.control.Label
+import javafx.scene.control.ProgressBar
 import javafx.scene.control.ScrollPane
 import javafx.scene.control.Tab
 import javafx.scene.control.TabPane
+import javafx.scene.layout.HBox
+import javafx.scene.layout.Region
+import javafx.scene.layout.StackPane
 import javafx.stage.Screen
 import javafx.stage.Stage
+import javafx.util.Duration as FxDuration
+import kotlinx.coroutines.launch
+import mainThreadScope
 import models.domain.PromptModel
-import models.domain.VoiceRecognizerEngineEnum
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import org.koin.core.context.startKoin
@@ -21,14 +32,14 @@ import ui.ConsoleTab
 import ui.MessagesTab
 import ui.PromptTab
 import ui.SettingsTab
-import utils.VoskVoiceRecognizer
-import java.awt.Desktop
-import java.net.URI
+import utils.AppStatus
+import utils.AudioChunker
+import java.lang.management.ManagementFactory
 
 class DialogApplication : Application(), KoinComponent {
 
-    private val voskVoiceRecognizer: VoskVoiceRecognizer by inject()
     private val preferencesRepository: PreferencesRepository by inject()
+    private val audioChunker: AudioChunker by inject()
 
     private val messagesTab: MessagesTab by inject()
     private val promptTab: PromptTab by inject()
@@ -40,12 +51,9 @@ class DialogApplication : Application(), KoinComponent {
     }
 
     override fun start(primaryStage: Stage) {
-
         startKoin {
             modules(allModules)
         }
-
-//        preferencesRepository.clear()
 
         ownerStage = primaryStage
         primaryStage.isMaximized = true
@@ -62,16 +70,6 @@ class DialogApplication : Application(), KoinComponent {
                 )
             )
         }
-
-//        preferencesRepository.saveAppInfo(
-//            preferencesRepository.getAppInfo().copy(
-//                promptsMap = defaultApplicationInfo.promptsMap,
-//                prompt = PromptModel(
-//                    name =  "Translate text",
-//                    prompt = PROMPT_TRANSLATE_TEXT,
-//                )
-//            )
-//        )
 
         val tabPane = TabPane().apply {
             tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
@@ -103,11 +101,67 @@ class DialogApplication : Application(), KoinComponent {
             }
         }
 
+        val overlayLabelStyle = "-fx-text-fill: #e6e6e6; -fx-font-size: 20px; -fx-pref-height: 32px; -fx-min-height: 32px; -fx-max-height: 32px;"
+
+        val micLabel = Label("Mic").apply {
+            style = overlayLabelStyle
+        }
+
+        val micBar = ProgressBar(0.0).apply {
+            prefWidth = 140.0
+            prefHeight = 18.0
+        }
+
+        val ramLabel = Label("RAM").apply {
+            style = overlayLabelStyle
+        }
+
+        val ramBar = ProgressBar(0.0).apply {
+            prefWidth = 140.0
+            prefHeight = 18.0
+        }
+
+        val topRightBar = HBox(12.0, micLabel, micBar, ramLabel, ramBar).apply {
+            alignment = Pos.CENTER_LEFT
+            padding = Insets(18.0, 0.0, 0.0, 16.0)
+            isMouseTransparent = true
+            maxWidth = Region.USE_PREF_SIZE
+            maxHeight = Region.USE_PREF_SIZE
+            StackPane.setAlignment(this, Pos.TOP_LEFT)
+        }
+
+        val osBean = ManagementFactory.getPlatformMXBean(OperatingSystemMXBean::class.java)
+        val updateRam = {
+            val total = osBean.totalMemorySize
+            val used = total - osBean.freeMemorySize
+            if (total > 0) {
+                ramBar.progress = used.toDouble() / total.toDouble()
+            }
+        }
+        updateRam()
+        Timeline(KeyFrame(FxDuration.seconds(2.0), { updateRam() })).apply {
+            cycleCount = Timeline.INDEFINITE
+            play()
+        }
+
+        mainThreadScope.launch {
+            audioChunker.noiceLevelFlow.collect { level ->
+                micBar.progress = level.coerceIn(0, 100) / 100.0
+            }
+        }
+
+        val root = StackPane(tabPane, topRightBar)
+
         val screenBounds: Rectangle2D =
             Screen.getScreens().let { if (it.size > 1) it[1] else it[0] }.visualBounds
 
-        val scene = Scene(tabPane, screenBounds.width, screenBounds.height).apply {
-            stylesheets.add(javaClass.getResource("/styles/styles.css")?.toExternalForm())
+        val stylesheetUrl = DialogApplication::class.java.getResource("/styles/styles.css")?.toExternalForm()
+        if (stylesheetUrl == null) {
+            System.err.println("[DialogApplication] /styles/styles.css not found on classpath")
+        }
+
+        val scene = Scene(root, screenBounds.width, screenBounds.height).apply {
+            stylesheetUrl?.let { stylesheets.add(it) }
         }
 
         primaryStage.apply {
@@ -119,22 +173,13 @@ class DialogApplication : Application(), KoinComponent {
             this.scene = scene
             show()
         }
-        if (appInfo.voiceRecognizer == VoiceRecognizerEngineEnum.VOSK) {
-            if (appInfo.voskModelPath.isNotEmpty()) {
-                voskVoiceRecognizer.init(appInfo.voskModelPath)
+
+        javafx.application.Platform.runLater {
+            val headersRegion = tabPane.lookup(".tab-header-area > .headers-region") as? Region
+            if (headersRegion != null) {
+                topRightBar.translateXProperty().bind(headersRegion.widthProperty())
             } else {
-                ownerStage?.showAlertWithAction(
-                    alertTitle = "Voice recognizer error",
-                    alertContent = "To use voice recognition, you must download the model for recognition, unzip it to disk and select the folder with it.",
-                    positiveButtonText = "Show models",
-                    onPositive = {
-                        if (Desktop.isDesktopSupported()) {
-                            Desktop.getDesktop().browse(URI("https://alphacephei.com/vosk/models"))
-                        } else {
-                            println("Desktop is not supported")
-                        }
-                    }
-                )
+                System.err.println("[DialogApplication] .headers-region not found, overlay pinned to left edge")
             }
         }
     }

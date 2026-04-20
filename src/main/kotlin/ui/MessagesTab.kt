@@ -15,41 +15,41 @@ import javafx.geometry.Pos
 import javafx.scene.control.Button
 import javafx.scene.control.Label
 import javafx.scene.control.ScrollPane
-import javafx.scene.layout.*
+import javafx.scene.layout.Background
+import javafx.scene.layout.BackgroundFill
+import javafx.scene.layout.Border
+import javafx.scene.layout.BorderPane
+import javafx.scene.layout.BorderStroke
+import javafx.scene.layout.BorderStrokeStyle
+import javafx.scene.layout.BorderWidths
+import javafx.scene.layout.CornerRadii
+import javafx.scene.layout.HBox
+import javafx.scene.layout.Pane
+import javafx.scene.layout.Priority
+import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import mainThreadScope
 import models.domain.DialogItem
 import models.domain.LlmModelEngine
-import models.domain.VoiceRecognizerEngineEnum
-import models.domain.VoiceSpeakerEngineEnum
-import org.json.JSONObject
 import org.slf4j.LoggerFactory
 import repository.CloudRepository
-import repository.LocalNetworkRepository
 import repository.PreferencesRepository
 import ui.base.BaseTab
+import utils.AppStatus
 import utils.AudioChunker
-import utils.ChatterboxUtil
-import utils.VoskVoiceRecognizer
+import utils.DialogLogger
 import utils.WhisperUtil
-import utils.XttsUtil
-import java.io.File
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicLong
-import javax.sound.sampled.Mixer
 
 class MessagesTab(
-    private val xttsUtil: XttsUtil,
     private val whisperUtil: WhisperUtil,
     private val audioChunker: AudioChunker,
-    private val chatterboxUtil: ChatterboxUtil,
     private val cloudRepository: CloudRepository,
-    private val voskVoiceRecognizer: VoskVoiceRecognizer,
-    private val localNetworkRepository: LocalNetworkRepository,
-    preferencesRepository: PreferencesRepository
+    private val dialogLogger: DialogLogger,
+    private val preferencesRepository: PreferencesRepository,
 ) : BaseTab(
     preferencesRepository = preferencesRepository,
 ) {
@@ -59,42 +59,26 @@ class MessagesTab(
     companion object {
         const val FIELD_BACKGROUND_COLOUR = "#323232"
         const val BUTTONS_BACKGROUND_COLOUR = "#323232"
-        private const val TRANSLATE_CHECK_DELAY = 1000L
-        private const val NEW_MESSAGE_DELTA = 8
     }
 
     val content: Pane
     val scrollPane: ScrollPane
 
     @Volatile
-    private var originalMessage = ""
-
-    @Volatile
-    private var lastMessageToAI = ""
-
-    @Volatile
     private var lastMessageFromAI = "..."
 
-    private val lastTranslatedLength = AtomicInteger(0)
-    private val lastTranslatedTime = AtomicLong(System.currentTimeMillis())
-
     private var translateMessageJob: Job? = null
-    private var translateTimerJob: Job? = null
 
-    private var voiceSample: File? = null
-
-    private val label: Label
+    /** UI-thread only: indexes of rows with placeholder text waiting for Whisper results. */
+    private val pendingRowIndexes = ArrayDeque<Int>()
 
     private var labelMessagePartVoiceRecognition = ""
     private var labelMessagePartProcessMessage = ""
     private var labelMessagePartRecord = ""
-    private var labelMessagePartNoiceLevel = ""
 
-    private var listeningButton = Button("Wait for init").apply {
-        style += "-fx-background-color: $COLOUR_RED;"
-        setOnAction {
-            startListening()
-        }
+    private val listeningButton = Button("Start dialog").apply {
+        style = "-fx-background-color: $COLOUR_GREEN;"
+        setOnAction { toggleDialog() }
     }
 
     private val messageBox = VBox(4.0).apply {
@@ -104,18 +88,6 @@ class MessagesTab(
 
     init {
         setupListeners()
-
-        label = Label(labelMessagePartVoiceRecognition).apply {
-            maxWidth = Double.MAX_VALUE
-        }
-        val pane = Pane(label).apply {
-            maxWidth = Double.MAX_VALUE
-            prefHeight = 32.0
-            minHeight = 32.0
-            maxHeight = 32.0
-            label.layoutXProperty().bind(widthProperty().subtract(label.widthProperty()).divide(2))
-            label.layoutYProperty().bind(heightProperty().subtract(label.heightProperty()).divide(2))
-        }
 
         scrollPane = ScrollPane(messageBox).apply {
             isFitToWidth = true
@@ -128,50 +100,12 @@ class MessagesTab(
             background = Background(BackgroundFill(Color.web(BUTTONS_BACKGROUND_COLOUR), null, null))
             val buttons = listOf(
                 Button("Clear dialog").apply {
-                    style += "-fx-background-color: $COLOUR_RED;"
+                    style = "-fx-background-color: $COLOUR_RED;"
                     setOnAction {
                         messageBox.children.clear()
-                        originalMessage = "..."
                         lastMessageFromAI = "..."
-                        lastMessageToAI = ""
-                        lastTranslatedLength.set(0)
-                        lastTranslatedTime.set(System.currentTimeMillis())
                         translateMessageJob?.cancel()
                         translateMessageJob = null
-                        translateTimerJob?.cancel()
-                        translateTimerJob = null
-                    }
-                },
-                Button("Restart engine").apply {
-                    style += "-fx-background-color: $COLOUR_RED;"
-                    setOnAction {
-                        val device = voskVoiceRecognizer.getAvailableInputDevices().firstOrNull {
-                            getAppInfo().lastSelectedDevice == it.name
-                        }
-                        if (device == null) {
-                            ownerStage?.showAlert(
-                                alertTitle = "No Device Selected",
-                                alertContent = "Please select an audio device in the Settings tab before starting recognition."
-                            )
-                            return@setOnAction
-                        }
-                        voskVoiceRecognizer.runRecognition(device)
-                    }
-                },
-                Button("Split sentence").apply {
-                    style += "-fx-background-color: $COLOUR_BLUE;"
-                    setOnAction {
-                        voskVoiceRecognizer.splitUtterance()
-                    }
-                },
-                Button("Send now").apply {
-                    style += "-fx-background-color: $COLOUR_GREEN;"
-                    setOnAction {
-                        processMessage(
-                            index = messageBox.children.size - 1,
-                            message = originalMessage,
-                            writeResultToMessageBuffer = true,
-                        )
                     }
                 },
                 listeningButton,
@@ -184,239 +118,96 @@ class MessagesTab(
         }
 
         content = BorderPane().apply {
-            top = pane
             center = scrollPane
             bottom = buttonBar
             background = Background(BackgroundFill(Color.web("#2b2b2b"), null, null))
         }
-        val appInfo = getAppInfo()
-        if (appInfo.voiceRecognizer == VoiceRecognizerEngineEnum.WHISPER) {
-            listeningButton.text = "Start dialog"
-            listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
-        }
 
-        mainThreadScope.launch {
-            audioChunker.noiceLevelFlow.collect {
-                labelMessagePartNoiceLevel = if (it != 0) "Noice level: $it" else ""
-                updateLabelMessage()
-            }
+        // Auto-start microphone monitoring on selected device;
+        // restart when device selection changes.
+        backgroundThreadScope.launch {
+            preferencesRepository.appInfoFlow
+                .map { it.lastSelectedDevice }
+                .distinctUntilChanged()
+                .collect { deviceName ->
+                    restartMicrophone(deviceName)
+                }
         }
     }
 
-    private fun startListening() {
-        val appInfo = getAppInfo()
-        val device = voskVoiceRecognizer.getAvailableInputDevices().firstOrNull {
-            appInfo.lastSelectedDevice == it.name
-        }
+    private fun restartMicrophone(deviceName: String) {
+        val device = audioChunker.getAvailableInputDevices().firstOrNull { it.name == deviceName }
         if (device == null) {
+            log.warn("Selected device not found: $deviceName")
+            if (audioChunker.inRunning()) audioChunker.stopListening()
+            return
+        }
+        if (audioChunker.inRunning()) {
+            audioChunker.stopListening()
+        }
+        audioChunker.startListening(device)
+    }
+
+    private fun toggleDialog() {
+        if (audioChunker.chunkProcessingEnabled) {
+            audioChunker.chunkProcessingEnabled = false
+            Platform.runLater {
+                listeningButton.text = "Start dialog"
+                listeningButton.style = "-fx-background-color: $COLOUR_GREEN;"
+            }
+            labelMessagePartVoiceRecognition = ""
+            updateLabelMessage()
+            return
+        }
+        val appInfo = getAppInfo()
+        if (appInfo.whisperModelPath.isBlank()) {
             ownerStage?.showAlert(
-                alertTitle = "No Device Selected",
-                alertContent = "Please select an audio device in the Settings tab before starting recognition."
+                alertTitle = "No Whisper model",
+                alertContent = "Please select the folder with the Whisper model in the Settings tab."
             )
             return
         }
-        when (appInfo.voiceRecognizer) {
-            VoiceRecognizerEngineEnum.VOSK -> startListeningVosk(device)
-            VoiceRecognizerEngineEnum.WHISPER -> startListeningWhisper(device)
-        }
-    }
-
-    private fun startListeningVosk(device: Mixer.Info) {
-        when {
-            voskVoiceRecognizer.inInit() -> {
-                labelMessagePartVoiceRecognition = "Please wait for the initialization to complete."
-                updateLabelMessage()
+        if (!audioChunker.inRunning()) {
+            val device = audioChunker.getAvailableInputDevices().firstOrNull {
+                it.name == appInfo.lastSelectedDevice
+            }
+            if (device == null) {
                 ownerStage?.showAlert(
-                    alertTitle = "Error",
-                    alertContent = "Please wait for the initialization to complete."
+                    alertTitle = "No Device Selected",
+                    alertContent = "Please select an audio device in the Settings tab."
                 )
+                return
             }
-
-            !voskVoiceRecognizer.inRunning() -> {
-                voskVoiceRecognizer.runRecognition(device)
-                translateTimerJob?.cancel()
-                translateTimerJob = backgroundThreadScope.launch {
-                    val translateTextEveryMilliseconds = getAppInfo().sendTextEveryMilliseconds
-                    if (translateTextEveryMilliseconds != 0L) {
-                        while (voskVoiceRecognizer.inRunning()) {
-                            delay(TRANSLATE_CHECK_DELAY)
-                            val currentTime = System.currentTimeMillis()
-                            if (lastTranslatedTime.get() + translateTextEveryMilliseconds < currentTime) {
-                                log.debug("Translate text by timer")
-                                processMessage(
-                                    index = messageBox.children.size - 1,
-                                    message = originalMessage,
-                                    writeResultToMessageBuffer = true,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            else -> {
-                voskVoiceRecognizer.stopRecognition()
-            }
-        }
-    }
-
-    private fun startListeningWhisper(device: Mixer.Info) {
-        if (audioChunker.inRunning()) {
-            audioChunker.stopListening()
-        } else {
             audioChunker.startListening(device)
         }
+        dialogLogger.startSession()
+        audioChunker.chunkProcessingEnabled = true
+        Platform.runLater {
+            listeningButton.text = "Stop dialog"
+            listeningButton.style = "-fx-background-color: $COLOUR_BLUE;"
+        }
+        labelMessagePartVoiceRecognition = "Whisper listening"
+        updateLabelMessage()
     }
 
     private fun setupListeners() {
-        voskVoiceRecognizer.onInitInProcess = {
-            labelMessagePartVoiceRecognition = "Vosk voice recognizer initialization"
-            updateLabelMessage()
-            mainThreadScope.launch {
-                listeningButton.text = "Wait for init"
-                listeningButton.style += "-fx-background-color: $COLOUR_RED;"
-            }
-        }
-        voskVoiceRecognizer.onInitReady = {
-            labelMessagePartVoiceRecognition = "Vosk voice recognizer initialization ready"
-            updateLabelMessage()
-            mainThreadScope.launch {
-                listeningButton.text = "Start dialog"
-                listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
-            }
-        }
-        voskVoiceRecognizer.onStartListener = {
-            labelMessagePartVoiceRecognition = "Vosk voice recognizer in process"
-            updateLabelMessage()
-            mainThreadScope.launch {
-                listeningButton.text = "Stop dialog"
-                listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
-            }
-        }
-        voskVoiceRecognizer.onStopListener = {
-            labelMessagePartVoiceRecognition = "Vosk voice recognizer ready"
-            updateLabelMessage()
-            mainThreadScope.launch {
-                listeningButton.text = "Start dialog"
-                listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
-            }
-        }
-        voskVoiceRecognizer.onErrorListener = { message ->
-            labelMessagePartVoiceRecognition = "Vosk voice recognizer error: $message"
-            updateLabelMessage()
-            mainThreadScope.launch {
-                listeningButton.text = "Error init"
-                listeningButton.style += "-fx-background-color: $COLOUR_RED;"
-            }
-            ownerStage?.showAlert(
-                alertTitle = "Recognizer error",
-                alertContent = message
-            )
-        }
-        voskVoiceRecognizer.onResultListener = { result ->
-            labelMessagePartVoiceRecognition = "Vosk voice recognizer on result"
-            updateLabelMessage()
-            val resultString = JSONObject(result).optString("partial").normalizeAndRemoveEmptyLines()
-            if (resultString.isNotEmpty()) {
-                mainThreadScope.launch {
-                    listeningButton.text = "Stop dialog"
-                    listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
-                }
-            }
-        }
-        voskVoiceRecognizer.onPartialResultListener = { result ->
-            labelMessagePartVoiceRecognition = "Vosk voice recognizer on partial result"
-            updateLabelMessage()
-            val resultString = JSONObject(result).optString("partial").normalizeAndRemoveEmptyLines()
-            if (resultString.isNotEmpty() && resultString != "the" && originalMessage != resultString) {
-                mainThreadScope.launch {
-                    listeningButton.text = "Stop dialog"
-                    listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
-                }
-                val translateTextEverySymbols = getAppInfo().sendTextEverySymbols
-                val currentMessageIndex = messageBox.children.size - 1
-                when {
-                    // New message
-                    originalMessage.length > resultString.length + NEW_MESSAGE_DELTA -> {
-                        updateMessageAt(
-                            index = currentMessageIndex + 1,
-                            newItem = DialogItem(
-                                originalMessage = resultString,
-                                messageFromAi = "...",
-                            )
-                        )
-                        processMessage(
-                            index = currentMessageIndex,
-                            message = originalMessage,
-                            writeResultToMessageBuffer = false,
-                        )
-                        originalMessage = resultString
-                        lastMessageFromAI = "..."
-                        lastMessageToAI = ""
-                        lastTranslatedLength.set(0)
-                    }
-
-                    translateTextEverySymbols != 0 &&
-                            (originalMessage.length / translateTextEverySymbols) > (lastTranslatedLength.get() / translateTextEverySymbols) -> {
-                        log.debug("Translate text by text size")
-                        lastTranslatedLength.set(originalMessage.length)
-                        originalMessage = resultString
-                        updateMessageAt(
-                            index = currentMessageIndex,
-                            newItem = DialogItem(
-                                originalMessage = resultString,
-                                messageFromAi = lastMessageFromAI,
-                            )
-                        )
-                        processMessage(
-                            index = currentMessageIndex,
-                            message = resultString,
-                            writeResultToMessageBuffer = true,
-                        )
-                    }
-
-                    else -> {
-                        originalMessage = resultString
-                        updateMessageAt(
-                            index = currentMessageIndex,
-                            newItem = DialogItem(
-                                originalMessage = resultString,
-                                messageFromAi = lastMessageFromAI,
-                            )
-                        )
-                    }
-                }
-            }
-        }
-        voskVoiceRecognizer.onCloseReady = {
-            mainThreadScope.launch {
-                listeningButton.text = "Start dialog"
-                listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
-            }
-        }
-        audioChunker.onStartListener = {
-            labelMessagePartVoiceRecognition = "Whisper start listening"
-            updateLabelMessage()
-            mainThreadScope.launch {
-                listeningButton.text = "Stop dialog"
-                listeningButton.style += "-fx-background-color: $COLOUR_BLUE;"
-            }
-        }
-        audioChunker.onStopListener = {
-            labelMessagePartVoiceRecognition = "Whisper stop listening"
-            updateLabelMessage()
-            mainThreadScope.launch {
-                listeningButton.text = "Start dialog"
-                listeningButton.style += "-fx-background-color: $COLOUR_GREEN;"
-            }
-        }
-        audioChunker.onResultListener = { outputFile ->
+        audioChunker.onResultListener = { wavFile ->
             labelMessagePartVoiceRecognition = "Whisper process voice"
             updateLabelMessage()
-            voiceSample = outputFile
+            Platform.runLater {
+                val wasAtBottom = isScrolledToBottom()
+                val idx = messageBox.children.size
+                pendingRowIndexes.addLast(idx)
+                messageBox.children.add(
+                    createMessageEntry(
+                        DialogItem(originalMessage = "...", messageFromAi = "..."),
+                    )
+                )
+                if (wasAtBottom) scrollToBottom()
+            }
             val appInfo = getAppInfo()
             whisperUtil.runFasterWhisper(
-                wavFile = outputFile,
+                wavFile = wavFile,
                 language = appInfo.questionLanguage,
             )
         }
@@ -431,144 +222,119 @@ class MessagesTab(
         whisperUtil.onResultListener = { resultString ->
             labelMessagePartVoiceRecognition = "Whisper result ready"
             updateLabelMessage()
-            val messageIndex = messageBox.children.size
-            updateMessageAt(
-                index = messageIndex,
-                newItem = DialogItem(
-                    originalMessage = resultString,
-                    messageFromAi = lastMessageFromAI,
+            dialogLogger.logQuestion(resultString)
+            Platform.runLater {
+                val wasAtBottom = isScrolledToBottom()
+                val idx = pendingRowIndexes.removeFirstOrNull() ?: messageBox.children.size
+                val entry = createMessageEntry(
+                    DialogItem(originalMessage = resultString, messageFromAi = "..."),
                 )
-            )
-            processMessage(
-                index = messageIndex,
-                message = resultString,
-                writeResultToMessageBuffer = false,
-            )
-            originalMessage = resultString
-            lastMessageFromAI = "..."
-            lastMessageToAI = ""
-            lastTranslatedLength.set(0)
+                if (idx in 0 until messageBox.children.size) {
+                    messageBox.children[idx] = entry
+                } else {
+                    messageBox.children.add(entry)
+                }
+                if (wasAtBottom) scrollToBottom()
+                processMessage(index = idx, message = resultString)
+            }
+        }
+        whisperUtil.onFailureListener = {
+            log.warn("Whisper failed for a chunk, removing placeholder row")
+            Platform.runLater {
+                val idx = pendingRowIndexes.removeFirstOrNull() ?: return@runLater
+                if (idx in 0 until messageBox.children.size) {
+                    messageBox.children.removeAt(idx)
+                }
+            }
         }
     }
 
-    private fun processMessage(
-        index: Int,
-        message: String,
-        writeResultToMessageBuffer: Boolean,
-    ) {
-        if (message.isBlank() || message == "the") {
-            lastTranslatedTime.set(System.currentTimeMillis())
+    private fun processMessage(index: Int, message: String) {
+        if (message.isBlank()) {
             log.error("Translate message is empty")
-            return
-        }
-        if (lastMessageToAI == message) {
-            lastTranslatedTime.set(System.currentTimeMillis())
-            log.error("Translate message is already translated")
             return
         }
         labelMessagePartProcessMessage = "Process message"
         updateLabelMessage()
         translateMessageJob?.cancel()
         translateMessageJob = backgroundThreadScope.launch {
-            lastTranslatedTime.set(System.currentTimeMillis())
             val appInfo = getAppInfo()
             log.debug("Message position: $index text: $message")
 
             val template = PromptTemplate.from(appInfo.prompt.prompt)
-
             val prompt = template.apply(mapOf(SOURCE_TEXT_CLEAR to message))
 
-            val result = when (appInfo.selectedModel.engine) {
-                LlmModelEngine.GOOGLE -> {
-                    cloudRepository.generateAnswerByLangChainByGoogleAI(
-                        prompt = prompt,
-                        apiKey = appInfo.googleCloudToken,
-                        model = appInfo.selectedModel.id,
-                    )
-                }
-
-                LlmModelEngine.LM_STUDIO -> {
-                    localNetworkRepository.generateAnswerByLangChainLmStudio(
-                        prompt = prompt,
-                        baseUrl = appInfo.lmStudioConfig.baseUrl,
-                        model = appInfo.selectedModel.id,
-                    )
-                }
-
-                LlmModelEngine.OLLAMA -> {
-                    localNetworkRepository.generateAnswerByLangChainOllama(
-                        prompt = prompt,
-                        baseUrl = appInfo.ollamaConfig.baseUrl,
-                        model = appInfo.selectedModel.id,
-                    )
-                }
+            val flow = when (appInfo.selectedModel.engine) {
+                LlmModelEngine.GOOGLE -> cloudRepository.streamGoogleAI(
+                    model = appInfo.selectedModel.id,
+                    apiKey = appInfo.googleCloudToken,
+                    prompt = prompt,
+                )
+                LlmModelEngine.OPENAI -> cloudRepository.streamOpenAI(
+                    model = appInfo.selectedModel.id,
+                    apiKey = appInfo.openAiToken,
+                    prompt = prompt,
+                )
+                LlmModelEngine.CLAUDE -> cloudRepository.streamClaude(
+                    model = appInfo.selectedModel.id,
+                    apiKey = appInfo.claudeToken,
+                    prompt = prompt,
+                )
             }
-            if (!result.isSuccess) {
-                log.error("Translate message error: ${result.exceptionOrNull()}")
-//                ownerStage?.showAlert(
-//                    alertTitle = "Error",
-//                    alertContent = result.exceptionOrNull()?.message ?: ""
-//                )
+
+            var finalText = ""
+            try {
+                flow.collect { cumulative ->
+                    finalText = cumulative
+                    val display = cumulative.ifBlank { "..." }
+                    updateMessageAt(
+                        index = index,
+                        newItem = DialogItem(
+                            originalMessage = message,
+                            messageFromAi = display,
+                        ),
+                    )
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                log.error("Streaming error: ${e.message}", e)
                 updateMessageAt(
                     index = index,
                     newItem = DialogItem(
                         originalMessage = message,
                         messageFromAi = "...",
-                    )
+                    ),
                 )
-                labelMessagePartProcessMessage = "Process message error, result is null"
+                labelMessagePartProcessMessage = "Process message error"
                 updateLabelMessage()
                 return@launch
             }
-            val resultMessage = result.getOrNull()?.normalizeAndRemoveEmptyLines()
-            if (resultMessage.isNullOrBlank()) {
-                log.error("Translate message result is null")
-                ownerStage?.showAlert(
-                    alertTitle = "Error",
-                    alertContent = "Answer message is null or blank"
-                )
+
+            val cleaned = finalText.normalizeAndRemoveEmptyLines()
+            if (cleaned.isBlank()) {
+                log.error("Translate message result is empty")
                 updateMessageAt(
                     index = index,
                     newItem = DialogItem(
                         originalMessage = message,
                         messageFromAi = "...",
-                    )
+                    ),
                 )
                 labelMessagePartProcessMessage = "Process message error, result is empty"
                 updateLabelMessage()
                 return@launch
             }
-            log.debug("Translate message result:\n$resultMessage")
-            lastMessageToAI = message
-            lastMessageFromAI = if (writeResultToMessageBuffer
-                && index == messageBox.children.size - 1
-            ) {
-                resultMessage
-            } else {
-                "..."
-            }
-            when (appInfo.voiceSpeaker) {
-                VoiceSpeakerEngineEnum.NONE -> {}
-                VoiceSpeakerEngineEnum.XTTS -> {
-                    xttsUtil.speak(
-                        message = resultMessage,
-                        language = appInfo.answerLanguage,
-                    )
-                }
 
-                VoiceSpeakerEngineEnum.CHATTERBOX -> {
-                    chatterboxUtil.speak(
-                        message = resultMessage,
-                        language = appInfo.answerLanguage,
-                    )
-                }
-            }
+            log.debug("Translate message result size: ${cleaned.length}")
+            lastMessageFromAI = cleaned
+            dialogLogger.logAnswer(cleaned)
             updateMessageAt(
                 index = index,
                 newItem = DialogItem(
                     originalMessage = message,
-                    messageFromAi = resultMessage,
-                )
+                    messageFromAi = cleaned,
+                ),
             )
             labelMessagePartProcessMessage = ""
             updateLabelMessage()
@@ -577,14 +343,31 @@ class MessagesTab(
 
     private fun updateMessageAt(index: Int, newItem: DialogItem) {
         Platform.runLater {
+            val wasAtBottom = isScrolledToBottom()
             val newEntry = createMessageEntry(newItem)
             if (index in 0 until messageBox.children.size) {
                 messageBox.children[index] = newEntry
             } else {
                 messageBox.children.add(newEntry)
             }
-            scrollPane.vvalue = 1.0
+            if (wasAtBottom) scrollToBottom()
         }
+    }
+
+
+    private fun isScrolledToBottom(): Boolean {
+        // If content fits in the viewport there is no scrollbar and vvalue stays at 0 —
+        // treat that as "at the bottom" so newly added messages auto-scroll.
+        val viewportH = scrollPane.viewportBounds.height
+        val contentH = scrollPane.content?.layoutBounds?.height ?: 0.0
+        if (contentH <= viewportH + 1.0) return true
+        return scrollPane.vvalue >= scrollPane.vmax - 0.02
+    }
+
+    private fun scrollToBottom() {
+        scrollPane.applyCss()
+        scrollPane.layout()
+        scrollPane.vvalue = scrollPane.vmax
     }
 
     private fun createMessageEntry(item: DialogItem): VBox {
@@ -617,15 +400,16 @@ class MessagesTab(
             Color.web("#444444"),
             BorderStrokeStyle.SOLID,
             CornerRadii(8.0),
-            BorderWidths(1.0)
+            BorderWidths(1.0),
         )
     )
 
     private fun updateLabelMessage() {
-        mainThreadScope.launch {
-            label.text =
-                "$labelMessagePartVoiceRecognition $labelMessagePartProcessMessage $labelMessagePartRecord $labelMessagePartNoiceLevel"
-        }
+        AppStatus.statusFlow.value = listOf(
+            labelMessagePartVoiceRecognition,
+            labelMessagePartProcessMessage,
+            labelMessagePartRecord,
+        ).filter { it.isNotBlank() }.joinToString(" | ")
     }
 
 }

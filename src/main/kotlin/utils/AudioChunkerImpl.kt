@@ -2,7 +2,6 @@ package utils
 
 import backgroundThreadScope
 import defaultApplicationInfo
-import defaultThreadScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.isActive
@@ -19,7 +18,7 @@ import javax.sound.sampled.*
 import kotlin.math.sqrt
 
 class AudioChunkerImpl(
-    private val preferencesRepository: PreferencesRepository
+    private val preferencesRepository: PreferencesRepository,
 ) : AudioChunker {
 
     companion object {
@@ -31,7 +30,7 @@ class AudioChunkerImpl(
             16,
             1,
             true,
-            false
+            false,
         )
         private val chunkSize = ((format.sampleRate * CHUNK_MILLIS / 1000).toInt()) * 2
     }
@@ -41,23 +40,27 @@ class AudioChunkerImpl(
 
     override val noiceLevelFlow = MutableStateFlow(0)
 
+    @Volatile
+    override var chunkProcessingEnabled: Boolean = false
+
     override var onStopListener: (() -> Unit)? = null
     override var onStartListener: (() -> Unit)? = null
-
     override var onRecordStart: (() -> Unit)? = null
     override var onRecordStop: (() -> Unit)? = null
-
     override var onResultListener: ((wavFile: File) -> Unit)? = null
 
+    @Volatile
     private var silenceThresholdPercents = defaultApplicationInfo.whisperModelConfig.silenceThresholdPercents
+
+    @Volatile
     private var maxSilenceMilliseconds = defaultApplicationInfo.whisperModelConfig.maxSilenceMilliseconds
+
+    @Volatile
     private var maxChunkDurationMilliseconds = defaultApplicationInfo.whisperModelConfig.maxChunkDurationMilliseconds
-    private var modelPath = ""
 
     init {
         backgroundThreadScope.launch {
             preferencesRepository.appInfoFlow.collect { appInfo ->
-                modelPath = appInfo.whisperModelPath
                 silenceThresholdPercents = appInfo.whisperModelConfig.silenceThresholdPercents
                 maxSilenceMilliseconds = appInfo.whisperModelConfig.maxSilenceMilliseconds
                 maxChunkDurationMilliseconds = appInfo.whisperModelConfig.maxChunkDurationMilliseconds
@@ -66,21 +69,16 @@ class AudioChunkerImpl(
     }
 
     override fun startListening(selectedMixerInfo: Mixer.Info) {
-        log.debug("start listening")
+        log.debug("start listening on device: ${selectedMixerInfo.name}")
         recognitionJob?.cancel()
-        recognitionJob = defaultThreadScope.launch {
+        recognitionJob = backgroundThreadScope.launch {
             onStartListener?.invoke()
-
-            val appInfo = preferencesRepository.getAppInfo()
-            modelPath = appInfo.whisperModelPath
-            silenceThresholdPercents = appInfo.whisperModelConfig.silenceThresholdPercents
-            maxSilenceMilliseconds = appInfo.whisperModelConfig.maxSilenceMilliseconds
-            maxChunkDurationMilliseconds = appInfo.whisperModelConfig.maxChunkDurationMilliseconds
 
             val mixer = AudioSystem.getMixer(selectedMixerInfo)
             val dataLineInfo = DataLine.Info(TargetDataLine::class.java, format)
             if (!mixer.isLineSupported(dataLineInfo)) {
-                log.error("Run recognition but selected device does not support the required format.")
+                log.error("Selected device does not support the required format.")
+                onStopListener?.invoke()
                 return@launch
             }
 
@@ -90,6 +88,7 @@ class AudioChunkerImpl(
                 line = mixer.getLine(dataLineInfo) as TargetDataLine
                 line.open(format)
                 line.start()
+                log.debug("line opened, chunkSize=$chunkSize, format=$format")
 
                 val buffer = ByteArray(chunkSize)
                 var isRecording = false
@@ -100,10 +99,23 @@ class AudioChunkerImpl(
 
                 while (isActive) {
                     val bytesRead = line.read(buffer, 0, buffer.size)
-                    if (bytesRead <= 0) continue
+                    if (bytesRead <= 0) {
+                        log.warn("line.read returned $bytesRead")
+                        continue
+                    }
 
                     val amplitude = calculateVoiceLevel(buffer)
                     noiceLevelFlow.value = amplitude
+
+                    if (!chunkProcessingEnabled) {
+                        if (isRecording) {
+                            currentChunk.clear()
+                            isRecording = false
+                            recordingStartTime = null
+                            onRecordStop?.invoke()
+                        }
+                        continue
+                    }
 
                     val currentTime = Instant.now()
 
@@ -138,7 +150,7 @@ class AudioChunkerImpl(
                             recordingStartTime = null
                             onRecordStop?.invoke()
 
-                            if (shouldStopDueToMaxDuration) {
+                            if (shouldStopDueToMaxDuration && chunkProcessingEnabled) {
                                 onRecordStart?.invoke()
                                 isRecording = true
                                 recordingStartTime = currentTime
@@ -166,12 +178,19 @@ class AudioChunkerImpl(
         }
     }
 
-    override fun inRunning() = recognitionJob?.isActive == true
-
     override fun stopListening() {
         log.debug("stop listening")
         recognitionJob?.cancel()
-        onStopListener?.invoke()
+        recognitionJob = null
+    }
+
+    override fun inRunning() = recognitionJob?.isActive == true
+
+    override fun getAvailableInputDevices(): List<Mixer.Info> {
+        val mixers = AudioSystem.getMixerInfo()
+        return mixers.filter {
+            AudioSystem.getMixer(it).targetLineInfo.any { info -> info.lineClass == TargetDataLine::class.java }
+        }
     }
 
     private fun calculateVoiceLevel(audioData: ByteArray): Int {
@@ -204,7 +223,7 @@ class AudioChunkerImpl(
             AudioSystem.write(audioStream, AudioFileFormat.Type.WAVE, outputFile)
             onResultListener?.invoke(outputFile)
         } catch (e: IOException) {
-            e.printStackTrace()
+            log.error("Failed to save chunk: ${e.message}", e)
         }
     }
 

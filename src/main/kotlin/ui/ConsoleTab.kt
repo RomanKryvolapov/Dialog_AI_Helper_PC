@@ -1,13 +1,18 @@
 package ui
 
+import COLOUR_BLUE
 import COLOUR_RED
-import extensions.addButton
 import extensions.addTitleLabel
 import javafx.application.Platform
 import javafx.geometry.Insets
+import javafx.geometry.Pos
+import javafx.scene.control.Button
 import javafx.scene.control.TextArea
+import javafx.scene.input.Clipboard
+import javafx.scene.input.ClipboardContent
 import javafx.scene.layout.Background
 import javafx.scene.layout.BackgroundFill
+import javafx.scene.layout.HBox
 import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
 import org.slf4j.LoggerFactory
@@ -40,13 +45,28 @@ class ConsoleTab(
         addTitleLabel("Application messages:")
         children.add(logArea)
 
-        addButton(
-            title = "Clear",
-            buttonColor = COLOUR_RED,
-            onClicked = {
+        val copyButton = Button("Copy").apply {
+            style = "-fx-background-color: $COLOUR_BLUE;"
+            setOnAction {
+                val clipboardContent = ClipboardContent().apply {
+                    putString(logArea.text)
+                }
+                Clipboard.getSystemClipboard().setContent(clipboardContent)
+            }
+        }
+        val clearButton = Button("Clear").apply {
+            style = "-fx-background-color: $COLOUR_RED;"
+            setOnAction {
                 logArea.text = ""
             }
-        )
+        }
+        val buttonsBox = HBox(8.0, copyButton, clearButton).apply {
+            alignment = Pos.CENTER
+            padding = Insets(0.0, 20.0, 0.0, 20.0)
+            copyButton.prefWidthProperty().bind(widthProperty().multiply(0.3))
+            clearButton.prefWidthProperty().bind(widthProperty().multiply(0.3))
+        }
+        children.add(buttonsBox)
     }
 
     init {

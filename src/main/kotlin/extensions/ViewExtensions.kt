@@ -186,13 +186,8 @@ fun VBox.addButton(
     onClicked: () -> Unit
 ): Button {
     val button = Button(title).apply {
-        style = """
-            -fx-background-color: $buttonColor;
-        """.trimIndent()
-        prefWidthProperty().bind(widthProperty().multiply(0.6))
-        setOnAction {
-            onClicked.invoke()
-        }
+        style = "-fx-background-color: $buttonColor;"
+        setOnAction { onClicked.invoke() }
     }
     val buttonContainer = HBox(4.0).apply {
         alignment = Pos.CENTER

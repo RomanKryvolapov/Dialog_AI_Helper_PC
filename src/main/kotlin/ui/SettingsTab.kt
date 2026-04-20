@@ -3,9 +3,14 @@ package ui
 import COLOUR_BLUE
 import COLOUR_GREEN
 import app.DialogApplication.Companion.ownerStage
-import backgroundThreadScope
-import extensions.*
-import javafx.collections.FXCollections
+import extensions.addButton
+import extensions.addComboBox
+import extensions.addLabel
+import extensions.addTextFieldWithCopyPasteActionButtons
+import extensions.addTextFieldWithSaveButton
+import extensions.addTitleLabel
+import extensions.chooseDirectory
+import extensions.showAlert
 import javafx.geometry.Insets
 import javafx.scene.control.ComboBox
 import javafx.scene.control.TextInputControl
@@ -13,30 +18,24 @@ import javafx.scene.layout.Background
 import javafx.scene.layout.BackgroundFill
 import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.javafx.JavaFx
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import mainThreadScope
+import models.domain.ClaudeModelsEnum
 import models.domain.GoogleAiModelsEnum
 import models.domain.LlmModel
 import models.domain.LlmModelEngine
-import models.domain.VoiceRecognizerEngineEnum
-import models.domain.VoiceSpeakerEngineEnum
+import models.domain.OpenAiModelsEnum
 import org.slf4j.LoggerFactory
-import repository.LocalNetworkRepository
 import repository.PreferencesRepository
 import ui.base.BaseTab
-import utils.VoskVoiceRecognizer
+import utils.AudioChunker
 import java.awt.Desktop
-import java.io.File
 import java.net.URI
 import javax.sound.sampled.Mixer
 
 class SettingsTab(
-    private val voskVoiceRecognizer: VoskVoiceRecognizer,
-    private val localNetworkRepository: LocalNetworkRepository,
-    preferencesRepository: PreferencesRepository
+    private val audioChunker: AudioChunker,
+    preferencesRepository: PreferencesRepository,
 ) : BaseTab(
     preferencesRepository = preferencesRepository,
 ) {
@@ -49,16 +48,14 @@ class SettingsTab(
 
     var modelsBox: ComboBox<LlmModel>? = null
     var soundDevicesBox: ComboBox<Mixer.Info>? = null
-    var voskModelPathTextInput: TextInputControl? = null
     var whisperModelPathTextInput: TextInputControl? = null
     var googleCloudTokenTextInput: TextInputControl? = null
-    var lmStudioBaseUrlTextInput: TextInputControl? = null
-    var ollamaBaseUrlTextInput: TextInputControl? = null
-    var sendTextEverySymbolsTextInput: TextInputControl? = null
-    var sendTextEveryMillisecondsTextInput: TextInputControl? = null
+    var openAiTokenTextInput: TextInputControl? = null
+    var claudeTokenTextInput: TextInputControl? = null
     var silenceThresholdPercentsTextInput: TextInputControl? = null
     var maxSilenceMillisecondsTextInput: TextInputControl? = null
     var maxChunkDurationMillisecondsTextInput: TextInputControl? = null
+    var maxConcurrentWhisperProcessesTextInput: TextInputControl? = null
 
     val content: VBox = VBox(4.0).apply {
         padding = Insets(0.0, 20.0, 0.0, 20.0)
@@ -68,7 +65,7 @@ class SettingsTab(
 
         addTitleLabel("Audio device for voice recognition:")
 
-        var devices: List<Mixer.Info> = voskVoiceRecognizer.getAvailableInputDevices()
+        val devices: List<Mixer.Info> = audioChunker.getAvailableInputDevices()
 
         if (devices.isEmpty()) {
             addLabel("Not found")
@@ -86,70 +83,23 @@ class SettingsTab(
             soundDevicesBox = addComboBox(
                 items = devices,
                 selectedItem = lastSelected ?: devices.first(),
-                toStringFn = { mixerInfo ->
-                    mixerInfo.name
-                },
+                toStringFn = { mixerInfo -> mixerInfo.name },
                 onSelected = { mixerInfo ->
                     saveAppInfo(
                         getAppInfo().copy(
                             lastSelectedDevice = mixerInfo.name
                         )
                     )
-
                 }
             )
         }
-
-        addTitleLabel("Voice recognizer:")
-
-        addComboBox(
-            items = VoiceRecognizerEngineEnum.entries,
-            selectedItem = appInfo.voiceRecognizer,
-            toStringFn = { voiceRecognizer ->
-                voiceRecognizer.type
-            },
-            onSelected = { voiceRecognizer ->
-                saveAppInfo(
-                    getAppInfo().copy(
-                        voiceRecognizer = voiceRecognizer
-                    )
-                )
-                if (voiceRecognizer == VoiceRecognizerEngineEnum.VOSK) {
-                    val appInfo = getAppInfo()
-                    if (appInfo.voskModelPath.isNotEmpty()) {
-                        voskVoiceRecognizer.init(appInfo.voskModelPath)
-                    }
-                } else {
-                    voskVoiceRecognizer.close()
-                }
-            }
-        )
-
-        addTitleLabel("Voice speaker:")
-
-        addComboBox(
-            items = VoiceSpeakerEngineEnum.entries,
-            selectedItem = appInfo.voiceSpeaker,
-            toStringFn = { voiceSpeaker ->
-                voiceSpeaker.type
-            },
-            onSelected = { voiceSpeaker ->
-                saveAppInfo(
-                    getAppInfo().copy(
-                        voiceSpeaker = voiceSpeaker
-                    )
-                )
-            }
-        )
 
         addTitleLabel("AI model:")
 
         modelsBox = addComboBox(
             items = getModelsList(),
             selectedItem = appInfo.selectedModel,
-            toStringFn = {
-                it.description ?: ""
-            },
+            toStringFn = { it.description ?: "" },
             onSelected = {
                 saveAppInfo(
                     getAppInfo().copy(
@@ -161,99 +111,14 @@ class SettingsTab(
 
         addTitleLabel("Question language")
 
-        sendTextEverySymbolsTextInput = addTextFieldWithSaveButton(
+        addTextFieldWithSaveButton(
             fieldText = appInfo.questionLanguage,
             buttonTitle = "Save",
             buttonColor = COLOUR_GREEN,
             onClicked = { result ->
-                val appInfo = getAppInfo()
                 saveAppInfo(
-                    appInfo.copy(
-                        questionLanguage = result,
-                    )
+                    getAppInfo().copy(questionLanguage = result)
                 )
-            }
-        )
-
-        addTitleLabel("Answer language")
-
-        sendTextEverySymbolsTextInput = addTextFieldWithSaveButton(
-            fieldText = appInfo.answerLanguage,
-            buttonTitle = "Save",
-            buttonColor = COLOUR_GREEN,
-            onClicked = { result ->
-                val appInfo = getAppInfo()
-                saveAppInfo(
-                    appInfo.copy(
-                        answerLanguage = result,
-                    )
-                )
-            }
-        )
-
-        addTitleLabel("Send to AI model every N characters, 0 - do not use:")
-
-        sendTextEverySymbolsTextInput = addTextFieldWithSaveButton(
-            fieldText = appInfo.sendTextEverySymbols.toString(),
-            buttonTitle = "Save",
-            buttonColor = COLOUR_GREEN,
-            onClicked = {
-                try {
-                    val result = it.toIntOrNull()
-                    if (result == null) {
-                        ownerStage?.showAlert(
-                            alertTitle = "Error",
-                            alertContent = "Can not get number"
-                        )
-                        return@addTextFieldWithSaveButton
-                    }
-                    val appInfo = getAppInfo()
-                    saveAppInfo(
-                        appInfo.copy(
-                            sendTextEverySymbols = result,
-                        )
-                    )
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    log.error(e.message)
-                    ownerStage?.showAlert(
-                        alertTitle = "Error",
-                        alertContent = e.message ?: "Can not get number"
-                    )
-                }
-            }
-        )
-
-        addTitleLabel("Send to AI model every N milliseconds, 0 - do not use:")
-
-        sendTextEveryMillisecondsTextInput = addTextFieldWithSaveButton(
-            fieldText = appInfo.sendTextEveryMilliseconds.toString(),
-            buttonTitle = "Save",
-            buttonColor = COLOUR_GREEN,
-            onClicked = {
-                try {
-                    val result = it.toLongOrNull()
-                    if (result == null) {
-                        ownerStage?.showAlert(
-                            alertTitle = "Error",
-                            alertContent = "Can not get number"
-                        )
-                        return@addTextFieldWithSaveButton
-                    }
-                    val appInfo = getAppInfo()
-                    saveAppInfo(
-                        appInfo.copy(
-                            sendTextEveryMilliseconds = result,
-                        )
-                    )
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    log.error(e.message)
-                    ownerStage?.showAlert(
-                        alertTitle = "Error",
-                        alertContent = e.message ?: "Can not get number"
-                    )
-                }
             }
         )
 
@@ -263,32 +128,20 @@ class SettingsTab(
             fieldText = appInfo.whisperModelConfig.silenceThresholdPercents.toString(),
             buttonTitle = "Save",
             buttonColor = COLOUR_GREEN,
-            onClicked = {
-                try {
-                    val result = it.toIntOrNull()
-                    if (result == null) {
-                        ownerStage?.showAlert(
-                            alertTitle = "Error",
-                            alertContent = "Can not get number"
-                        )
-                        return@addTextFieldWithSaveButton
-                    }
-                    val appInfo = getAppInfo()
-                    saveAppInfo(
-                        appInfo.copy(
-                            whisperModelConfig = appInfo.whisperModelConfig.copy(
-                                silenceThresholdPercents = result
-                            )
-                        )
-                    )
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    log.error(e.message)
-                    ownerStage?.showAlert(
-                        alertTitle = "Error",
-                        alertContent = e.message ?: "Can not get number"
-                    )
+            onClicked = { raw ->
+                val result = raw.toIntOrNull()
+                if (result == null) {
+                    ownerStage?.showAlert(alertTitle = "Error", alertContent = "Can not get number")
+                    return@addTextFieldWithSaveButton
                 }
+                val current = getAppInfo()
+                saveAppInfo(
+                    current.copy(
+                        whisperModelConfig = current.whisperModelConfig.copy(
+                            silenceThresholdPercents = result
+                        )
+                    )
+                )
             }
         )
 
@@ -298,32 +151,20 @@ class SettingsTab(
             fieldText = appInfo.whisperModelConfig.maxSilenceMilliseconds.toString(),
             buttonTitle = "Save",
             buttonColor = COLOUR_GREEN,
-            onClicked = {
-                try {
-                    val result = it.toLongOrNull()
-                    if (result == null) {
-                        ownerStage?.showAlert(
-                            alertTitle = "Error",
-                            alertContent = "Can not get number"
-                        )
-                        return@addTextFieldWithSaveButton
-                    }
-                    val appInfo = getAppInfo()
-                    saveAppInfo(
-                        appInfo.copy(
-                            whisperModelConfig = appInfo.whisperModelConfig.copy(
-                                maxSilenceMilliseconds = result
-                            )
-                        )
-                    )
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    log.error(e.message)
-                    ownerStage?.showAlert(
-                        alertTitle = "Error",
-                        alertContent = e.message ?: "Can not get number"
-                    )
+            onClicked = { raw ->
+                val result = raw.toLongOrNull()
+                if (result == null) {
+                    ownerStage?.showAlert(alertTitle = "Error", alertContent = "Can not get number")
+                    return@addTextFieldWithSaveButton
                 }
+                val current = getAppInfo()
+                saveAppInfo(
+                    current.copy(
+                        whisperModelConfig = current.whisperModelConfig.copy(
+                            maxSilenceMilliseconds = result
+                        )
+                    )
+                )
             }
         )
 
@@ -333,78 +174,43 @@ class SettingsTab(
             fieldText = appInfo.whisperModelConfig.maxChunkDurationMilliseconds.toString(),
             buttonTitle = "Save",
             buttonColor = COLOUR_GREEN,
-            onClicked = {
-                try {
-                    val result = it.toLongOrNull()
-                    if (result == null) {
-                        ownerStage?.showAlert(
-                            alertTitle = "Error",
-                            alertContent = "Can not get number"
-                        )
-                        return@addTextFieldWithSaveButton
-                    }
-                    val appInfo = getAppInfo()
-                    saveAppInfo(
-                        appInfo.copy(
-                            whisperModelConfig = appInfo.whisperModelConfig.copy(
-                                maxChunkDurationMilliseconds = result
-                            )
-                        )
-                    )
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    log.error(e.message)
-                    ownerStage?.showAlert(
-                        alertTitle = "Error",
-                        alertContent = e.message ?: "Can not get number"
-                    )
-                }
-            }
-        )
-
-        addTitleLabel("VOSK voice recognition model download:")
-
-        addButton(
-            title = "Download VOSK model",
-            buttonColor = COLOUR_BLUE,
-            onClicked = {
-                if (Desktop.isDesktopSupported()) {
-                    Desktop.getDesktop().browse(URI("https://alphacephei.com/vosk/models"))
-                } else {
-                    println("Desktop is not supported")
-                }
-            }
-        )
-
-        addTitleLabel("VOSK voice recognition model folder:")
-
-        voskModelPathTextInput = addTextFieldWithSaveButton(
-            fieldText = appInfo.voskModelPath,
-            buttonTitle = "Select folder with model files",
-            buttonColor = COLOUR_GREEN,
-            onClicked = {
-                val selectedDirectory = ownerStage?.chooseDirectory(
-                    title = "Select Folder"
-                )
-                if (selectedDirectory == null) {
-                    log.error("Select model folder but selected directory is null")
+            onClicked = { raw ->
+                val result = raw.toLongOrNull()
+                if (result == null) {
+                    ownerStage?.showAlert(alertTitle = "Error", alertContent = "Can not get number")
                     return@addTextFieldWithSaveButton
                 }
-                val uuidFile = File(selectedDirectory, "uuid")
-                if (!uuidFile.exists()) {
-                    uuidFile.writeText("00000000-0000-0000-0000-000000000000")
-                }
-                val appInfo = getAppInfo()
+                val current = getAppInfo()
                 saveAppInfo(
-                    appInfo.copy(
-                        voskModelPath = selectedDirectory.absolutePath
+                    current.copy(
+                        whisperModelConfig = current.whisperModelConfig.copy(
+                            maxChunkDurationMilliseconds = result
+                        )
                     )
                 )
-                if (appInfo.voiceRecognizer == VoiceRecognizerEngineEnum.VOSK) {
-                    voskVoiceRecognizer.init(
-                        voskModelPath = selectedDirectory.absolutePath
-                    )
+            }
+        )
+
+        addTitleLabel("Max concurrent Whisper processes (oldest is killed when exceeded)")
+
+        maxConcurrentWhisperProcessesTextInput = addTextFieldWithSaveButton(
+            fieldText = appInfo.whisperModelConfig.maxConcurrentProcesses.toString(),
+            buttonTitle = "Save",
+            buttonColor = COLOUR_GREEN,
+            onClicked = { raw ->
+                val result = raw.toIntOrNull()
+                if (result == null || result < 1) {
+                    ownerStage?.showAlert(alertTitle = "Error", alertContent = "Must be an integer >= 1")
+                    return@addTextFieldWithSaveButton
                 }
+                val current = getAppInfo()
+                saveAppInfo(
+                    current.copy(
+                        whisperModelConfig = current.whisperModelConfig.copy(
+                            maxConcurrentProcesses = result
+                        )
+                    )
+                )
             }
         )
 
@@ -415,9 +221,9 @@ class SettingsTab(
             buttonColor = COLOUR_BLUE,
             onClicked = {
                 if (Desktop.isDesktopSupported()) {
-                    Desktop.getDesktop().browse(URI("https://huggingface.co/guillaumekln/models"))
+                    Desktop.getDesktop().browse(URI("https://huggingface.co/Systran"))
                 } else {
-                    println("Desktop is not supported")
+                    log.warn("Desktop is not supported")
                 }
             }
         )
@@ -429,15 +235,13 @@ class SettingsTab(
             buttonTitle = "Select folder with model files",
             buttonColor = COLOUR_GREEN,
             onClicked = {
-                val selectedDirectory = ownerStage?.chooseDirectory(
-                    title = "Select Folder"
-                )
+                val selectedDirectory = ownerStage?.chooseDirectory(title = "Select Folder")
                 if (selectedDirectory == null) {
                     log.error("Select model folder but selected directory is null")
                     return@addTextFieldWithSaveButton
                 }
-                preferencesRepository.saveAppInfo(
-                    preferencesRepository.getAppInfo().copy(
+                saveAppInfo(
+                    getAppInfo().copy(
                         whisperModelPath = selectedDirectory.absolutePath
                     )
                 )
@@ -449,109 +253,80 @@ class SettingsTab(
         googleCloudTokenTextInput = addTextFieldWithCopyPasteActionButtons(
             fieldText = appInfo.googleCloudToken,
             onClicked = {
-                saveAppInfo(
-                    getAppInfo().copy(
-                        googleCloudToken = it
-                    )
-                )
+                saveAppInfo(getAppInfo().copy(googleCloudToken = it))
             }
         )
 
         addButton(
-            title = "Get API key",
+            title = "Get Google API key",
             buttonColor = COLOUR_BLUE,
             onClicked = {
                 if (Desktop.isDesktopSupported()) {
-                    Desktop.getDesktop().browse(URI("https://cloud.google.com/docs/authentication/api-keys"))
+                    Desktop.getDesktop().browse(URI("https://aistudio.google.com/apikey"))
                 } else {
-                    println("Desktop is not supported")
+                    log.warn("Desktop is not supported")
                 }
             }
         )
 
-        addTitleLabel("LM Studio url")
+        addTitleLabel("OpenAI API key:")
 
-        lmStudioBaseUrlTextInput = addTextFieldWithSaveButton(
-            fieldText = appInfo.lmStudioConfig.baseUrl,
-            buttonTitle = "Update LM Studio models",
-            buttonColor = COLOUR_GREEN,
+        openAiTokenTextInput = addTextFieldWithCopyPasteActionButtons(
+            fieldText = appInfo.openAiToken,
             onClicked = {
-                val appInfo = getAppInfo()
-                saveAppInfo(
-                    appInfo.copy(
-                        lmStudioConfig = appInfo.lmStudioConfig.copy(
-                            baseUrl = it
-                        ),
-                    )
-                )
-                getLmStudioModels(
-                    baseUrl = appInfo.lmStudioConfig.baseUrl,
-                )
+                saveAppInfo(getAppInfo().copy(openAiToken = it))
             }
         )
 
-        addTitleLabel("Ollama url")
-
-        ollamaBaseUrlTextInput = addTextFieldWithSaveButton(
-            fieldText = appInfo.ollamaConfig.baseUrl,
-            buttonTitle = "Update Ollama models",
-            buttonColor = COLOUR_GREEN,
+        addButton(
+            title = "Get OpenAI API key",
+            buttonColor = COLOUR_BLUE,
             onClicked = {
-                val appInfo = getAppInfo()
-                saveAppInfo(
-                    appInfo.copy(
-                        ollamaConfig = appInfo.ollamaConfig.copy(
-                            baseUrl = it
-                        ),
-                    )
-                )
-                getOllamaModels(
-                    baseUrl = appInfo.ollamaConfig.baseUrl,
-                )
+                if (Desktop.isDesktopSupported()) {
+                    Desktop.getDesktop().browse(URI("https://platform.openai.com/api-keys"))
+                } else {
+                    log.warn("Desktop is not supported")
+                }
+            }
+        )
+
+        addTitleLabel("Claude (Anthropic) API key:")
+
+        claudeTokenTextInput = addTextFieldWithCopyPasteActionButtons(
+            fieldText = appInfo.claudeToken,
+            onClicked = {
+                saveAppInfo(getAppInfo().copy(claudeToken = it))
+            }
+        )
+
+        addButton(
+            title = "Get Claude API key",
+            buttonColor = COLOUR_BLUE,
+            onClicked = {
+                if (Desktop.isDesktopSupported()) {
+                    Desktop.getDesktop().browse(URI("https://console.anthropic.com/settings/keys"))
+                } else {
+                    log.warn("Desktop is not supported")
+                }
             }
         )
 
         mainThreadScope.launch {
             preferencesRepository.appInfoFlow.collect { appInfo ->
-                voskModelPathTextInput?.text = appInfo.voskModelPath
                 googleCloudTokenTextInput?.text = appInfo.googleCloudToken
-                lmStudioBaseUrlTextInput?.text = appInfo.lmStudioConfig.baseUrl
-                ollamaBaseUrlTextInput?.text = appInfo.ollamaConfig.baseUrl
-                sendTextEverySymbolsTextInput?.text = appInfo.sendTextEverySymbols.toString()
-                sendTextEveryMillisecondsTextInput?.text = appInfo.sendTextEveryMilliseconds.toString()
+                openAiTokenTextInput?.text = appInfo.openAiToken
+                claudeTokenTextInput?.text = appInfo.claudeToken
                 whisperModelPathTextInput?.text = appInfo.whisperModelPath
                 silenceThresholdPercentsTextInput?.text = appInfo.whisperModelConfig.silenceThresholdPercents.toString()
                 maxSilenceMillisecondsTextInput?.text = appInfo.whisperModelConfig.maxSilenceMilliseconds.toString()
-                maxChunkDurationMillisecondsTextInput?.text =
-                    appInfo.whisperModelConfig.maxChunkDurationMilliseconds.toString()
+                maxChunkDurationMillisecondsTextInput?.text = appInfo.whisperModelConfig.maxChunkDurationMilliseconds.toString()
+                maxConcurrentWhisperProcessesTextInput?.text = appInfo.whisperModelConfig.maxConcurrentProcesses.toString()
             }
         }
-
     }
 
     private fun getModelsList(): List<LlmModel> {
-        val appInfo = getAppInfo()
         return buildList {
-            appInfo.lmStudioConfig.models.forEach {
-                add(
-                    LlmModel(
-                        id = it.id,
-                        description = "LM Studio Local: ${it.id}",
-                        engine = LlmModelEngine.LM_STUDIO,
-                        googleAiModel = null,
-                    )
-                )
-            }
-            appInfo.ollamaConfig.models.forEach {
-                add(
-                    LlmModel(
-                        id = it.id,
-                        description = "Ollama Local: ${it.id}",
-                        engine = LlmModelEngine.OLLAMA,
-                        googleAiModel = null,
-                    )
-                )
-            }
             GoogleAiModelsEnum.entries.forEach {
                 add(
                     LlmModel(
@@ -562,91 +337,25 @@ class SettingsTab(
                     )
                 )
             }
-        }
-    }
-
-    private fun getLmStudioModels(baseUrl: String) {
-        backgroundThreadScope.launch {
-            val result = localNetworkRepository.getLmStudioModels(
-                baseUrl = baseUrl,
-            )
-            if (!result.isSuccess) {
-                log.error("getLmStudioModels result error: ${result.exceptionOrNull()}")
-                ownerStage?.showAlert(
-                    alertTitle = "Error",
-                    alertContent = result.exceptionOrNull()?.message ?: ""
+            OpenAiModelsEnum.entries.forEach {
+                add(
+                    LlmModel(
+                        id = it.type,
+                        description = it.getDescription(),
+                        engine = LlmModelEngine.OPENAI,
+                        openAiModel = it,
+                    )
                 )
-                return@launch
             }
-            val resultData = result.getOrNull()
-            if (resultData.isNullOrEmpty()) {
-                log.error("getLmStudioModels resultData == null")
-                ownerStage?.showAlert(
-                    alertTitle = "Error",
-                    alertContent = "Empty data received"
+            ClaudeModelsEnum.entries.forEach {
+                add(
+                    LlmModel(
+                        id = it.type,
+                        description = it.getDescription(),
+                        engine = LlmModelEngine.CLAUDE,
+                        claudeModel = it,
+                    )
                 )
-                return@launch
-
-            }
-            val appInfo = getAppInfo()
-            saveAppInfo(
-                appInfo.copy(
-                    lmStudioConfig = appInfo.lmStudioConfig.copy(
-                        models = resultData
-                    ),
-                )
-            )
-            withContext(Dispatchers.JavaFx) {
-                modelsBox?.items = FXCollections.observableArrayList(getModelsList())
-                val selected = getAppInfo().selectedModel
-                resultData.firstOrNull {
-                    it.id == selected.id
-                }?.let {
-                    modelsBox?.selectionModel?.select(it)
-                }
-            }
-        }
-    }
-
-    private fun getOllamaModels(baseUrl: String) {
-        backgroundThreadScope.launch {
-            val result = localNetworkRepository.getOllamaModels(
-                baseUrl = baseUrl,
-            )
-            if (!result.isSuccess) {
-                log.error("getOllamaModels result error: ${result.exceptionOrNull()}")
-                ownerStage?.showAlert(
-                    alertTitle = "Error",
-                    alertContent = result.exceptionOrNull()?.message ?: ""
-                )
-                return@launch
-            }
-            val resultData = result.getOrNull()
-            if (resultData.isNullOrEmpty()) {
-                log.error("getOllamaModels resultData == null")
-                ownerStage?.showAlert(
-                    alertTitle = "Error",
-                    alertContent = "Empty data received"
-                )
-                return@launch
-
-            }
-            val appInfo = getAppInfo()
-            saveAppInfo(
-                appInfo.copy(
-                    ollamaConfig = appInfo.ollamaConfig.copy(
-                        models = resultData
-                    ),
-                )
-            )
-            withContext(Dispatchers.JavaFx) {
-                modelsBox?.items = FXCollections.observableArrayList(getModelsList())
-                val selected = getAppInfo().selectedModel
-                resultData.firstOrNull {
-                    it.id == selected.id
-                }?.let {
-                    modelsBox?.selectionModel?.select(it)
-                }
             }
         }
     }
