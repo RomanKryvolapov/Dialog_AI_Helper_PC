@@ -44,6 +44,17 @@ import utils.AudioChunker
 import utils.DialogLogger
 import utils.WhisperUtil
 
+import dev.langchain4j.model.input.Prompt
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
+import models.domain.ApplicationInfo
+import models.domain.LlmModel
+import utils.TranslationRateLimiter
+
 class MessagesTab(
     private val whisperUtil: WhisperUtil,
     private val audioChunker: AudioChunker,
@@ -59,6 +70,11 @@ class MessagesTab(
     companion object {
         const val FIELD_BACKGROUND_COLOUR = "#323232"
         const val BUTTONS_BACKGROUND_COLOUR = "#323232"
+
+        private const val MAX_TRANSLATION_QUEUE = 8
+        private const val MAX_TRANSLATION_ATTEMPTS = 3
+        private const val TRANSLATION_TTL_MILLIS = 40_000L
+        private const val SCHEDULER_WAIT_SLICE_MILLIS = 1_000L
     }
 
     val content: Pane
@@ -67,7 +83,16 @@ class MessagesTab(
     @Volatile
     private var lastMessageFromAI = "..."
 
-    private var translateMessageJob: Job? = null
+    private val rateLimiter = TranslationRateLimiter()
+    private val translationQueueMutex = Mutex()
+    private val translationQueue = ArrayList<TranslationTask>()
+    private val schedulerWakeups = Channel<Unit>(Channel.CONFLATED)
+    private var schedulerJob: Job? = null
+    private var translationSeq = 0L
+
+    /** Bumped on "Clear dialog" so in-flight results from a previous screen are ignored. */
+    @Volatile
+    private var translationEpoch = 0L
 
     /** UI-thread only: indexes of rows with placeholder text waiting for Whisper results. */
     private val pendingRowIndexes = ArrayDeque<Int>()
@@ -104,8 +129,7 @@ class MessagesTab(
                     setOnAction {
                         messageBox.children.clear()
                         lastMessageFromAI = "..."
-                        translateMessageJob?.cancel()
-                        translateMessageJob = null
+                        clearTranslations()
                     }
                 },
                 listeningButton,
@@ -254,91 +278,211 @@ class MessagesTab(
             log.error("Translate message is empty")
             return
         }
-        labelMessagePartProcessMessage = "Process message"
-        updateLabelMessage()
-        translateMessageJob?.cancel()
-        translateMessageJob = backgroundThreadScope.launch {
-            val appInfo = getAppInfo()
-            log.debug("Message position: $index text: $message")
-
-            val template = PromptTemplate.from(appInfo.prompt.prompt)
-            val prompt = template.apply(mapOf(SOURCE_TEXT_CLEAR to message))
-
-            val flow = when (appInfo.selectedModel.engine) {
-                LlmModelEngine.GOOGLE -> cloudRepository.streamGoogleAI(
-                    model = appInfo.selectedModel.id,
-                    apiKey = appInfo.googleCloudToken,
-                    prompt = prompt,
-                )
-                LlmModelEngine.OPENAI -> cloudRepository.streamOpenAI(
-                    model = appInfo.selectedModel.id,
-                    apiKey = appInfo.openAiToken,
-                    prompt = prompt,
-                )
-                LlmModelEngine.CLAUDE -> cloudRepository.streamClaude(
-                    model = appInfo.selectedModel.id,
-                    apiKey = appInfo.claudeToken,
-                    prompt = prompt,
-                )
+        ensureSchedulerStarted()
+        val task = TranslationTask(
+            seq = ++translationSeq,
+            index = index,
+            text = message,
+            attempts = 0,
+            bornAtMillis = System.currentTimeMillis(),
+        )
+        backgroundThreadScope.launch {
+            translationQueueMutex.withLock {
+                translationQueue.add(task)
+                translationQueue.sortByDescending { it.seq }
+                while (translationQueue.size > MAX_TRANSLATION_QUEUE) {
+                    markTranslationDropped(translationQueue.removeAt(translationQueue.lastIndex))
+                }
             }
+            schedulerWakeups.trySend(Unit)
+        }
+    }
 
-            var finalText = ""
-            try {
-                flow.collect { cumulative ->
-                    finalText = cumulative
-                    val display = cumulative.ifBlank { "..." }
+    private data class TranslationTask(
+        val seq: Long,
+        val index: Int,
+        val text: String,
+        var attempts: Int,
+        val bornAtMillis: Long,
+    )
+
+    private fun ensureSchedulerStarted() {
+        if (schedulerJob?.isActive == true) return
+        schedulerJob = backgroundThreadScope.launch { runSchedulerLoop() }
+    }
+
+    /** Cancels in-flight translation, drops the queue, and invalidates pending UI writes. */
+    private fun clearTranslations() {
+        translationEpoch += 1
+        schedulerJob?.cancel()
+        schedulerJob = null
+        backgroundThreadScope.launch {
+            translationQueueMutex.withLock { translationQueue.clear() }
+        }
+    }
+
+    /**
+     * Single-consumer scheduler: always picks the newest queued message, honours the selected
+     * model's rate limits before dispatching, and processes one translation at a time
+     * (non-preemptive — a running request is never cancelled to start a newer one, because
+     * cancelling does not reclaim the quota already spent on the in-flight HTTP call).
+     */
+    private suspend fun runSchedulerLoop() {
+        while (true) {
+            val task = takeNewestTask()
+            if (isStale(task)) {
+                markTranslationDropped(task)
+                continue
+            }
+            val appInfo = getAppInfo()
+            configureLimiterFor(appInfo.selectedModel)
+
+            val prompt = PromptTemplate.from(appInfo.prompt.prompt)
+                .apply(mapOf(SOURCE_TEXT_CLEAR to task.text))
+            val estimatedTokens = prompt.text().length / 4 + 256
+
+            val wait = rateLimiter.tryReserve(estimatedTokens)
+            if (wait > 0L) {
+                requeueTask(task)
+                withTimeoutOrNull(wait.coerceAtMost(SCHEDULER_WAIT_SLICE_MILLIS)) {
+                    schedulerWakeups.receive()
+                }
+                continue
+            }
+            runTranslation(task, appInfo, prompt)
+        }
+    }
+
+    private suspend fun takeNewestTask(): TranslationTask {
+        while (true) {
+            val task = translationQueueMutex.withLock {
+                if (translationQueue.isEmpty()) null else translationQueue.removeAt(0)
+            }
+            if (task != null) return task
+            schedulerWakeups.receive()
+        }
+    }
+
+    private suspend fun requeueTask(task: TranslationTask) {
+        translationQueueMutex.withLock {
+            translationQueue.add(task)
+            translationQueue.sortByDescending { it.seq }
+            while (translationQueue.size > MAX_TRANSLATION_QUEUE) {
+                markTranslationDropped(translationQueue.removeAt(translationQueue.lastIndex))
+            }
+        }
+    }
+
+    private fun isStale(task: TranslationTask): Boolean =
+        System.currentTimeMillis() - task.bornAtMillis > TRANSLATION_TTL_MILLIS
+
+    private fun configureLimiterFor(model: LlmModel) {
+        val limits = model.googleAiModel
+        rateLimiter.configure(
+            rpm = limits?.limitRequestsInMinute,
+            tpm = limits?.limitTokensInMinute,
+            rpd = limits?.limitRequestsInDay,
+            tpd = limits?.limitTokensInDay,
+        )
+    }
+
+    private suspend fun runTranslation(task: TranslationTask, appInfo: ApplicationInfo, prompt: Prompt) {
+        val epoch = translationEpoch
+        setProcessStatus(
+            if (task.attempts == 0) "Process message"
+            else "Retry ${task.attempts}/${MAX_TRANSLATION_ATTEMPTS - 1}"
+        )
+        val flow = when (appInfo.selectedModel.engine) {
+            LlmModelEngine.GOOGLE -> cloudRepository.streamGoogleAI(
+                model = appInfo.selectedModel.id,
+                apiKey = appInfo.googleCloudToken,
+                prompt = prompt,
+            )
+            LlmModelEngine.OPENAI -> cloudRepository.streamOpenAI(
+                model = appInfo.selectedModel.id,
+                apiKey = appInfo.openAiToken,
+                prompt = prompt,
+            )
+            LlmModelEngine.CLAUDE -> cloudRepository.streamClaude(
+                model = appInfo.selectedModel.id,
+                apiKey = appInfo.claudeToken,
+                prompt = prompt,
+            )
+        }
+        var finalText = ""
+        try {
+            flow.collect { cumulative ->
+                finalText = cumulative
+                if (epoch == translationEpoch) {
                     updateMessageAt(
-                        index = index,
+                        index = task.index,
                         newItem = DialogItem(
-                            originalMessage = message,
-                            messageFromAi = display,
+                            originalMessage = task.text,
+                            messageFromAi = cumulative.ifBlank { "..." },
                         ),
                     )
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                log.error("Streaming error: ${e.message}", e)
-                updateMessageAt(
-                    index = index,
-                    newItem = DialogItem(
-                        originalMessage = message,
-                        messageFromAi = "...",
-                    ),
-                )
-                labelMessagePartProcessMessage = "Process message error"
-                updateLabelMessage()
-                return@launch
             }
-
-            val cleaned = finalText.normalizeAndRemoveEmptyLines()
-            if (cleaned.isBlank()) {
-                log.error("Translate message result is empty")
-                updateMessageAt(
-                    index = index,
-                    newItem = DialogItem(
-                        originalMessage = message,
-                        messageFromAi = "...",
-                    ),
-                )
-                labelMessagePartProcessMessage = "Process message error, result is empty"
-                updateLabelMessage()
-                return@launch
-            }
-
-            log.debug("Translate message result size: ${cleaned.length}")
-            lastMessageFromAI = cleaned
-            dialogLogger.logAnswer(cleaned)
-            updateMessageAt(
-                index = index,
-                newItem = DialogItem(
-                    originalMessage = message,
-                    messageFromAi = cleaned,
-                ),
-            )
-            labelMessagePartProcessMessage = ""
-            updateLabelMessage()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            handleTranslationError(task, e, epoch)
+            return
         }
+        if (epoch != translationEpoch) return
+        val cleaned = finalText.normalizeAndRemoveEmptyLines()
+        if (cleaned.isBlank()) {
+            log.error("Translate message result is empty")
+            updateMessageAt(
+                index = task.index,
+                newItem = DialogItem(originalMessage = task.text, messageFromAi = "..."),
+            )
+            setProcessStatus("Process message error, result is empty")
+            return
+        }
+        log.debug("Translate message result size: ${cleaned.length}")
+        lastMessageFromAI = cleaned
+        dialogLogger.logAnswer(cleaned)
+        updateMessageAt(
+            index = task.index,
+            newItem = DialogItem(originalMessage = task.text, messageFromAi = cleaned),
+        )
+        setProcessStatus("")
+    }
+
+    private fun handleTranslationError(task: TranslationTask, error: Throwable, epoch: Long) {
+        log.error("Streaming error: ${error.message}", error)
+        val message = error.message ?: ""
+        if ("\"code\": 429" in message) rateLimiter.penalize(null)
+        val nonRetryable = listOf("\"code\": 400", "\"code\": 401", "\"code\": 403", "\"code\": 404")
+            .any { it in message }
+        if (!nonRetryable && task.attempts + 1 < MAX_TRANSLATION_ATTEMPTS && !isStale(task)) {
+            task.attempts += 1
+            val backoff = (1000L shl task.attempts) + (System.nanoTime() and 0xFFL)
+            backgroundThreadScope.launch {
+                delay(backoff)
+                requeueTask(task)
+                schedulerWakeups.trySend(Unit)
+            }
+            setProcessStatus("Retry ${task.attempts}/${MAX_TRANSLATION_ATTEMPTS - 1}")
+        } else {
+            if (epoch == translationEpoch) {
+                updateMessageAt(
+                    index = task.index,
+                    newItem = DialogItem(originalMessage = task.text, messageFromAi = "..."),
+                )
+            }
+            setProcessStatus("Process message error")
+        }
+    }
+
+    private fun markTranslationDropped(task: TranslationTask) {
+        log.debug("Translation dropped (stale or evicted): index={}", task.index)
+    }
+
+    private fun setProcessStatus(status: String) {
+        labelMessagePartProcessMessage = status
+        updateLabelMessage()
     }
 
     private fun updateMessageAt(index: Int, newItem: DialogItem) {
