@@ -75,23 +75,9 @@ class DialogApplication : Application(), KoinComponent {
             tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
             tabs.addAll(
                 Tab("Messages", messagesTab.content),
-                Tab("Prompt", ScrollPane(promptTab.content).apply {
-                    fitToWidthProperty().set(true)
-                    fitToHeightProperty().set(true)
-                    isPannable = true
-                }),
-                Tab("Settings", ScrollPane(settingsTab.content).apply {
-                    fitToWidthProperty().set(true)
-                    fitToHeightProperty().set(true)
-                    isPannable = true
-                }),
-                Tab("Console", ScrollPane(consoleTab.content).apply {
-                    fitToWidthProperty().set(true)
-                    fitToHeightProperty().set(true)
-                    isPannable = true
-                }),
+                Tab("Settings", settingsTab.content),
             )
-            selectionModel.select(appInfo.lastOpenedTab)
+            selectionModel.select(appInfo.lastOpenedTab.coerceIn(0, tabs.size - 1))
             selectionModel.selectedIndexProperty().addListener { _, _, newValue ->
                 preferencesRepository.saveAppInfo(
                     preferencesRepository.getAppInfo().copy(

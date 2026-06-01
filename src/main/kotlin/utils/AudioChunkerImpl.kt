@@ -51,6 +51,8 @@ class AudioChunkerImpl(
 
     override var streamingModeEnabled: Boolean = false
 
+    override var streamingFeedsContinuously: Boolean = false
+
     override var onAudioFrame: ((pcm: ByteArray) -> Unit)? = null
     override var onUtteranceStart: (() -> Unit)? = null
     override var onUtteranceEnd: (() -> Unit)? = null
@@ -115,13 +117,19 @@ class AudioChunkerImpl(
 
                     if (!chunkProcessingEnabled) {
                         if (isRecording) {
-                            if (streamingModeEnabled) onUtteranceEnd?.invoke()
+                            if (streamingModeEnabled && !streamingFeedsContinuously) onUtteranceEnd?.invoke()
                             currentChunk.clear()
                             isRecording = false
                             recordingStartTime = null
                             onRecordStop?.invoke()
                         }
                         continue
+                    }
+
+                    // Continuous streaming (sherpa-onnx): feed every frame, including silence,
+                    // so the recognizer's own endpointer can work.
+                    if (streamingModeEnabled && streamingFeedsContinuously) {
+                        onAudioFrame?.invoke(buffer.copyOf())
                     }
 
                     val currentTime = Instant.now()
@@ -131,16 +139,14 @@ class AudioChunkerImpl(
                         isRecording = true
                         recordingStartTime = currentTime
                         lastSoundTime = currentTime
-                        if (streamingModeEnabled) {
-                            onAudioFrame?.invoke(buffer.copyOf())
-                        } else {
-                            currentChunk.add(buffer.copyOf())
+                        when {
+                            !streamingModeEnabled -> currentChunk.add(buffer.copyOf())
+                            !streamingFeedsContinuously -> onAudioFrame?.invoke(buffer.copyOf())
                         }
                     } else if (isRecording) {
-                        if (streamingModeEnabled) {
-                            onAudioFrame?.invoke(buffer.copyOf())
-                        } else {
-                            currentChunk.add(buffer.copyOf())
+                        when {
+                            !streamingModeEnabled -> currentChunk.add(buffer.copyOf())
+                            !streamingFeedsContinuously -> onAudioFrame?.invoke(buffer.copyOf())
                         }
 
                         if (amplitude > silenceThresholdPercents) {
@@ -154,10 +160,10 @@ class AudioChunkerImpl(
                         val shouldStopDueToMaxDuration = recordingDuration >= maxChunkDurationMilliseconds
 
                         if (streamingModeEnabled) {
-                            // Streaming: Whisper (Python side) segments by sentence and bounds the
-                            // buffer itself, so we only flush the trailing phrase on a real pause.
+                            // End the recording state on a pause. VAD-gated (Whisper) also flushes
+                            // the trailing phrase; continuous (sherpa) endpoints on its own.
                             if (shouldStopDueToSilence) {
-                                onUtteranceEnd?.invoke()
+                                if (!streamingFeedsContinuously) onUtteranceEnd?.invoke()
                                 isRecording = false
                                 recordingStartTime = null
                                 onRecordStop?.invoke()

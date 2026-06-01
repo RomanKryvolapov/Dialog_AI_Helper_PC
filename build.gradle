@@ -67,6 +67,10 @@ dependencies {
 
     implementation "io.insert-koin:koin-core:$koin_version"
     implementation "io.insert-koin:koin-core-coroutines:$koin_version"
+
+    // sherpa-onnx desktop (in-process streaming ASR): API jar + Windows x64 native libs.
+    // Vendored from https://github.com/k2-fsa/sherpa-onnx/releases (no desktop Maven artifact).
+    implementation files('libs/sherpa-onnx-v1.13.2.jar', 'libs/sherpa-onnx-native-lib-win-x64-v1.13.2.jar')
 }
 
 java {

@@ -12,6 +12,8 @@ import utils.AudioChunker
 import utils.AudioChunkerImpl
 import utils.DialogLogger
 import utils.DialogLoggerImpl
+import utils.SherpaOnnxRecognizer
+import utils.SherpaOnnxRecognizerImpl
 import utils.WhisperStreamingUtil
 import utils.WhisperStreamingUtilImpl
 import utils.WhisperUtil
@@ -24,6 +26,7 @@ val utilsModule = module {
     singleOf(::AudioChunkerImpl) bind AudioChunker::class
     singleOf(::WhisperUtilImpl) bind WhisperUtil::class
     singleOf(::WhisperStreamingUtilImpl) bind WhisperStreamingUtil::class
+    singleOf(::SherpaOnnxRecognizerImpl) bind SherpaOnnxRecognizer::class
     singleOf(::DialogLoggerImpl) bind DialogLogger::class
 
     single<Preferences> {

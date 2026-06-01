@@ -25,6 +25,8 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                 questionLanguage = questionLanguage ?: defaultApplicationInfo.questionLanguage,
                 voiceRecognitionEngine = voiceRecognitionEngine ?: defaultApplicationInfo.voiceRecognitionEngine,
                 useStreamingResponse = useStreamingResponse ?: defaultApplicationInfo.useStreamingResponse,
+                sherpaModelPath = sherpaModelPath ?: defaultApplicationInfo.sherpaModelPath,
+                sherpaConfig = sherpaConfig ?: defaultApplicationInfo.sherpaConfig,
             )
         }
     }
@@ -47,6 +49,8 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                 questionLanguage = questionLanguage,
                 voiceRecognitionEngine = voiceRecognitionEngine,
                 useStreamingResponse = useStreamingResponse,
+                sherpaModelPath = sherpaModelPath,
+                sherpaConfig = sherpaConfig,
             )
         }
     }

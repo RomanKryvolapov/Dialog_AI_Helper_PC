@@ -16,4 +16,6 @@ data class ApplicationInfoNullable(
     val questionLanguage: String?,
     val voiceRecognitionEngine: VoiceRecognitionEngine?,
     val useStreamingResponse: Boolean?,
+    val sherpaModelPath: String?,
+    val sherpaConfig: SherpaModelConfig?,
 )

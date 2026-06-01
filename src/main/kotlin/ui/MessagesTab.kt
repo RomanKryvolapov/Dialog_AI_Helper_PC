@@ -58,9 +58,14 @@ import utils.TranslationRateLimiter
 import models.domain.VoiceRecognitionEngine
 import utils.WhisperStreamingUtil
 
+import utils.SherpaOnnxRecognizer
+
+import models.domain.SherpaModelConfig
+
 class MessagesTab(
     private val whisperUtil: WhisperUtil,
     private val whisperStreamingUtil: WhisperStreamingUtil,
+    private val sherpaRecognizer: SherpaOnnxRecognizer,
     private val audioChunker: AudioChunker,
     private val cloudRepository: CloudRepository,
     private val dialogLogger: DialogLogger,
@@ -495,11 +500,18 @@ class MessagesTab(
     @Volatile
     private var currentStreamingRow: Int = -1
 
+    @Volatile
+    private var currentRecognitionEngine: VoiceRecognitionEngine = VoiceRecognitionEngine.WHISPER_BATCH
+
     private data class RecognitionConfig(
         val engine: VoiceRecognitionEngine,
-        val modelPath: String,
+        val whisperModelPath: String,
         val language: String,
         val stepMillis: Long,
+        val minChars: Int,
+        val maxMillis: Long,
+        val sherpaModelPath: String,
+        val sherpaConfig: SherpaModelConfig,
     )
 
     init {
@@ -510,9 +522,13 @@ class MessagesTab(
                 .map {
                     RecognitionConfig(
                         engine = it.voiceRecognitionEngine,
-                        modelPath = it.whisperModelPath,
+                        whisperModelPath = it.whisperModelPath,
                         language = it.questionLanguage,
                         stepMillis = it.whisperModelConfig.streamingStepMilliseconds,
+                        minChars = it.whisperModelConfig.streamingMinChars,
+                        maxMillis = it.whisperModelConfig.maxChunkDurationMilliseconds,
+                        sherpaModelPath = it.sherpaModelPath,
+                        sherpaConfig = it.sherpaConfig,
                     )
                 }
                 .distinctUntilChanged()
@@ -522,12 +538,16 @@ class MessagesTab(
 
     private fun setupStreamingListeners() {
         audioChunker.onAudioFrame = { pcm ->
-            whisperStreamingUtil.feedAudio(pcm)
+            when (currentRecognitionEngine) {
+                VoiceRecognitionEngine.WHISPER_STREAMING -> whisperStreamingUtil.feedAudio(pcm)
+                VoiceRecognitionEngine.SHERPA_ONNX -> sherpaRecognizer.feedAudio(pcm)
+                VoiceRecognitionEngine.WHISPER_BATCH -> {}
+            }
         }
         audioChunker.onUtteranceEnd = {
             whisperStreamingUtil.flush()
         }
-        whisperStreamingUtil.onPartialListener = { text ->
+        val onPartial: (String) -> Unit = { text ->
             if (text.isNotBlank()) {
                 Platform.runLater {
                     val wasAtBottom = isScrolledToBottom()
@@ -539,7 +559,7 @@ class MessagesTab(
                 }
             }
         }
-        whisperStreamingUtil.onFinalListener = { text ->
+        val onFinal: (String) -> Unit = { text ->
             if (text.isNotBlank()) {
                 dialogLogger.logQuestion(text)
                 Platform.runLater {
@@ -554,6 +574,10 @@ class MessagesTab(
                 }
             }
         }
+        whisperStreamingUtil.onPartialListener = onPartial
+        whisperStreamingUtil.onFinalListener = onFinal
+        sherpaRecognizer.onPartialListener = onPartial
+        sherpaRecognizer.onFinalListener = onFinal
     }
 
     /** Must run on the FX thread. Returns the current streaming row, creating one if needed. */
@@ -568,8 +592,11 @@ class MessagesTab(
 
     private fun applyRecognitionEngine(appInfo: ApplicationInfo) {
         currentStreamingRow = -1
+        currentRecognitionEngine = appInfo.voiceRecognitionEngine
         when (appInfo.voiceRecognitionEngine) {
             VoiceRecognitionEngine.WHISPER_STREAMING -> {
+                sherpaRecognizer.stop()
+                audioChunker.streamingFeedsContinuously = false
                 audioChunker.streamingModeEnabled = true
                 whisperStreamingUtil.start(
                     modelPath = appInfo.whisperModelPath,
@@ -579,9 +606,23 @@ class MessagesTab(
                     maxUtteranceMillis = appInfo.whisperModelConfig.maxChunkDurationMilliseconds,
                 )
             }
-            VoiceRecognitionEngine.WHISPER_BATCH -> {
-                audioChunker.streamingModeEnabled = false
+            VoiceRecognitionEngine.SHERPA_ONNX -> {
                 whisperStreamingUtil.stop()
+                audioChunker.streamingFeedsContinuously = true
+                audioChunker.streamingModeEnabled = true
+                sherpaRecognizer.start(
+                    modelDir = appInfo.sherpaModelPath,
+                    numThreads = appInfo.sherpaConfig.numThreads,
+                    decodingMethod = appInfo.sherpaConfig.decodingMethod,
+                    maxActivePaths = appInfo.sherpaConfig.maxActivePaths,
+                    splitMaxWords = appInfo.sherpaConfig.splitMaxWords,
+                )
+            }
+            VoiceRecognitionEngine.WHISPER_BATCH -> {
+                whisperStreamingUtil.stop()
+                sherpaRecognizer.stop()
+                audioChunker.streamingFeedsContinuously = false
+                audioChunker.streamingModeEnabled = false
             }
         }
     }

@@ -38,8 +38,17 @@ import models.domain.VoiceRecognitionEngine
 import extensions.addCheckBox
 import javafx.scene.control.CheckBox
 
+import javafx.scene.control.ScrollPane
+import javafx.scene.control.ToggleButton
+import javafx.scene.control.ToggleGroup
+import javafx.scene.layout.BorderPane
+import javafx.scene.layout.StackPane
+import models.domain.ApplicationInfo
+
 class SettingsTab(
     private val audioChunker: AudioChunker,
+    private val promptTab: PromptTab,
+    private val consoleTab: ConsoleTab,
     preferencesRepository: PreferencesRepository,
 ) : BaseTab(
     preferencesRepository = preferencesRepository,
@@ -47,270 +56,190 @@ class SettingsTab(
 
     companion object {
         const val WINDOW_BACKGROUND_COLOUR = "#323232"
+        private const val SIDEBAR_BACKGROUND_COLOUR = "#2b2b2b"
+        private val DECODING_METHODS = listOf("greedy_search", "modified_beam_search")
     }
 
     private val log = LoggerFactory.getLogger("SettingsTab")
 
-    var modelsBox: ComboBox<LlmModel>? = null
-    var soundDevicesBox: ComboBox<Mixer.Info>? = null
-    var whisperModelPathTextInput: TextInputControl? = null
-    var googleCloudTokenTextInput: TextInputControl? = null
-    var openAiTokenTextInput: TextInputControl? = null
-    var claudeTokenTextInput: TextInputControl? = null
-    var silenceThresholdPercentsTextInput: TextInputControl? = null
-    var maxSilenceMillisecondsTextInput: TextInputControl? = null
-    var maxChunkDurationMillisecondsTextInput: TextInputControl? = null
-    var maxConcurrentWhisperProcessesTextInput: TextInputControl? = null
-    var streamingStepTextInput: TextInputControl? = null
-    var streamingMinCharsTextInput: TextInputControl? = null
-    private var batchOnlySettingsBox: VBox? = null
-    private var streamingOnlySettingsBox: VBox? = null
-    var streamingResponseCheckBox: CheckBox? = null
     private var streamingResponseBox: VBox? = null
+    private val detailContainer = StackPane().apply {
+        background = Background(BackgroundFill(Color.web(WINDOW_BACKGROUND_COLOUR), null, null))
+    }
 
-    val content: VBox = VBox(4.0).apply {
-        padding = Insets(0.0, 20.0, 0.0, 20.0)
+    val content: BorderPane = BorderPane().apply {
         background = Background(BackgroundFill(Color.web(WINDOW_BACKGROUND_COLOUR), null, null))
 
         val appInfo = getAppInfo()
 
-        addTitleLabel("Voice recognition engine:")
+        val generalScroll = buildGeneralPane(appInfo)
+        val llmScroll = buildLlmPane(appInfo)
+        val whisperBatchScroll = buildWhisperBatchPane(appInfo)
+        val whisperStreamingScroll = buildWhisperStreamingPane(appInfo)
+        val sherpaScroll = buildSherpaPane(appInfo)
+        val promptsScroll = wrapNode(promptTab.content)
+        val consoleScroll = wrapNode(consoleTab.content)
 
-        addComboBox(
-            items = VoiceRecognitionEngine.entries,
-            selectedItem = appInfo.voiceRecognitionEngine,
-            toStringFn = { it.title },
-            onSelected = { engine ->
-                saveAppInfo(getAppInfo().copy(voiceRecognitionEngine = engine))
-                applyEngineVisibility(engine)
-            }
-        )
+        val group = ToggleGroup()
+        val generalCategoryButton = categoryButton("General", group) { showCategory(generalScroll) }
+        val llmCategoryButton = categoryButton("LLM", group) { showCategory(llmScroll) }
+        val whisperBatchCategoryButton = categoryButton("Whisper (batch)", group) { showCategory(whisperBatchScroll) }
+        val whisperStreamingCategoryButton = categoryButton("Whisper (streaming)", group) { showCategory(whisperStreamingScroll) }
+        val sherpaCategoryButton = categoryButton("Sherpa-ONNX", group) { showCategory(sherpaScroll) }
+        val promptsCategoryButton = categoryButton("Prompts", group) { showCategory(promptsScroll) }
+        val consoleCategoryButton = categoryButton("Console", group) { showCategory(consoleScroll) }
 
-        addTitleLabel("Audio device for voice recognition:")
-
-        val devices: List<Mixer.Info> = audioChunker.getAvailableInputDevices()
-
-        if (devices.isEmpty()) {
-            addLabel("Not found")
-        } else {
-            val lastSelected = devices.firstOrNull {
-                appInfo.lastSelectedDevice == it.name
-            }
-            if (lastSelected == null) {
-                saveAppInfo(
-                    getAppInfo().copy(
-                        lastSelectedDevice = devices.first().name
-                    )
-                )
-            }
-            soundDevicesBox = addComboBox(
-                items = devices,
-                selectedItem = lastSelected ?: devices.first(),
-                toStringFn = { mixerInfo -> mixerInfo.name },
-                onSelected = { mixerInfo ->
-                    saveAppInfo(
-                        getAppInfo().copy(
-                            lastSelectedDevice = mixerInfo.name
-                        )
-                    )
-                }
-            )
+        val sidebar = VBox(
+            8.0,
+            generalCategoryButton,
+            llmCategoryButton,
+            whisperBatchCategoryButton,
+            whisperStreamingCategoryButton,
+            sherpaCategoryButton,
+            promptsCategoryButton,
+            consoleCategoryButton,
+        ).apply {
+            padding = Insets(20.0, 12.0, 20.0, 12.0)
+            prefWidth = 240.0
+            minWidth = 240.0
+            background = Background(BackgroundFill(Color.web(SIDEBAR_BACKGROUND_COLOUR), null, null))
         }
 
-        addTitleLabel("AI model:")
-
-        val models = getModelsList()
-        modelsBox = addComboBox(
-            items = models,
-            selectedItem = models.firstOrNull { it.id == appInfo.selectedModel.id } ?: appInfo.selectedModel,
-            toStringFn = { it.description ?: "" },
-            onSelected = {
-                saveAppInfo(getAppInfo().copy(selectedModel = it))
-                applyModelStreamingVisibility(it)
-            }
-        )
-
-        streamingResponseBox = VBox(4.0).apply {
-            streamingResponseCheckBox = addCheckBox(
-                text = "Use streaming response (show translation as it is generated)",
-                checked = appInfo.useStreamingResponse,
-                onToggle = { checked -> saveAppInfo(getAppInfo().copy(useStreamingResponse = checked)) },
-            )
-        }.also { children.add(it) }
+        left = sidebar
+        center = detailContainer
 
         applyModelStreamingVisibility(appInfo.selectedModel)
+        generalCategoryButton.isSelected = true
+        showCategory(generalScroll)
+    }
 
-        addTitleLabel("Question language")
+    private fun categoryButton(title: String, group: ToggleGroup, onShow: () -> Unit): ToggleButton {
+        return ToggleButton(title).apply {
+            toggleGroup = group
+            maxWidth = Double.MAX_VALUE
+            styleClass.add("settings-category-button")
+            setOnAction {
+                isSelected = true
+                onShow()
+            }
+        }
+    }
 
+    private fun showCategory(node: javafx.scene.Node) {
+        detailContainer.children.setAll(node)
+    }
+
+    private fun scrollOf(box: VBox): ScrollPane {
+        return ScrollPane(box).apply {
+            isFitToWidth = true
+            isPannable = true
+            style = "-fx-background: $WINDOW_BACKGROUND_COLOUR; -fx-background-color: $WINDOW_BACKGROUND_COLOUR;"
+        }
+    }
+
+    private fun wrapNode(node: javafx.scene.Node): ScrollPane {
+        return ScrollPane(node).apply {
+            isFitToWidth = true
+            isFitToHeight = true
+            isPannable = true
+            style = "-fx-background: $WINDOW_BACKGROUND_COLOUR; -fx-background-color: $WINDOW_BACKGROUND_COLOUR;"
+        }
+    }
+
+    private fun buildGeneralPane(appInfo: ApplicationInfo): ScrollPane {
+        val box = VBox(4.0).apply {
+            padding = Insets(0.0, 20.0, 20.0, 20.0)
+
+            addTitleLabel("Voice recognition engine:")
+            addComboBox(
+                items = VoiceRecognitionEngine.entries,
+                selectedItem = appInfo.voiceRecognitionEngine,
+                toStringFn = { it.title },
+                onSelected = { engine -> saveAppInfo(getAppInfo().copy(voiceRecognitionEngine = engine)) }
+            )
+
+            addTitleLabel("Audio device for voice recognition:")
+            val devices: List<Mixer.Info> = audioChunker.getAvailableInputDevices()
+            if (devices.isEmpty()) {
+                addLabel("Not found")
+            } else {
+                val lastSelected = devices.firstOrNull { appInfo.lastSelectedDevice == it.name }
+                if (lastSelected == null) {
+                    saveAppInfo(getAppInfo().copy(lastSelectedDevice = devices.first().name))
+                }
+                addComboBox(
+                    items = devices,
+                    selectedItem = lastSelected ?: devices.first(),
+                    toStringFn = { mixerInfo -> mixerInfo.name },
+                    onSelected = { mixerInfo -> saveAppInfo(getAppInfo().copy(lastSelectedDevice = mixerInfo.name)) }
+                )
+            }
+
+            addTitleLabel("Question language")
+            addTextFieldWithSaveButton(
+                fieldText = appInfo.questionLanguage,
+                buttonTitle = "Save",
+                buttonColor = COLOUR_GREEN,
+                onClicked = { result -> saveAppInfo(getAppInfo().copy(questionLanguage = result)) }
+            )
+        }
+        return scrollOf(box)
+    }
+
+    private fun buildLlmPane(appInfo: ApplicationInfo): ScrollPane {
+        val box = VBox(4.0).apply {
+            padding = Insets(0.0, 20.0, 20.0, 20.0)
+
+            addTitleLabel("AI model:")
+            val models = getModelsList()
+            addComboBox(
+                items = models,
+                selectedItem = models.firstOrNull { it.id == appInfo.selectedModel.id } ?: appInfo.selectedModel,
+                toStringFn = { it.description ?: "" },
+                onSelected = {
+                    saveAppInfo(getAppInfo().copy(selectedModel = it))
+                    applyModelStreamingVisibility(it)
+                }
+            )
+
+            streamingResponseBox = VBox(4.0).apply {
+                addCheckBox(
+                    text = "Use streaming response (show translation as it is generated)",
+                    checked = appInfo.useStreamingResponse,
+                    onToggle = { checked -> saveAppInfo(getAppInfo().copy(useStreamingResponse = checked)) },
+                )
+            }.also { children.add(it) }
+
+            addTitleLabel("Google Cloud API key:")
+            addTextFieldWithCopyPasteActionButtons(
+                fieldText = appInfo.googleCloudToken,
+                onClicked = { saveAppInfo(getAppInfo().copy(googleCloudToken = it)) }
+            )
+            addButton(title = "Get Google API key", buttonColor = COLOUR_BLUE, onClicked = { openUrl("https://aistudio.google.com/apikey") })
+
+            addTitleLabel("OpenAI API key:")
+            addTextFieldWithCopyPasteActionButtons(
+                fieldText = appInfo.openAiToken,
+                onClicked = { saveAppInfo(getAppInfo().copy(openAiToken = it)) }
+            )
+            addButton(title = "Get OpenAI API key", buttonColor = COLOUR_BLUE, onClicked = { openUrl("https://platform.openai.com/api-keys") })
+
+            addTitleLabel("Claude (Anthropic) API key:")
+            addTextFieldWithCopyPasteActionButtons(
+                fieldText = appInfo.claudeToken,
+                onClicked = { saveAppInfo(getAppInfo().copy(claudeToken = it)) }
+            )
+            addButton(title = "Get Claude API key", buttonColor = COLOUR_BLUE, onClicked = { openUrl("https://console.anthropic.com/settings/keys") })
+        }
+        return scrollOf(box)
+    }
+
+    private fun VBox.addWhisperModelControls(appInfo: ApplicationInfo) {
+        addTitleLabel("Whisper model download:")
+        addButton(title = "Download Whisper model", buttonColor = COLOUR_BLUE, onClicked = { openUrl("https://huggingface.co/Systran") })
+
+        addTitleLabel("Whisper model folder:")
         addTextFieldWithSaveButton(
-            fieldText = appInfo.questionLanguage,
-            buttonTitle = "Save",
-            buttonColor = COLOUR_GREEN,
-            onClicked = { result ->
-                saveAppInfo(
-                    getAppInfo().copy(questionLanguage = result)
-                )
-            }
-        )
-
-        addTitleLabel("Silence threshold percents for Whisper")
-
-        silenceThresholdPercentsTextInput = addTextFieldWithSaveButton(
-            fieldText = appInfo.whisperModelConfig.silenceThresholdPercents.toString(),
-            buttonTitle = "Save",
-            buttonColor = COLOUR_GREEN,
-            onClicked = { raw ->
-                val result = raw.toIntOrNull()
-                if (result == null) {
-                    ownerStage?.showAlert(alertTitle = "Error", alertContent = "Can not get number")
-                    return@addTextFieldWithSaveButton
-                }
-                val current = getAppInfo()
-                saveAppInfo(
-                    current.copy(
-                        whisperModelConfig = current.whisperModelConfig.copy(
-                            silenceThresholdPercents = result
-                        )
-                    )
-                )
-            }
-        )
-
-        addTitleLabel("Max silence milliseconds for Whisper")
-
-        maxSilenceMillisecondsTextInput = addTextFieldWithSaveButton(
-            fieldText = appInfo.whisperModelConfig.maxSilenceMilliseconds.toString(),
-            buttonTitle = "Save",
-            buttonColor = COLOUR_GREEN,
-            onClicked = { raw ->
-                val result = raw.toLongOrNull()
-                if (result == null) {
-                    ownerStage?.showAlert(alertTitle = "Error", alertContent = "Can not get number")
-                    return@addTextFieldWithSaveButton
-                }
-                val current = getAppInfo()
-                saveAppInfo(
-                    current.copy(
-                        whisperModelConfig = current.whisperModelConfig.copy(
-                            maxSilenceMilliseconds = result
-                        )
-                    )
-                )
-            }
-        )
-
-        addTitleLabel("Max chunk duration milliseconds for Whisper")
-
-        maxChunkDurationMillisecondsTextInput = addTextFieldWithSaveButton(
-            fieldText = appInfo.whisperModelConfig.maxChunkDurationMilliseconds.toString(),
-            buttonTitle = "Save",
-            buttonColor = COLOUR_GREEN,
-            onClicked = { raw ->
-                val result = raw.toLongOrNull()
-                if (result == null) {
-                    ownerStage?.showAlert(alertTitle = "Error", alertContent = "Can not get number")
-                    return@addTextFieldWithSaveButton
-                }
-                val current = getAppInfo()
-                saveAppInfo(
-                    current.copy(
-                        whisperModelConfig = current.whisperModelConfig.copy(
-                            maxChunkDurationMilliseconds = result
-                        )
-                    )
-                )
-            }
-        )
-
-        batchOnlySettingsBox = VBox(4.0).apply {
-            addTitleLabel("Max concurrent Whisper processes (oldest is killed when exceeded)")
-            maxConcurrentWhisperProcessesTextInput = addTextFieldWithSaveButton(
-                fieldText = appInfo.whisperModelConfig.maxConcurrentProcesses.toString(),
-                buttonTitle = "Save",
-                buttonColor = COLOUR_GREEN,
-                onClicked = { raw ->
-                    val result = raw.toIntOrNull()
-                    if (result == null || result < 1) {
-                        ownerStage?.showAlert(alertTitle = "Error", alertContent = "Must be an integer >= 1")
-                        return@addTextFieldWithSaveButton
-                    }
-                    val current = getAppInfo()
-                    saveAppInfo(
-                        current.copy(
-                            whisperModelConfig = current.whisperModelConfig.copy(
-                                maxConcurrentProcesses = result
-                            )
-                        )
-                    )
-                }
-            )
-        }.also { children.add(it) }
-
-        streamingOnlySettingsBox = VBox(4.0).apply {
-            addTitleLabel("Streaming step, ms (how often partial results are produced)")
-            streamingStepTextInput = addTextFieldWithSaveButton(
-                fieldText = appInfo.whisperModelConfig.streamingStepMilliseconds.toString(),
-                buttonTitle = "Save",
-                buttonColor = COLOUR_GREEN,
-                onClicked = { raw ->
-                    val result = raw.toLongOrNull()
-                    if (result == null || result < 100) {
-                        ownerStage?.showAlert(alertTitle = "Error", alertContent = "Must be an integer >= 100")
-                        return@addTextFieldWithSaveButton
-                    }
-                    val current = getAppInfo()
-                    saveAppInfo(
-                        current.copy(
-                            whisperModelConfig = current.whisperModelConfig.copy(
-                                streamingStepMilliseconds = result
-                            )
-                        )
-                    )
-                }
-            )
-
-            addTitleLabel("Min characters per phrase (groups shorter sentences before translating)")
-            streamingMinCharsTextInput = addTextFieldWithSaveButton(
-                fieldText = appInfo.whisperModelConfig.streamingMinChars.toString(),
-                buttonTitle = "Save",
-                buttonColor = COLOUR_GREEN,
-                onClicked = { raw ->
-                    val result = raw.toIntOrNull()
-                    if (result == null || result < 1) {
-                        ownerStage?.showAlert(alertTitle = "Error", alertContent = "Must be an integer >= 1")
-                        return@addTextFieldWithSaveButton
-                    }
-                    val current = getAppInfo()
-                    saveAppInfo(
-                        current.copy(
-                            whisperModelConfig = current.whisperModelConfig.copy(
-                                streamingMinChars = result
-                            )
-                        )
-                    )
-                }
-            )
-        }.also { children.add(it) }
-
-        applyEngineVisibility(appInfo.voiceRecognitionEngine)
-
-        addTitleLabel("Whisper voice recognition model download:")
-
-        addButton(
-            title = "Download Whisper model",
-            buttonColor = COLOUR_BLUE,
-            onClicked = {
-                if (Desktop.isDesktopSupported()) {
-                    Desktop.getDesktop().browse(URI("https://huggingface.co/Systran"))
-                } else {
-                    log.warn("Desktop is not supported")
-                }
-            }
-        )
-
-        addTitleLabel("Whisper voice recognition model folder:")
-
-        whisperModelPathTextInput = addTextFieldWithSaveButton(
             fieldText = appInfo.whisperModelPath,
             buttonTitle = "Select folder with model files",
             buttonColor = COLOUR_GREEN,
@@ -320,90 +249,149 @@ class SettingsTab(
                     log.error("Select model folder but selected directory is null")
                     return@addTextFieldWithSaveButton
                 }
-                saveAppInfo(
-                    getAppInfo().copy(
-                        whisperModelPath = selectedDirectory.absolutePath
-                    )
-                )
+                saveAppInfo(getAppInfo().copy(whisperModelPath = selectedDirectory.absolutePath))
             }
         )
+    }
 
-        addTitleLabel("Google Cloud API key:")
-
-        googleCloudTokenTextInput = addTextFieldWithCopyPasteActionButtons(
-            fieldText = appInfo.googleCloudToken,
-            onClicked = {
-                saveAppInfo(getAppInfo().copy(googleCloudToken = it))
-            }
-        )
-
-        addButton(
-            title = "Get Google API key",
-            buttonColor = COLOUR_BLUE,
-            onClicked = {
-                if (Desktop.isDesktopSupported()) {
-                    Desktop.getDesktop().browse(URI("https://aistudio.google.com/apikey"))
-                } else {
-                    log.warn("Desktop is not supported")
+    private fun VBox.addIntField(title: String, value: Int, min: Int, save: (Int) -> Unit) {
+        addTitleLabel(title)
+        addTextFieldWithSaveButton(
+            fieldText = value.toString(),
+            buttonTitle = "Save",
+            buttonColor = COLOUR_GREEN,
+            onClicked = { raw ->
+                val result = raw.toIntOrNull()
+                if (result == null || result < min) {
+                    ownerStage?.showAlert(alertTitle = "Error", alertContent = "Must be an integer >= $min")
+                    return@addTextFieldWithSaveButton
                 }
+                save(result)
             }
         )
+    }
 
-        addTitleLabel("OpenAI API key:")
-
-        openAiTokenTextInput = addTextFieldWithCopyPasteActionButtons(
-            fieldText = appInfo.openAiToken,
-            onClicked = {
-                saveAppInfo(getAppInfo().copy(openAiToken = it))
-            }
-        )
-
-        addButton(
-            title = "Get OpenAI API key",
-            buttonColor = COLOUR_BLUE,
-            onClicked = {
-                if (Desktop.isDesktopSupported()) {
-                    Desktop.getDesktop().browse(URI("https://platform.openai.com/api-keys"))
-                } else {
-                    log.warn("Desktop is not supported")
+    private fun VBox.addLongField(title: String, value: Long, min: Long, save: (Long) -> Unit) {
+        addTitleLabel(title)
+        addTextFieldWithSaveButton(
+            fieldText = value.toString(),
+            buttonTitle = "Save",
+            buttonColor = COLOUR_GREEN,
+            onClicked = { raw ->
+                val result = raw.toLongOrNull()
+                if (result == null || result < min) {
+                    ownerStage?.showAlert(alertTitle = "Error", alertContent = "Must be an integer >= $min")
+                    return@addTextFieldWithSaveButton
                 }
+                save(result)
             }
         )
+    }
 
-        addTitleLabel("Claude (Anthropic) API key:")
-
-        claudeTokenTextInput = addTextFieldWithCopyPasteActionButtons(
-            fieldText = appInfo.claudeToken,
-            onClicked = {
-                saveAppInfo(getAppInfo().copy(claudeToken = it))
+    private fun buildWhisperBatchPane(appInfo: ApplicationInfo): ScrollPane {
+        val box = VBox(4.0).apply {
+            padding = Insets(0.0, 20.0, 20.0, 20.0)
+            addWhisperModelControls(appInfo)
+            addIntField("Silence threshold percents", appInfo.whisperModelConfig.silenceThresholdPercents, 0) { v ->
+                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(silenceThresholdPercents = v)))
             }
-        )
+            addLongField("Max silence milliseconds (end of phrase)", appInfo.whisperModelConfig.maxSilenceMilliseconds, 1) { v ->
+                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(maxSilenceMilliseconds = v)))
+            }
+            addLongField("Max chunk duration milliseconds (force cut)", appInfo.whisperModelConfig.maxChunkDurationMilliseconds, 1) { v ->
+                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(maxChunkDurationMilliseconds = v)))
+            }
+            addIntField("Max concurrent Whisper processes (oldest killed when exceeded)", appInfo.whisperModelConfig.maxConcurrentProcesses, 1) { v ->
+                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(maxConcurrentProcesses = v)))
+            }
+        }
+        return scrollOf(box)
+    }
 
-        addButton(
-            title = "Get Claude API key",
-            buttonColor = COLOUR_BLUE,
-            onClicked = {
-                if (Desktop.isDesktopSupported()) {
-                    Desktop.getDesktop().browse(URI("https://console.anthropic.com/settings/keys"))
-                } else {
-                    log.warn("Desktop is not supported")
+    private fun buildWhisperStreamingPane(appInfo: ApplicationInfo): ScrollPane {
+        val box = VBox(4.0).apply {
+            padding = Insets(0.0, 20.0, 20.0, 20.0)
+            addWhisperModelControls(appInfo)
+            addIntField("Silence threshold percents", appInfo.whisperModelConfig.silenceThresholdPercents, 0) { v ->
+                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(silenceThresholdPercents = v)))
+            }
+            addLongField("Max silence milliseconds (flush trailing phrase)", appInfo.whisperModelConfig.maxSilenceMilliseconds, 1) { v ->
+                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(maxSilenceMilliseconds = v)))
+            }
+            addLongField("Max utterance milliseconds (safety force-finalize)", appInfo.whisperModelConfig.maxChunkDurationMilliseconds, 1) { v ->
+                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(maxChunkDurationMilliseconds = v)))
+            }
+            addLongField("Streaming step, ms (how often partial results are produced)", appInfo.whisperModelConfig.streamingStepMilliseconds, 100) { v ->
+                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(streamingStepMilliseconds = v)))
+            }
+            addIntField("Min characters per phrase (groups shorter sentences)", appInfo.whisperModelConfig.streamingMinChars, 1) { v ->
+                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(streamingMinChars = v)))
+            }
+        }
+        return scrollOf(box)
+    }
+
+    private fun buildSherpaPane(appInfo: ApplicationInfo): ScrollPane {
+        val box = VBox(4.0).apply {
+            padding = Insets(0.0, 20.0, 20.0, 20.0)
+
+            addTitleLabel("Sherpa-ONNX streaming model folder (encoder/decoder/joiner .onnx + tokens.txt):")
+            addTextFieldWithSaveButton(
+                fieldText = appInfo.sherpaModelPath,
+                buttonTitle = "Select folder with sherpa model files",
+                buttonColor = COLOUR_GREEN,
+                onClicked = {
+                    val selectedDirectory = ownerStage?.chooseDirectory(title = "Select Folder")
+                    if (selectedDirectory == null) {
+                        log.error("Select sherpa model folder but selected directory is null")
+                        return@addTextFieldWithSaveButton
+                    }
+                    saveAppInfo(getAppInfo().copy(sherpaModelPath = selectedDirectory.absolutePath))
                 }
-            }
-        )
+            )
+            addButton(
+                title = "Download sherpa-onnx streaming models",
+                buttonColor = COLOUR_BLUE,
+                onClicked = { openUrl("https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models") }
+            )
 
-        mainThreadScope.launch {
-            preferencesRepository.appInfoFlow.collect { appInfo ->
-                googleCloudTokenTextInput?.text = appInfo.googleCloudToken
-                openAiTokenTextInput?.text = appInfo.openAiToken
-                claudeTokenTextInput?.text = appInfo.claudeToken
-                whisperModelPathTextInput?.text = appInfo.whisperModelPath
-                silenceThresholdPercentsTextInput?.text = appInfo.whisperModelConfig.silenceThresholdPercents.toString()
-                maxSilenceMillisecondsTextInput?.text = appInfo.whisperModelConfig.maxSilenceMilliseconds.toString()
-                maxChunkDurationMillisecondsTextInput?.text = appInfo.whisperModelConfig.maxChunkDurationMilliseconds.toString()
-                maxConcurrentWhisperProcessesTextInput?.text = appInfo.whisperModelConfig.maxConcurrentProcesses.toString()
-                streamingStepTextInput?.text = appInfo.whisperModelConfig.streamingStepMilliseconds.toString()
-                streamingMinCharsTextInput?.text = appInfo.whisperModelConfig.streamingMinChars.toString()
+            addTitleLabel("Decoding method:")
+            addComboBox(
+                items = DECODING_METHODS,
+                selectedItem = appInfo.sherpaConfig.decodingMethod.takeIf { it in DECODING_METHODS } ?: DECODING_METHODS.first(),
+                toStringFn = { it },
+                onSelected = { method ->
+                    val c = getAppInfo()
+                    saveAppInfo(c.copy(sherpaConfig = c.sherpaConfig.copy(decodingMethod = method)))
+                }
+            )
+
+            addIntField("Threads (numThreads)", appInfo.sherpaConfig.numThreads, 1) { v ->
+                val c = getAppInfo(); saveAppInfo(c.copy(sherpaConfig = c.sherpaConfig.copy(numThreads = v)))
             }
+            addIntField("Max active paths (for modified_beam_search)", appInfo.sherpaConfig.maxActivePaths, 1) { v ->
+                val c = getAppInfo(); saveAppInfo(c.copy(sherpaConfig = c.sherpaConfig.copy(maxActivePaths = v)))
+            }
+            addIntField("Max words per message (0 = split only on pause)", appInfo.sherpaConfig.splitMaxWords, 0) { v ->
+                val c = getAppInfo(); saveAppInfo(c.copy(sherpaConfig = c.sherpaConfig.copy(splitMaxWords = v)))
+            }
+        }
+        return scrollOf(box)
+    }
+
+    private fun openUrl(url: String) {
+        if (Desktop.isDesktopSupported()) {
+            Desktop.getDesktop().browse(URI(url))
+        } else {
+            log.warn("Desktop is not supported")
+        }
+    }
+
+    private fun applyModelStreamingVisibility(model: LlmModel) {
+        val supports = model.googleAiModel?.supportsStreaming == true
+        streamingResponseBox?.apply {
+            isVisible = supports
+            isManaged = supports
         }
     }
 
@@ -439,26 +427,6 @@ class SettingsTab(
                     )
                 )
             }
-        }
-    }
-
-    private fun applyEngineVisibility(engine: VoiceRecognitionEngine) {
-        val batch = engine == VoiceRecognitionEngine.WHISPER_BATCH
-        batchOnlySettingsBox?.apply {
-            isVisible = batch
-            isManaged = batch
-        }
-        streamingOnlySettingsBox?.apply {
-            isVisible = !batch
-            isManaged = !batch
-        }
-    }
-
-    private fun applyModelStreamingVisibility(model: LlmModel) {
-        val supports = model.googleAiModel?.supportsStreaming == true
-        streamingResponseBox?.apply {
-            isVisible = supports
-            isManaged = supports
         }
     }
 

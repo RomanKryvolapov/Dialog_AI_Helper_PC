@@ -82,6 +82,8 @@ val defaultApplicationInfo = ApplicationInfo(
     questionLanguage = "en",
     voiceRecognitionEngine = VoiceRecognitionEngine.WHISPER_BATCH,
     useStreamingResponse = true,
+    sherpaModelPath = "",
+    sherpaConfig = SherpaModelConfig(),
 )
 
 

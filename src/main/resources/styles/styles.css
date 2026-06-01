@@ -150,6 +150,25 @@
     -fx-background-color: #222222;
 }
 
+/* Settings sidebar category buttons */
+.settings-category-button {
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 16px;
+    -fx-background-color: #3C3C3C;
+    -fx-background-radius: 6;
+    -fx-alignment: center-left;
+    -fx-padding: 10 14 10 14;
+    -fx-cursor: hand;
+}
+
+.settings-category-button:hover {
+    -fx-background-color: #474747;
+}
+
+.settings-category-button:selected {
+    -fx-background-color: #3C71AC;
+}
+
 
 
 

@@ -21,6 +21,14 @@ interface AudioChunker {
      */
     var streamingModeEnabled: Boolean
 
+    /**
+     * Streaming sub-mode. When true, EVERY frame (including silence) is streamed via
+     * [onAudioFrame] and [onUtteranceEnd] is NOT used — for recognizers that do their own
+     * endpoint detection (sherpa-onnx). When false, frames are VAD-gated and [onUtteranceEnd]
+     * fires on silence (Whisper streaming).
+     */
+    var streamingFeedsContinuously: Boolean
+
     var onRecordStart: (() -> Unit)?
     var onRecordStop: (() -> Unit)?
     var onStopListener: (() -> Unit)?
