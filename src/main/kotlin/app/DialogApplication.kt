@@ -121,7 +121,11 @@ class DialogApplication : Application(), KoinComponent {
             prefHeight = 18.0
         }
 
-        val topRightBar = HBox(12.0, micLabel, micBar, ramLabel, ramBar).apply {
+        val ramValueLabel = Label("").apply {
+            style = overlayLabelStyle
+        }
+
+        val topRightBar = HBox(12.0, micLabel, micBar, ramLabel, ramBar, ramValueLabel).apply {
             alignment = Pos.CENTER_LEFT
             padding = Insets(18.0, 0.0, 0.0, 16.0)
             isMouseTransparent = true
@@ -133,10 +137,13 @@ class DialogApplication : Application(), KoinComponent {
         val osBean = ManagementFactory.getPlatformMXBean(OperatingSystemMXBean::class.java)
         val updateRam = {
             val total = osBean.totalMemorySize
-            val used = total - osBean.freeMemorySize
+            val free = osBean.freeMemorySize
+            val used = total - free
             if (total > 0) {
                 ramBar.progress = used.toDouble() / total.toDouble()
             }
+            val gb = 1024.0 * 1024.0 * 1024.0
+            ramValueLabel.text = String.format("%.1f / %.1f GB", free / gb, total / gb)
         }
         updateRam()
         Timeline(KeyFrame(FxDuration.seconds(2.0), { updateRam() })).apply {

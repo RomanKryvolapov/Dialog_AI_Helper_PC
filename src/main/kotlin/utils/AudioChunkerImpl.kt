@@ -49,6 +49,12 @@ class AudioChunkerImpl(
     override var onRecordStop: (() -> Unit)? = null
     override var onResultListener: ((wavFile: File) -> Unit)? = null
 
+    override var streamingModeEnabled: Boolean = false
+
+    override var onAudioFrame: ((pcm: ByteArray) -> Unit)? = null
+    override var onUtteranceStart: (() -> Unit)? = null
+    override var onUtteranceEnd: (() -> Unit)? = null
+
     @Volatile
     private var silenceThresholdPercents = defaultApplicationInfo.whisperModelConfig.silenceThresholdPercents
 
@@ -109,6 +115,7 @@ class AudioChunkerImpl(
 
                     if (!chunkProcessingEnabled) {
                         if (isRecording) {
+                            if (streamingModeEnabled) onUtteranceEnd?.invoke()
                             currentChunk.clear()
                             isRecording = false
                             recordingStartTime = null
@@ -123,10 +130,18 @@ class AudioChunkerImpl(
                         onRecordStart?.invoke()
                         isRecording = true
                         recordingStartTime = currentTime
-                        currentChunk.add(buffer.copyOf())
                         lastSoundTime = currentTime
+                        if (streamingModeEnabled) {
+                            onAudioFrame?.invoke(buffer.copyOf())
+                        } else {
+                            currentChunk.add(buffer.copyOf())
+                        }
                     } else if (isRecording) {
-                        currentChunk.add(buffer.copyOf())
+                        if (streamingModeEnabled) {
+                            onAudioFrame?.invoke(buffer.copyOf())
+                        } else {
+                            currentChunk.add(buffer.copyOf())
+                        }
 
                         if (amplitude > silenceThresholdPercents) {
                             lastSoundTime = currentTime
@@ -138,7 +153,16 @@ class AudioChunkerImpl(
                         val shouldStopDueToSilence = silenceDuration > maxSilenceMilliseconds
                         val shouldStopDueToMaxDuration = recordingDuration >= maxChunkDurationMilliseconds
 
-                        if (shouldStopDueToSilence || shouldStopDueToMaxDuration) {
+                        if (streamingModeEnabled) {
+                            // Streaming: Whisper (Python side) segments by sentence and bounds the
+                            // buffer itself, so we only flush the trailing phrase on a real pause.
+                            if (shouldStopDueToSilence) {
+                                onUtteranceEnd?.invoke()
+                                isRecording = false
+                                recordingStartTime = null
+                                onRecordStop?.invoke()
+                            }
+                        } else if (shouldStopDueToSilence || shouldStopDueToMaxDuration) {
                             if (recordingDuration >= MIN_CHUNK_DURATION_MILLISECONDS) {
                                 val chunkFile = File("cache/chunk_$chunkIndex.wav")
                                 chunkIndex++

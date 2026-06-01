@@ -23,6 +23,8 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                 whisperModelPath = whisperModelPath ?: defaultApplicationInfo.whisperModelPath,
                 whisperModelConfig = whisperModelConfig ?: defaultApplicationInfo.whisperModelConfig,
                 questionLanguage = questionLanguage ?: defaultApplicationInfo.questionLanguage,
+                voiceRecognitionEngine = voiceRecognitionEngine ?: defaultApplicationInfo.voiceRecognitionEngine,
+                useStreamingResponse = useStreamingResponse ?: defaultApplicationInfo.useStreamingResponse,
             )
         }
     }
@@ -43,6 +45,8 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                 whisperModelPath = whisperModelPath,
                 whisperModelConfig = whisperModelConfig,
                 questionLanguage = questionLanguage,
+                voiceRecognitionEngine = voiceRecognitionEngine,
+                useStreamingResponse = useStreamingResponse,
             )
         }
     }

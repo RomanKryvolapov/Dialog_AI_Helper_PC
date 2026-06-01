@@ -33,6 +33,11 @@ import java.awt.Desktop
 import java.net.URI
 import javax.sound.sampled.Mixer
 
+import models.domain.VoiceRecognitionEngine
+
+import extensions.addCheckBox
+import javafx.scene.control.CheckBox
+
 class SettingsTab(
     private val audioChunker: AudioChunker,
     preferencesRepository: PreferencesRepository,
@@ -56,12 +61,30 @@ class SettingsTab(
     var maxSilenceMillisecondsTextInput: TextInputControl? = null
     var maxChunkDurationMillisecondsTextInput: TextInputControl? = null
     var maxConcurrentWhisperProcessesTextInput: TextInputControl? = null
+    var streamingStepTextInput: TextInputControl? = null
+    var streamingMinCharsTextInput: TextInputControl? = null
+    private var batchOnlySettingsBox: VBox? = null
+    private var streamingOnlySettingsBox: VBox? = null
+    var streamingResponseCheckBox: CheckBox? = null
+    private var streamingResponseBox: VBox? = null
 
     val content: VBox = VBox(4.0).apply {
         padding = Insets(0.0, 20.0, 0.0, 20.0)
         background = Background(BackgroundFill(Color.web(WINDOW_BACKGROUND_COLOUR), null, null))
 
         val appInfo = getAppInfo()
+
+        addTitleLabel("Voice recognition engine:")
+
+        addComboBox(
+            items = VoiceRecognitionEngine.entries,
+            selectedItem = appInfo.voiceRecognitionEngine,
+            toStringFn = { it.title },
+            onSelected = { engine ->
+                saveAppInfo(getAppInfo().copy(voiceRecognitionEngine = engine))
+                applyEngineVisibility(engine)
+            }
+        )
 
         addTitleLabel("Audio device for voice recognition:")
 
@@ -96,18 +119,26 @@ class SettingsTab(
 
         addTitleLabel("AI model:")
 
+        val models = getModelsList()
         modelsBox = addComboBox(
-            items = getModelsList(),
-            selectedItem = appInfo.selectedModel,
+            items = models,
+            selectedItem = models.firstOrNull { it.id == appInfo.selectedModel.id } ?: appInfo.selectedModel,
             toStringFn = { it.description ?: "" },
             onSelected = {
-                saveAppInfo(
-                    getAppInfo().copy(
-                        selectedModel = it
-                    )
-                )
+                saveAppInfo(getAppInfo().copy(selectedModel = it))
+                applyModelStreamingVisibility(it)
             }
         )
+
+        streamingResponseBox = VBox(4.0).apply {
+            streamingResponseCheckBox = addCheckBox(
+                text = "Use streaming response (show translation as it is generated)",
+                checked = appInfo.useStreamingResponse,
+                onToggle = { checked -> saveAppInfo(getAppInfo().copy(useStreamingResponse = checked)) },
+            )
+        }.also { children.add(it) }
+
+        applyModelStreamingVisibility(appInfo.selectedModel)
 
         addTitleLabel("Question language")
 
@@ -191,28 +222,77 @@ class SettingsTab(
             }
         )
 
-        addTitleLabel("Max concurrent Whisper processes (oldest is killed when exceeded)")
-
-        maxConcurrentWhisperProcessesTextInput = addTextFieldWithSaveButton(
-            fieldText = appInfo.whisperModelConfig.maxConcurrentProcesses.toString(),
-            buttonTitle = "Save",
-            buttonColor = COLOUR_GREEN,
-            onClicked = { raw ->
-                val result = raw.toIntOrNull()
-                if (result == null || result < 1) {
-                    ownerStage?.showAlert(alertTitle = "Error", alertContent = "Must be an integer >= 1")
-                    return@addTextFieldWithSaveButton
-                }
-                val current = getAppInfo()
-                saveAppInfo(
-                    current.copy(
-                        whisperModelConfig = current.whisperModelConfig.copy(
-                            maxConcurrentProcesses = result
+        batchOnlySettingsBox = VBox(4.0).apply {
+            addTitleLabel("Max concurrent Whisper processes (oldest is killed when exceeded)")
+            maxConcurrentWhisperProcessesTextInput = addTextFieldWithSaveButton(
+                fieldText = appInfo.whisperModelConfig.maxConcurrentProcesses.toString(),
+                buttonTitle = "Save",
+                buttonColor = COLOUR_GREEN,
+                onClicked = { raw ->
+                    val result = raw.toIntOrNull()
+                    if (result == null || result < 1) {
+                        ownerStage?.showAlert(alertTitle = "Error", alertContent = "Must be an integer >= 1")
+                        return@addTextFieldWithSaveButton
+                    }
+                    val current = getAppInfo()
+                    saveAppInfo(
+                        current.copy(
+                            whisperModelConfig = current.whisperModelConfig.copy(
+                                maxConcurrentProcesses = result
+                            )
                         )
                     )
-                )
-            }
-        )
+                }
+            )
+        }.also { children.add(it) }
+
+        streamingOnlySettingsBox = VBox(4.0).apply {
+            addTitleLabel("Streaming step, ms (how often partial results are produced)")
+            streamingStepTextInput = addTextFieldWithSaveButton(
+                fieldText = appInfo.whisperModelConfig.streamingStepMilliseconds.toString(),
+                buttonTitle = "Save",
+                buttonColor = COLOUR_GREEN,
+                onClicked = { raw ->
+                    val result = raw.toLongOrNull()
+                    if (result == null || result < 100) {
+                        ownerStage?.showAlert(alertTitle = "Error", alertContent = "Must be an integer >= 100")
+                        return@addTextFieldWithSaveButton
+                    }
+                    val current = getAppInfo()
+                    saveAppInfo(
+                        current.copy(
+                            whisperModelConfig = current.whisperModelConfig.copy(
+                                streamingStepMilliseconds = result
+                            )
+                        )
+                    )
+                }
+            )
+
+            addTitleLabel("Min characters per phrase (groups shorter sentences before translating)")
+            streamingMinCharsTextInput = addTextFieldWithSaveButton(
+                fieldText = appInfo.whisperModelConfig.streamingMinChars.toString(),
+                buttonTitle = "Save",
+                buttonColor = COLOUR_GREEN,
+                onClicked = { raw ->
+                    val result = raw.toIntOrNull()
+                    if (result == null || result < 1) {
+                        ownerStage?.showAlert(alertTitle = "Error", alertContent = "Must be an integer >= 1")
+                        return@addTextFieldWithSaveButton
+                    }
+                    val current = getAppInfo()
+                    saveAppInfo(
+                        current.copy(
+                            whisperModelConfig = current.whisperModelConfig.copy(
+                                streamingMinChars = result
+                            )
+                        )
+                    )
+                }
+            )
+        }.also { children.add(it) }
+
+        applyEngineVisibility(appInfo.voiceRecognitionEngine)
 
         addTitleLabel("Whisper voice recognition model download:")
 
@@ -321,6 +401,8 @@ class SettingsTab(
                 maxSilenceMillisecondsTextInput?.text = appInfo.whisperModelConfig.maxSilenceMilliseconds.toString()
                 maxChunkDurationMillisecondsTextInput?.text = appInfo.whisperModelConfig.maxChunkDurationMilliseconds.toString()
                 maxConcurrentWhisperProcessesTextInput?.text = appInfo.whisperModelConfig.maxConcurrentProcesses.toString()
+                streamingStepTextInput?.text = appInfo.whisperModelConfig.streamingStepMilliseconds.toString()
+                streamingMinCharsTextInput?.text = appInfo.whisperModelConfig.streamingMinChars.toString()
             }
         }
     }
@@ -331,7 +413,7 @@ class SettingsTab(
                 add(
                     LlmModel(
                         id = it.type,
-                        description = it.getDescription(),
+                        description = it.title,
                         engine = LlmModelEngine.GOOGLE,
                         googleAiModel = it,
                     )
@@ -357,6 +439,26 @@ class SettingsTab(
                     )
                 )
             }
+        }
+    }
+
+    private fun applyEngineVisibility(engine: VoiceRecognitionEngine) {
+        val batch = engine == VoiceRecognitionEngine.WHISPER_BATCH
+        batchOnlySettingsBox?.apply {
+            isVisible = batch
+            isManaged = batch
+        }
+        streamingOnlySettingsBox?.apply {
+            isVisible = !batch
+            isManaged = !batch
+        }
+    }
+
+    private fun applyModelStreamingVisibility(model: LlmModel) {
+        val supports = model.googleAiModel?.supportsStreaming == true
+        streamingResponseBox?.apply {
+            isVisible = supports
+            isManaged = supports
         }
     }
 

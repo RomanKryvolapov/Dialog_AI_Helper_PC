@@ -76,8 +76,12 @@ val defaultApplicationInfo = ApplicationInfo(
         maxSilenceMilliseconds = 500L,
         maxChunkDurationMilliseconds = 5000L,
         maxConcurrentProcesses = 5,
+        streamingStepMilliseconds = 700L,
+        streamingMinChars = 20,
     ),
     questionLanguage = "en",
+    voiceRecognitionEngine = VoiceRecognitionEngine.WHISPER_BATCH,
+    useStreamingResponse = true,
 )
 
 

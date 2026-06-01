@@ -199,6 +199,23 @@ fun VBox.addButton(
     return button
 }
 
+fun VBox.addCheckBox(
+    text: String,
+    checked: Boolean,
+    onToggle: (Boolean) -> Unit
+): CheckBox {
+    val checkBox = CheckBox(text).apply {
+        isSelected = checked
+        selectedProperty().addListener { _, _, isNowSelected -> onToggle(isNowSelected) }
+    }
+    val container = HBox(checkBox).apply {
+        alignment = Pos.CENTER
+        padding = Insets(0.0, 20.0, 0.0, 20.0)
+    }
+    children.add(container)
+    return checkBox
+}
+
 fun Stage.showAlert(
     alertTitle: String,
     alertContent: String,

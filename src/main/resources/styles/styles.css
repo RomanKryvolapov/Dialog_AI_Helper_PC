@@ -139,6 +139,17 @@
     -fx-font-size: 16px;
 }
 
+/* Чекбоксы */
+.check-box {
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 18px;
+}
+
+.check-box .box {
+    -fx-padding: 4px;
+    -fx-background-color: #222222;
+}
+
 
 
 

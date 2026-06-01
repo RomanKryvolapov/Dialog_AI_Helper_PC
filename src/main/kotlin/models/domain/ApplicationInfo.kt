@@ -14,4 +14,6 @@ data class ApplicationInfo(
     val whisperModelPath: String,
     val whisperModelConfig: WhisperModelConfig,
     val questionLanguage: String,
+    val voiceRecognitionEngine: VoiceRecognitionEngine,
+    val useStreamingResponse: Boolean,
 )

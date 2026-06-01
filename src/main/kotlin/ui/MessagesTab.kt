@@ -55,8 +55,12 @@ import models.domain.ApplicationInfo
 import models.domain.LlmModel
 import utils.TranslationRateLimiter
 
+import models.domain.VoiceRecognitionEngine
+import utils.WhisperStreamingUtil
+
 class MessagesTab(
     private val whisperUtil: WhisperUtil,
+    private val whisperStreamingUtil: WhisperStreamingUtil,
     private val audioChunker: AudioChunker,
     private val cloudRepository: CloudRepository,
     private val dialogLogger: DialogLogger,
@@ -413,7 +417,7 @@ class MessagesTab(
         try {
             flow.collect { cumulative ->
                 finalText = cumulative
-                if (epoch == translationEpoch) {
+                if (epoch == translationEpoch && appInfo.useStreamingResponse) {
                     updateMessageAt(
                         index = task.index,
                         newItem = DialogItem(
@@ -483,6 +487,103 @@ class MessagesTab(
     private fun setProcessStatus(status: String) {
         labelMessagePartProcessMessage = status
         updateLabelMessage()
+    }
+
+    // ---------- Streaming Whisper recognition ----------
+
+    /** FX-thread: row currently being filled by streaming partials; -1 = none (next partial starts a new row). */
+    @Volatile
+    private var currentStreamingRow: Int = -1
+
+    private data class RecognitionConfig(
+        val engine: VoiceRecognitionEngine,
+        val modelPath: String,
+        val language: String,
+        val stepMillis: Long,
+    )
+
+    init {
+        setupStreamingListeners()
+        applyRecognitionEngine(getAppInfo())
+        backgroundThreadScope.launch {
+            preferencesRepository.appInfoFlow
+                .map {
+                    RecognitionConfig(
+                        engine = it.voiceRecognitionEngine,
+                        modelPath = it.whisperModelPath,
+                        language = it.questionLanguage,
+                        stepMillis = it.whisperModelConfig.streamingStepMilliseconds,
+                    )
+                }
+                .distinctUntilChanged()
+                .collect { applyRecognitionEngine(getAppInfo()) }
+        }
+    }
+
+    private fun setupStreamingListeners() {
+        audioChunker.onAudioFrame = { pcm ->
+            whisperStreamingUtil.feedAudio(pcm)
+        }
+        audioChunker.onUtteranceEnd = {
+            whisperStreamingUtil.flush()
+        }
+        whisperStreamingUtil.onPartialListener = { text ->
+            if (text.isNotBlank()) {
+                Platform.runLater {
+                    val wasAtBottom = isScrolledToBottom()
+                    val idx = ensureStreamingRow()
+                    messageBox.children[idx] = createMessageEntry(
+                        DialogItem(originalMessage = text, messageFromAi = "..."),
+                    )
+                    if (wasAtBottom) scrollToBottom()
+                }
+            }
+        }
+        whisperStreamingUtil.onFinalListener = { text ->
+            if (text.isNotBlank()) {
+                dialogLogger.logQuestion(text)
+                Platform.runLater {
+                    val wasAtBottom = isScrolledToBottom()
+                    val idx = ensureStreamingRow()
+                    messageBox.children[idx] = createMessageEntry(
+                        DialogItem(originalMessage = text, messageFromAi = "..."),
+                    )
+                    currentStreamingRow = -1
+                    if (wasAtBottom) scrollToBottom()
+                    processMessage(index = idx, message = text)
+                }
+            }
+        }
+    }
+
+    /** Must run on the FX thread. Returns the current streaming row, creating one if needed. */
+    private fun ensureStreamingRow(): Int {
+        if (currentStreamingRow in 0 until messageBox.children.size) return currentStreamingRow
+        currentStreamingRow = messageBox.children.size
+        messageBox.children.add(
+            createMessageEntry(DialogItem(originalMessage = "...", messageFromAi = "...")),
+        )
+        return currentStreamingRow
+    }
+
+    private fun applyRecognitionEngine(appInfo: ApplicationInfo) {
+        currentStreamingRow = -1
+        when (appInfo.voiceRecognitionEngine) {
+            VoiceRecognitionEngine.WHISPER_STREAMING -> {
+                audioChunker.streamingModeEnabled = true
+                whisperStreamingUtil.start(
+                    modelPath = appInfo.whisperModelPath,
+                    language = appInfo.questionLanguage,
+                    stepMillis = appInfo.whisperModelConfig.streamingStepMilliseconds,
+                    minChars = appInfo.whisperModelConfig.streamingMinChars,
+                    maxUtteranceMillis = appInfo.whisperModelConfig.maxChunkDurationMilliseconds,
+                )
+            }
+            VoiceRecognitionEngine.WHISPER_BATCH -> {
+                audioChunker.streamingModeEnabled = false
+                whisperStreamingUtil.stop()
+            }
+        }
     }
 
     private fun updateMessageAt(index: Int, newItem: DialogItem) {

@@ -12,6 +12,8 @@ import utils.AudioChunker
 import utils.AudioChunkerImpl
 import utils.DialogLogger
 import utils.DialogLoggerImpl
+import utils.WhisperStreamingUtil
+import utils.WhisperStreamingUtilImpl
 import utils.WhisperUtil
 import utils.WhisperUtilImpl
 import java.time.Duration
@@ -21,6 +23,7 @@ val utilsModule = module {
 
     singleOf(::AudioChunkerImpl) bind AudioChunker::class
     singleOf(::WhisperUtilImpl) bind WhisperUtil::class
+    singleOf(::WhisperStreamingUtilImpl) bind WhisperStreamingUtil::class
     singleOf(::DialogLoggerImpl) bind DialogLogger::class
 
     single<Preferences> {
