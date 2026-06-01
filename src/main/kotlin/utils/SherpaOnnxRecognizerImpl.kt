@@ -22,12 +22,15 @@ class SherpaOnnxRecognizerImpl : SherpaOnnxRecognizer {
     private var stream: OnlineStream? = null
     private var lastPartial = ""
     private var splitMaxWords = 0
+    private var maxHangMillis = 0L
+    private var utteranceStartMillis = 0L
 
     override fun isRunning(): Boolean = recognizer != null
 
-    override fun start(modelDir: String, numThreads: Int, decodingMethod: String, maxActivePaths: Int, splitMaxWords: Int) {
+    override fun start(modelDir: String, numThreads: Int, decodingMethod: String, maxActivePaths: Int, splitMaxWords: Int, maxHangMillis: Long) {
         stop()
         this.splitMaxWords = splitMaxWords
+        this.maxHangMillis = maxHangMillis
         if (modelDir.isBlank()) {
             log.error("Sherpa: model path is empty")
             return
@@ -83,8 +86,9 @@ class SherpaOnnxRecognizerImpl : SherpaOnnxRecognizer {
                 recognizer = rec
                 stream = rec.createStream()
                 lastPartial = ""
+                utteranceStartMillis = 0L
             }
-            log.debug("Sherpa started (encoder=${File(encoder).name}, threads=$numThreads, decoding=$decodingMethod, splitMaxWords=$splitMaxWords)")
+            log.debug("Sherpa started (encoder=${File(encoder).name}, threads=$numThreads, decoding=$decodingMethod, splitMaxWords=$splitMaxWords, maxHangMillis=$maxHangMillis)")
         } catch (e: Throwable) {
             log.error("Sherpa: failed to init: ${e.message}", e)
             stop()
@@ -99,12 +103,18 @@ class SherpaOnnxRecognizerImpl : SherpaOnnxRecognizer {
                 st.acceptWaveform(pcmToFloat(pcm), SAMPLE_RATE)
                 while (rec.isReady(st)) rec.decode(st)
                 val text = rec.getResult(st).text.trim()
+                if (text.isNotBlank() && utteranceStartMillis == 0L) {
+                    utteranceStartMillis = System.currentTimeMillis()
+                }
                 val wordCount = if (text.isEmpty()) 0 else text.split(WHITESPACE).size
                 val lengthSplit = splitMaxWords > 0 && wordCount >= splitMaxWords
-                if (rec.isEndpoint(st) || lengthSplit) {
+                val hangSplit = maxHangMillis > 0 && utteranceStartMillis > 0L &&
+                    System.currentTimeMillis() - utteranceStartMillis >= maxHangMillis && text.isNotBlank()
+                if (rec.isEndpoint(st) || lengthSplit || hangSplit) {
                     if (text.isNotBlank()) onFinalListener?.invoke(prettify(text))
                     rec.reset(st)
                     lastPartial = ""
+                    utteranceStartMillis = 0L
                 } else if (text.isNotBlank() && text != lastPartial) {
                     lastPartial = text
                     onPartialListener?.invoke(prettify(text))
@@ -122,6 +132,7 @@ class SherpaOnnxRecognizerImpl : SherpaOnnxRecognizer {
             stream = null
             recognizer = null
             lastPartial = ""
+            utteranceStartMillis = 0L
         }
     }
 

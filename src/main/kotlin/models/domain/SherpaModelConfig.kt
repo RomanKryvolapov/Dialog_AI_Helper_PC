@@ -5,4 +5,5 @@ data class SherpaModelConfig(
     val decodingMethod: String = "greedy_search",
     val maxActivePaths: Int = 4,
     val splitMaxWords: Int = 12,
+    val maxHangMillis: Long = 8000,
 )

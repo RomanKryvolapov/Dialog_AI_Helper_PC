@@ -638,6 +638,7 @@ class MessagesTab(
                     decodingMethod = appInfo.sherpaConfig.decodingMethod,
                     maxActivePaths = appInfo.sherpaConfig.maxActivePaths,
                     splitMaxWords = appInfo.sherpaConfig.splitMaxWords,
+                    maxHangMillis = appInfo.sherpaConfig.maxHangMillis,
                 )
             }
             VoiceRecognitionEngine.WHISPER_BATCH -> {

@@ -375,6 +375,9 @@ class SettingsTab(
             addIntField("Max words per message (0 = split only on pause)", appInfo.sherpaConfig.splitMaxWords, 0) { v ->
                 val c = getAppInfo(); saveAppInfo(c.copy(sherpaConfig = c.sherpaConfig.copy(splitMaxWords = v)))
             }
+            addLongField("Force-translate after ms (max time a phrase may hang; 0 = off)", appInfo.sherpaConfig.maxHangMillis, 0) { v ->
+                val c = getAppInfo(); saveAppInfo(c.copy(sherpaConfig = c.sherpaConfig.copy(maxHangMillis = v)))
+            }
         }
         return scrollOf(box)
     }

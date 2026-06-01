@@ -15,7 +15,7 @@ interface SherpaOnnxRecognizer {
     var onFinalListener: ((String) -> Unit)?
 
     /** Loads the streaming model from [modelDir] (encoder/decoder/joiner .onnx + tokens.txt). */
-    fun start(modelDir: String, numThreads: Int, decodingMethod: String, maxActivePaths: Int, splitMaxWords: Int)
+    fun start(modelDir: String, numThreads: Int, decodingMethod: String, maxActivePaths: Int, splitMaxWords: Int, maxHangMillis: Long)
 
     /** Feeds one PCM frame (16 kHz, 16-bit, mono). */
     fun feedAudio(pcm: ByteArray)
