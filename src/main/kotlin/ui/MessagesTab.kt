@@ -62,6 +62,7 @@ import utils.SherpaOnnxRecognizer
 
 import models.domain.SherpaModelConfig
 
+
 class MessagesTab(
     private val whisperUtil: WhisperUtil,
     private val whisperStreamingUtil: WhisperStreamingUtil,
@@ -98,6 +99,9 @@ class MessagesTab(
     private val schedulerWakeups = Channel<Unit>(Channel.CONFLATED)
     private var schedulerJob: Job? = null
     private var translationSeq = 0L
+
+    /** FX-thread: recent recognized source texts, to feed previous-sentence context to the prompt. */
+    private val recentSources = ArrayDeque<String>()
 
     /** Bumped on "Clear dialog" so in-flight results from a previous screen are ignored. */
     @Volatile
@@ -288,12 +292,17 @@ class MessagesTab(
             return
         }
         ensureSchedulerStarted()
+        // Snapshot of recent sources, most-recent first, captured BEFORE adding the current one.
+        val previousTexts = recentSources.reversed()
+        recentSources.addLast(message)
+        while (recentSources.size > 5) recentSources.removeFirst()
         val task = TranslationTask(
             seq = ++translationSeq,
             index = index,
             text = message,
             attempts = 0,
             bornAtMillis = System.currentTimeMillis(),
+            previousTexts = previousTexts,
         )
         backgroundThreadScope.launch {
             translationQueueMutex.withLock {
@@ -313,6 +322,7 @@ class MessagesTab(
         val text: String,
         var attempts: Int,
         val bornAtMillis: Long,
+        val previousTexts: List<String>,
     )
 
     private fun ensureSchedulerStarted() {
@@ -347,7 +357,7 @@ class MessagesTab(
             configureLimiterFor(appInfo.selectedModel)
 
             val prompt = PromptTemplate.from(appInfo.prompt.prompt)
-                .apply(mapOf(SOURCE_TEXT_CLEAR to task.text))
+                .apply(buildPromptVariables(appInfo.prompt.prompt, task))
             val estimatedTokens = prompt.text().length / 4 + 256
 
             val wait = rateLimiter.tryReserve(estimatedTokens)
@@ -360,6 +370,18 @@ class MessagesTab(
             }
             runTranslation(task, appInfo, prompt)
         }
+    }
+
+    /** Supplies only the placeholders the selected prompt actually contains (avoids missing/extra vars). */
+    private fun buildPromptVariables(promptText: String, task: TranslationTask): Map<String, Any> {
+        val variables = HashMap<String, Any>()
+        variables[SOURCE_TEXT_CLEAR] = task.text
+        for (i in 1..5) {
+            if (promptText.contains("{{previous_text_$i}}")) {
+                variables["previous_text_$i"] = task.previousTexts.getOrNull(i - 1).orEmpty()
+            }
+        }
+        return variables
     }
 
     private suspend fun takeNewestTask(): TranslationTask {

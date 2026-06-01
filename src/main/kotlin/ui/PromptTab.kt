@@ -51,6 +51,7 @@ class PromptTab(
             onSelected = { prompt ->
                 selected = prompt
                 promptTextInput?.text = prompt.prompt
+                saveAppInfo(getAppInfo().copy(prompt = prompt))
             }
         )
 
@@ -64,7 +65,7 @@ class PromptTab(
             onClicked = {
                 val selected = selected ?: return@addTextFieldWithCopyPasteActionButtons
                 saveAppInfo(
-                    appInfo.copy(
+                    getAppInfo().copy(
                         prompt = selected.copy(
                             prompt = it
                         ),

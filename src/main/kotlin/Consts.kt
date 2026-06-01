@@ -8,38 +8,100 @@ const val COLOUR_BLUE = "#3C71AC"
 const val COLOUR_RED = "#8C3C3C"
 
 const val SOURCE_TEXT = "{{source_text}}"
-
 const val SOURCE_TEXT_CLEAR = "source_text"
 
-val PROMPT_TRANSLATE_TEXT = """
-Role:
+/**
+ * When true, the built-in prompts below overwrite the saved prompts in preferences on startup
+ * (dev mode: code is the source of truth). Set to false to keep prompts edited in the Prompts tab.
+ */
+const val OVERWRITE_PROMPTS_FROM_CODE = true
 
-You are a professional text translator.
+private fun translateWithContextPrompt(previousCount: Int): String {
+    val contextBlocks = (previousCount downTo 1).joinToString("\n\n") { i ->
+        "<context lang=\"en\" order=\"$i-ago\">\n{{previous_text_$i}}\n</context>"
+    }
+    return """
+<role>
+You are a professional simultaneous English-to-Russian translator working on live, spoken dialogue.
+</role>
 
-Task:
-Translate "Text to translate" from English to Russian.
+<task>
+<context> holds the immediately preceding fragments of the SAME ongoing speech (oldest first); <source> is the current fragment. The speech is split into chunks, so <source> is very likely a DIRECT CONTINUATION of <context> and may begin and/or end mid-sentence.
+1. Read <context> and <source> together to establish the overall subject/domain and where the current sentence began.
+2. Translate ONLY <source> into natural Russian, as a seamless continuation of what was already said. Do not re-translate or repeat <context>.
+</task>
 
-Rules:
-The text is a result of voice recognition, so some words may not be recognized correctly.
-Try to understand what exactly was meant.
-If a word is not related to the context, try to find a more appropriate word, or a word that is related to the context and sounds similar in the source language, or ignore this word.
-Do not try to translate literally, as this is a dialogue and some phrases may not have meaning, translate the essence of what was said.
-Don't write an explanation, just a translation.
+<rules>
+- The input is from automatic speech recognition and may contain misrecognized, merged or missing words. Use the established subject and the sentence already begun in <context> to recover the intended meaning; prefer a similar-sounding word that fits the subject, or drop noise.
+- <source> may start mid-phrase: translate it as the grammatical continuation of <context>, not as a standalone sentence.
+- This is spoken dialogue: translate the meaning, not word for word; keep it natural and idiomatic.
+- Preserve numbers, units, measurements and proper names.
+</rules>
 
-Output:
-- Translated text only
+<output>
+Output ONLY the Russian translation of <source> (the continuation) — no quotes, no <context>, no notes, no explanations.
+</output>
 
-Input:
-- "Text to translate":
+$contextBlocks
+
+<source lang="en">
 $SOURCE_TEXT
+</source>
+""".trimIndent()
+}
+
+val PROMPT_TRANSLATE_TEXT = """
+<role>
+You are a professional simultaneous English-to-Russian translator working on live, spoken dialogue.
+</role>
+
+<task>
+Translate the English text inside <source> into natural, fluent Russian.
+</task>
+
+<rules>
+- The text comes from automatic speech recognition and may contain misrecognized, merged or missing words. Infer what was actually meant and translate that; if a word does not fit, replace it with a contextually appropriate word that sounds similar in English, or drop it.
+- This is spoken dialogue: translate the meaning, not word for word; keep it natural and idiomatic.
+- Preserve numbers, units, measurements and proper names.
+</rules>
+
+<output>
+Output ONLY the Russian translation — no quotes, no original text, no notes, no explanations.
+</output>
+
+<source lang="en">
+$SOURCE_TEXT
+</source>
 """.trimIndent()
 
+val PROMPT_TRANSLATE_TEXT_1_PREV = translateWithContextPrompt(1)
+val PROMPT_TRANSLATE_TEXT_2_PREV = translateWithContextPrompt(2)
+val PROMPT_TRANSLATE_TEXT_3_PREV = translateWithContextPrompt(3)
+val PROMPT_TRANSLATE_TEXT_4_PREV = translateWithContextPrompt(4)
+val PROMPT_TRANSLATE_TEXT_5_PREV = translateWithContextPrompt(5)
+
 val PROMPT_ANSWER_TO_QUESTIONS = """
-    You are AI assistant
-    You need to answer the question in Russian
-    If you don't know the answer or the question is not a question, write about it in Russian
-    Your answer should contain only a short and informative answer to the question, nothing extra, or the text I don't know the answer to the question
-    Question : $SOURCE_TEXT
+<role>
+You are a concise, knowledgeable assistant.
+</role>
+
+<task>
+Answer the question inside <question>, replying in Russian.
+</task>
+
+<rules>
+- Give only a short, informative answer in Russian.
+- The question comes from speech recognition and may contain errors; infer the intended question.
+- If <question> is not a question, or you do not know the answer, say so briefly in Russian.
+</rules>
+
+<output>
+Output ONLY the answer in Russian — no preamble, no restating of the question, no explanations.
+</output>
+
+<question lang="en">
+$SOURCE_TEXT
+</question>
 """.trimIndent()
 
 val defaultApplicationInfo = ApplicationInfo(
@@ -62,6 +124,26 @@ val defaultApplicationInfo = ApplicationInfo(
         "Translate text" to PromptModel(
             name = "Translate text",
             prompt = PROMPT_TRANSLATE_TEXT,
+        ),
+        "Translate text (+1 previous sentence)" to PromptModel(
+            name = "Translate text (+1 previous sentence)",
+            prompt = PROMPT_TRANSLATE_TEXT_1_PREV,
+        ),
+        "Translate text (+2 previous sentences)" to PromptModel(
+            name = "Translate text (+2 previous sentences)",
+            prompt = PROMPT_TRANSLATE_TEXT_2_PREV,
+        ),
+        "Translate text (+3 previous sentences)" to PromptModel(
+            name = "Translate text (+3 previous sentences)",
+            prompt = PROMPT_TRANSLATE_TEXT_3_PREV,
+        ),
+        "Translate text (+4 previous sentences)" to PromptModel(
+            name = "Translate text (+4 previous sentences)",
+            prompt = PROMPT_TRANSLATE_TEXT_4_PREV,
+        ),
+        "Translate text (+5 previous sentences)" to PromptModel(
+            name = "Translate text (+5 previous sentences)",
+            prompt = PROMPT_TRANSLATE_TEXT_5_PREV,
         ),
         "Answer the question" to PromptModel(
             name = "Answer the question",

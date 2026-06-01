@@ -1,6 +1,8 @@
 package app
 
+import OVERWRITE_PROMPTS_FROM_CODE
 import PROMPT_TRANSLATE_TEXT
+import defaultApplicationInfo
 import com.sun.management.OperatingSystemMXBean
 import di.allModules
 import javafx.animation.KeyFrame
@@ -57,6 +59,17 @@ class DialogApplication : Application(), KoinComponent {
 
         ownerStage = primaryStage
         primaryStage.isMaximized = true
+
+        if (OVERWRITE_PROMPTS_FROM_CODE) {
+            val current = preferencesRepository.getAppInfo()
+            val codePrompts = defaultApplicationInfo.promptsMap
+            preferencesRepository.saveAppInfo(
+                current.copy(
+                    promptsMap = codePrompts,
+                    prompt = codePrompts[current.prompt.name] ?: defaultApplicationInfo.prompt,
+                )
+            )
+        }
 
         val appInfo = preferencesRepository.getAppInfo()
 
