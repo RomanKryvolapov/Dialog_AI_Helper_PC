@@ -25,40 +25,51 @@ Standard tools (`Read`, `Edit`, `Grep`, `Glob`, `Bash`) are only allowed for:
 
 | Area | Choice |
 |------|--------|
-| Language | Kotlin 2.2.20 on JVM 24 |
+| Language | Kotlin 2.3.20 on JVM 24 |
 | Build | Gradle (`build.gradle` Groovy DSL, `application` plugin) |
-| UI | JavaFX 26-ea (Stage/Scene/TabPane, CSS from `src/main/resources/styles/`) |
-| DI | Koin 4.1.1 |
-| HTTP | Ktor client 3.3.0 (CIO engine, content-negotiation, logging) |
-| JSON | Moshi 1.15.2 + kotlinx.serialization 1.9.0 |
-| LLM clients | langchain4j 1.4.0 (Google Gemini, OpenAI-compatible, Ollama) |
-| Voice recognition | Vosk 0.3.45 (primary, in-process); Whisper (faster-whisper via Python subprocess) |
-| TTS | XTTS and Chatterbox (via Python subprocesses) |
-| Logging | Logback 1.5.13 + SLF4J |
-| Python utils | `python/` scripts invoked as subprocesses from Kotlin (see `python/requirements.txt`) |
+| UI | JavaFX 26 (Stage/Scene/TabPane, CSS from `src/main/resources/styles/`) |
+| DI | Koin 4.2.1 |
+| HTTP | Ktor client 3.4.2 (CIO engine, content-negotiation, logging) |
+| JSON | Moshi 1.15.2 + kotlinx.serialization 1.11.0 |
+| LLM clients | langchain4j 1.13.0 — Google Gemini/Gemma, OpenAI, Anthropic Claude (all streaming) |
+| Voice recognition | Three selectable engines (`VoiceRecognitionEngine`): **Whisper batch** (faster-whisper one-shot subprocess), **Whisper streaming** (persistent Python `whisper_streaming_util.py`), **Sherpa-ONNX** (in-process JNI, vendored jars in `libs/`) |
+| Logging | Logback 1.5.32 + SLF4J |
+| Python utils | `python/` scripts invoked as subprocesses (see `python/requirements.txt`); separate `.venv` under `python/.venv/` |
 
 ## Module layout (`src/main/kotlin/`)
 
-- `app/` — `Main.kt` (entry point) and `DialogApplication.kt` (JavaFX `Application`, Koin bootstrap, tab wiring)
-- `ui/` — four tabs: `MessagesTab`, `PromptTab`, `SettingsTab`, `ConsoleTab` (plus `ui/base/` helpers)
+- `app/` — `Main.kt` (entry point) and `DialogApplication.kt` (JavaFX `Application`, Koin bootstrap; top tabs = **Messages** + **Settings**; overwrites prompts from code on startup when `OVERWRITE_PROMPTS_FROM_CODE`)
+- `ui/` — `MessagesTab`, `SettingsTab`, `PromptTab`, `ConsoleTab` (plus `ui/base/`). Only **Messages** and **Settings** are top-level tabs; **Settings** is a master-detail screen (left sidebar of categories: General / LLM / Whisper batch / Whisper streaming / Sherpa-ONNX / Prompts / Console) that embeds `PromptTab.content` and `ConsoleTab.content` as categories.
 - `di/` — Koin modules (`AllModules`, `RepositoryModule`, `UiModule`, `UtilsModule`, `MappersModule`)
-- `repository/` — `CloudRepository`, `LocalNetworkRepository`, `PreferencesRepository` + their `*Impl`
-- `models/` — split into `common/`, `domain/`, `network/{googleai,googletranslate,ollama,openai}`
+- `repository/` — `CloudRepository`, `PreferencesRepository` + their `*Impl`. `PreferencesRepositoryImpl` **chunks** the JSON across multiple prefs keys (`java.util.prefs` caps a single value at 8 KB; the prompts blow past it).
+- `models/` — `common/`, `domain/`, `network/…`. Key domain types: `ApplicationInfo`, `VoiceRecognitionEngine`, `GoogleAiModelsEnum` (limits + `title` + `supportsStreaming`), `WhisperModelConfig`, `SherpaModelConfig`, `PromptModel`
 - `mappers/` — `base/`, `domain/`, `network/`
-- `utils/` — `VoskVoiceRecognizer`, `WhisperUtil`, `AudioChunker`, `ChatterboxUtil`, `XttsUtil`, `Assistant`, `ChatLogger` (+ `*Impl`)
+- `utils/` — `AudioChunker`, `WhisperUtil` (batch), `WhisperStreamingUtil` (streaming), `SherpaOnnxRecognizer` (in-process), `TranslationRateLimiter`, `DialogLogger`, `ChatLogger`, `AppStatus` (+ `*Impl`)
 - `extensions/` — `CommonExtensions.kt`, `ViewExtensions.kt`
-- `Consts.kt` — colours, default prompts, default `ApplicationInfo`, coroutine scopes
+- `Consts.kt` — colours, `OVERWRITE_PROMPTS_FROM_CODE` flag, the built-in prompts (`translateWithContextPrompt` + base/answer), default `ApplicationInfo`, coroutine scopes
+- `libs/` — **vendored** sherpa-onnx desktop jars (API + win-x64 native libs), referenced by `build.gradle`
 
 ## How the app runs
 
 1. `app.MainKt.main` → `Application.launch(DialogApplication::class.java)`
 2. `DialogApplication.start`:
    - `startKoin { modules(allModules) }`
+   - If `OVERWRITE_PROMPTS_FROM_CODE` (in `Consts.kt`), overwrites the saved prompts with the built-in ones
    - Loads `ApplicationInfo` from `PreferencesRepository`
-   - Builds a `TabPane` with Messages / Prompt / Settings / Console tabs
-   - Remembers last selected tab index
-   - Initializes `VoskVoiceRecognizer` if Vosk is the selected engine and a model path is set
-3. The Messages tab drives the live loop: voice recognizer → text buffer → LLM call → displayed answer.
+   - Builds a `TabPane` with **Messages** + **Settings** tabs
+3. `MessagesTab` drives the live loop: `AudioChunker` captures mic audio → the selected recognition engine produces text → text goes through the **translation scheduler** → LLM call → streamed answer.
+
+## Voice recognition & translation pipeline
+
+The recognition engine is chosen in Settings → General (`VoiceRecognitionEngine`); `MessagesTab.applyRecognitionEngine` wires `AudioChunker` + the active recognizer (and reacts to changes via `appInfoFlow`):
+
+- `WHISPER_BATCH` (default) — `AudioChunker` VAD-segments utterances to WAV; `WhisperUtil` runs `python/whisper_util.py` (faster-whisper, one-shot subprocess per chunk).
+- `WHISPER_STREAMING` — `AudioChunker` streams PCM frames (VAD-gated) to a persistent `python/whisper_streaming_util.py`; it commits sentences by punctuation + min-chars and flushes the trailing phrase on silence. Partials shown live, finals translated.
+- `SHERPA_ONNX` — in-process JNI (`SherpaOnnxRecognizer`, jars in `libs/`, CPU). `AudioChunker` feeds **every** frame continuously (incl. silence) so sherpa's own endpointer works. A phrase is finalized by sherpa endpoint (pause) **OR** `splitMaxWords` **OR** the `maxHangMillis` timer — whichever first. Output is lowercased + capitalized (the model is all-caps); `int8` `.onnx` files are auto-picked from the model folder.
+
+**Translation scheduler** (`MessagesTab`): recognized finals become `TranslationTask`s in a newest-first queue (cap 8, TTL 40 s). A single-consumer loop honours the model's rate limits (`TranslationRateLimiter`, fed from `GoogleAiModelsEnum`), is non-preemptive, and retries transient (5xx/429) errors ≤3×. Each task carries the previous recognized sentences; the selected prompt's `{{previous_text_N}}` placeholders (1–5) are filled for context.
+
+**Prompts** (`Consts.kt`, selectable in Settings → Prompts): `Translate text`, `Translate text (+1…+5 previous sentences)` (context prompts built by `translateWithContextPrompt`), `Answer the question`. With `OVERWRITE_PROMPTS_FROM_CODE = true`, code is the source of truth (set `false` to keep edits made in the Prompts UI).
 
 ## Build and run
 
@@ -72,16 +83,16 @@ Python utilities (separate `.venv` under `python/.venv/`):
 
 ```bash
 cd python
-python whisper_util.py <audio_path> <model_dir> <language>
-python xtts_util.py <text> <speaker_wav> <output_path> <language>
-python chatterbox_util.py <text> <speaker_wav> <output_path>
+python whisper_util.py <audio_path> <model_dir> <language>                              # batch: one-shot transcribe
+python whisper_streaming_util.py <model_dir> <language> <step_ms> <min_chars> <max_ms>  # streaming: persistent, JSON over stdio
 ```
 
 ## Files and directories to ignore when navigating
 
 - `build/`, `.gradle/`, `.kotlin/`, `.idea/`, `.venv/`, `cache/`
-- `models/` (downloaded Vosk/Whisper/TTS models — very large)
-- `app.log` (runtime log)
+- `models/` (downloaded Whisper / sherpa-onnx models — very large)
+- `dialogs/` (saved dialog logs), `app.log` (runtime log)
+- `libs/` holds **vendored** sherpa-onnx jars — real build deps (referenced by `build.gradle`), not generated; don't delete.
 
 ## Working rules
 

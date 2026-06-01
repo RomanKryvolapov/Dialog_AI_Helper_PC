@@ -12,18 +12,30 @@ The application's operation consists of 2 stages:
 
 ## Voice recognition
 
-The app uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (a re-implementation of OpenAI's Whisper) for speech-to-text. The Kotlin side captures audio from the selected input device, splits it into chunks by silence detection, and spawns a Python subprocess per chunk to transcribe it.
+The recognition engine is selectable in **Settings → General**. Three engines are available:
 
-To make it work:
+| Engine | Where it runs | Notes |
+|--------|---------------|-------|
+| **Whisper batch** (default) | [faster-whisper](https://github.com/SYSTRAN/faster-whisper), one Python subprocess per chunk | Most accurate. Audio is split into chunks by silence detection and each chunk is transcribed one-shot. Needs a Whisper model + the Python `.venv`. |
+| **Whisper streaming** | faster-whisper, one persistent Python process | Lower latency: audio is streamed in and sentences are committed while you speak. Same model + `.venv` as batch. |
+| **Sherpa-ONNX** | in-process (no Python), CPU | Lowest latency, fully streaming, no subprocess. Uses a sherpa-onnx streaming model folder. |
+
+### Whisper (batch & streaming) setup
 
 1. Install the Python dependencies from `python/requirements.txt` into `python/.venv/` (CUDA-enabled PyTorch and `faster_whisper`).
 2. Download a Whisper model (for example from [Hugging Face: faster-whisper](https://huggingface.co/Systran)) and unpack it to a folder.
-3. In the **Settings** tab, set **Whisper model path** to that folder.
-4. Select an input audio device and the question language code (e.g. `en`, `ru`).
+3. In **Settings → Whisper batch** (or **Whisper streaming**), set the **Whisper model path** to that folder.
+4. In **Settings → General**, select an input audio device and the question language code (e.g. `en`, `ru`).
 
 If a CUDA-capable GPU is available, transcription runs on GPU automatically; otherwise it falls back to CPU.
 
-### Chunking parameters (Settings tab)
+### Sherpa-ONNX setup
+
+1. Download a sherpa-onnx **streaming** model (e.g. `sherpa-onnx-streaming-zipformer-en-…` from the [sherpa-onnx releases](https://github.com/k2-fsa/sherpa-onnx/releases)) and unpack it.
+2. In **Settings → Sherpa-ONNX**, set the model folder (it must contain the `encoder` / `decoder` / `joiner` `.onnx` files and `tokens.txt`).
+3. Runs on CPU in-process — no Python needed. Tune segmentation with **Max words per message** and **Force-translate after ms** (force-finalize a phrase that has been hanging too long).
+
+### Chunking parameters (Settings → Whisper batch / Whisper streaming)
 
 | Parameter | Default | What it does |
 |-----------|---------|--------------|
@@ -48,19 +60,25 @@ Paste the relevant API token into the **Settings** tab. If a model hits its limi
 
 ## Prompts
 
-Multiple named prompts are stored and can be switched between in the **Prompt** tab. Two are built in by default:
+Multiple named prompts are stored and can be switched between in **Settings → Prompts**. Built in by default:
 
-* **Translate text** — translates the recognized text from English to Russian
+* **Translate text** — translates the recognized English text to Russian
+* **Translate text (+1 … +5 previous sentences)** — same, but also feeds the model the last 1–5 recognized sentences as context, so a mid-sentence fragment is translated as a seamless continuation of the ongoing speech
 * **Answer the question** — answers a recognized question in Russian
 
-When editing a prompt, the `{{source_text}}` placeholder is replaced with the recognized text at request time.
+Placeholders replaced at request time: `{{source_text}}` (the current recognized text) and, for the context prompts, `{{previous_text_1}}` … `{{previous_text_5}}` (the preceding sentences, newest = `1`).
 
 ## Tabs
 
+There are two top-level tabs:
+
 * **Messages** — the live loop: shows recognized speech, voice-recognition status, the model's streaming answer, and a microphone toggle button
-* **Prompt** — select and edit prompts (saved in the prompts map)
-* **Settings** — input device, Whisper model path + chunking config, selected LLM model, API tokens
-* **Console** — captures `stdout` / `stderr` from the running process for debugging
+* **Settings** — a master-detail screen with a category sidebar:
+  * **General** — recognition engine, input device, question language
+  * **LLM** — selected model, streaming-response toggle, API tokens
+  * **Whisper batch** / **Whisper streaming** / **Sherpa-ONNX** — per-engine model path & tuning
+  * **Prompts** — select and edit prompts (saved in the prompts map)
+  * **Console** — captures `stdout` / `stderr` from the running process for debugging
 
 ## Use for conferences
 
