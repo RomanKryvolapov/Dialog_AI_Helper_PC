@@ -43,7 +43,7 @@ val utilsModule = module {
         JdkHttpClientBuilder()
             .httpClientBuilder(get<java.net.http.HttpClient.Builder>())
             .connectTimeout(Duration.ofSeconds(10))
-            .readTimeout(Duration.ofSeconds(90))
+            .readTimeout(Duration.ofSeconds(45))
     }
 
     single<Moshi> {

@@ -23,7 +23,7 @@ class CloudRepositoryImpl(
 
     companion object {
         private const val GOOGLE_AI_BASE_URL_LANG_CHAIN = "https://generativelanguage.googleapis.com/v1beta"
-        private val REQUEST_TIMEOUT: Duration = Duration.ofSeconds(90)
+        private val REQUEST_TIMEOUT: Duration = Duration.ofSeconds(45)
 
         private val THINKING_BLOCK_PATTERNS = listOf(
             // Generic xml-ish tags used by many providers
