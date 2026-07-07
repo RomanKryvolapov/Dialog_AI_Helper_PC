@@ -118,6 +118,7 @@ class WhisperStreamingUtilImpl(
             } catch (e: Exception) {
                 log.debug("whisper streaming exit write failed: ${e.message}")
             }
+            writer = null
         }
         readerJob?.cancel()
         readerJob = null
@@ -125,18 +126,18 @@ class WhisperStreamingUtilImpl(
             if (!proc.waitFor(500, TimeUnit.MILLISECONDS)) proc.destroyForcibly()
         }
         process = null
-        writer = null
     }
 
     private fun writeLine(json: String) {
-        val w = writer ?: return
+        if (process?.isAlive != true) return
         synchronized(writeLock) {
+            val w = writer ?: return
             try {
                 w.write(json)
                 w.newLine()
                 w.flush()
             } catch (e: Exception) {
-                log.warn("whisper streaming write failed: ${e.message}")
+                log.debug("whisper streaming write skipped (stream closing): ${e.message}")
             }
         }
     }

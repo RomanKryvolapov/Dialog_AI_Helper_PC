@@ -1,15 +1,53 @@
 {
+  "ultracode": true,
+  "model": "claude-opus-4-8",
+  "env": {
+    "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"
+  },
   "permissions": {
     "allow": [
       "Bash",
       "WebFetch",
       "Skill",
-      "mcp__serena__*"
+      "mcp__serena__*",
+      "Bash(grep:*)",
+      "mcp__acp__Edit",
+      "mcp__acp__Write",
+      "Bash(mkdir -p .claude/skills)",
+      "Bash(git mv *)",
+      "Read(.claude/skills/**)",
+      "Edit(.claude/skills/**)",
+      "Write(.claude/skills/**)"
     ],
     "defaultMode": "bypassPermissions"
   },
-  "env": {
-    "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1",
-    "CLAUDE_CODE_EFFORT_LEVEL": "max"
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/sounds/play-sound.cjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/sounds/play-sound.cjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
   }
 }
