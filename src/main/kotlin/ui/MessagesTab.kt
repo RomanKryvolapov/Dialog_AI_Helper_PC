@@ -49,7 +49,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlin.math.ceil
 import kotlinx.coroutines.withTimeoutOrNull
 import models.domain.ApplicationInfo
 import models.domain.LlmModel
@@ -83,8 +85,17 @@ class MessagesTab(
 
         private const val MAX_TRANSLATION_QUEUE = 8
         private const val MAX_TRANSLATION_ATTEMPTS = 3
-        private const val TRANSLATION_TTL_MILLIS = 40_000L
+        private const val TRANSLATION_TTL_MILLIS = 90_000L
         private const val SCHEDULER_WAIT_SLICE_MILLIS = 1_000L
+
+        // Bounded-concurrency dispatch: several translations run in parallel, but the shared
+        // rate limiter is the real guard that keeps us within the model's quota. The pool size is
+        // derived from the model's requests-per-minute (see concurrencyFor); these are just bounds.
+        private const val MIN_CONCURRENT_TRANSLATIONS = 2
+        private const val MAX_CONCURRENT_TRANSLATIONS = 8
+        private const val DEFAULT_CONCURRENT_TRANSLATIONS = 6
+        private const val ASSUMED_REQUEST_SECONDS = 6.0
+        private const val RATE_LIMIT_SAFETY_MARGIN = 0.8
     }
 
     val content: Pane
@@ -98,6 +109,13 @@ class MessagesTab(
     private val translationQueue = ArrayList<TranslationTask>()
     private val schedulerWakeups = Channel<Unit>(Channel.CONFLATED)
     private var schedulerJob: Job? = null
+
+    /** Limits how many translations run at once; replaced when the selected model's limits change. */
+    @Volatile
+    private var dispatchSemaphore = Semaphore(DEFAULT_CONCURRENT_TRANSLATIONS)
+    @Volatile
+    private var maxConcurrency = DEFAULT_CONCURRENT_TRANSLATIONS
+
     private var translationSeq = 0L
 
     /** FX-thread: recent recognized source texts, to feed previous-sentence context to the prompt. */
@@ -341,10 +359,11 @@ class MessagesTab(
     }
 
     /**
-     * Single-consumer scheduler: always picks the newest queued message, honours the selected
-     * model's rate limits before dispatching, and processes one translation at a time
-     * (non-preemptive — a running request is never cancelled to start a newer one, because
-     * cancelling does not reclaim the quota already spent on the in-flight HTTP call).
+     * Dispatcher loop: always picks the newest queued message, honours the selected model's rate
+     * limits before dispatching, and runs up to [maxConcurrency] translations in parallel. The
+     * pool size is auto-derived from the model's limits; the shared [rateLimiter] is the real guard
+     * that keeps request/token rates within quota. Each translation runs in its own coroutine so a
+     * slow or hung request never blocks the others.
      */
     private suspend fun runSchedulerLoop() {
         while (true) {
@@ -360,15 +379,26 @@ class MessagesTab(
                 .apply(buildPromptVariables(appInfo.prompt.prompt, task))
             val estimatedTokens = prompt.text().length / 4 + 256
 
+            // Bound in-flight work first, then reserve quota; both must succeed before dispatch.
+            val sem = dispatchSemaphore
+            sem.acquire()
             val wait = rateLimiter.tryReserve(estimatedTokens)
             if (wait > 0L) {
+                sem.release()
                 requeueTask(task)
                 withTimeoutOrNull(wait.coerceAtMost(SCHEDULER_WAIT_SLICE_MILLIS)) {
                     schedulerWakeups.receive()
                 }
                 continue
             }
-            runTranslation(task, appInfo, prompt)
+            backgroundThreadScope.launch {
+                try {
+                    runTranslation(task, appInfo, prompt)
+                } finally {
+                    sem.release()
+                    schedulerWakeups.trySend(Unit)
+                }
+            }
         }
     }
 
@@ -408,14 +438,30 @@ class MessagesTab(
         System.currentTimeMillis() - task.bornAtMillis > TRANSLATION_TTL_MILLIS
 
     private fun configureLimiterFor(model: LlmModel) {
-        val limits = model.googleAiModel
+        val rpm = model.limitRequestsInMinute
+        val tpm = model.limitTokensInMinute
         rateLimiter.configure(
-            rpm = limits?.limitRequestsInMinute,
-            tpm = limits?.limitTokensInMinute,
-            rpd = limits?.limitRequestsInDay,
-            tpd = limits?.limitTokensInDay,
+            rpm = rpm?.let { (it * RATE_LIMIT_SAFETY_MARGIN).toInt().coerceAtLeast(1) },
+            tpm = tpm?.let { (it * RATE_LIMIT_SAFETY_MARGIN).toInt().coerceAtLeast(1) },
+            rpd = model.limitRequestsInDay,
+            tpd = model.limitTokensInDay,
         )
+        val desired = concurrencyFor(rpm)
+        if (desired != maxConcurrency) {
+            maxConcurrency = desired
+            dispatchSemaphore = Semaphore(desired)
+        }
     }
+
+    /**
+     * Auto-derives the size of the parallel dispatch pool from the model's requests-per-minute:
+     * roughly how many requests can be in flight at once given a typical request duration, clamped
+     * to sane bounds. The rate limiter still enforces the actual RPM/TPM quota; this is only a cap.
+     */
+    private fun concurrencyFor(rpm: Int?): Int =
+        if (rpm == null) DEFAULT_CONCURRENT_TRANSLATIONS
+        else ceil(rpm * ASSUMED_REQUEST_SECONDS / 60.0).toInt()
+            .coerceIn(MIN_CONCURRENT_TRANSLATIONS, MAX_CONCURRENT_TRANSLATIONS)
 
     private suspend fun runTranslation(task: TranslationTask, appInfo: ApplicationInfo, prompt: Prompt) {
         val epoch = translationEpoch
