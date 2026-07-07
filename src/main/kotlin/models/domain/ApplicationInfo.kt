@@ -6,6 +6,7 @@ data class ApplicationInfo(
     val googleCloudToken: String,
     val openAiToken: String,
     val claudeToken: String,
+    val speechmaticsToken: String,
     val prompt: PromptModel,
     val lastOpenedTab: Int,
     val promptsMap: Map<String, PromptModel>,

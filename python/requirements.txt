@@ -1,20 +1,61 @@
-torch==2.5.1+cu121
-torchaudio==2.5.1+cu121
-faster_whisper
-transformers==4.37.2
-# TTS==0.22.0
-numpy==1.25.2
-# chatterbox-tts==0.1.4
-sounddevice
-scipy
+# Python 3.14 environment for the Whisper batch + streaming utilities.
+#
+# faster-whisper runs inference through CTranslate2. On Windows the GPU is used by loading
+# the CUDA runtime / cuBLAS / cuDNN DLLs that ship inside torch/lib; the scripts add that
+# folder to the DLL search path and fall back to CPU automatically if the GPU is unavailable.
+# torch is built for CUDA 12.8 (cu128), which supports Blackwell GPUs (RTX 50xx).
+#
+# The PyTorch CUDA wheels live on a dedicated package index:
+--extra-index-url https://download.pytorch.org/whl/cu128
 
-# pip install torch==2.5.1+cu121 torchaudio==2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121
-# pip install faster-whisper
+# --- Direct dependencies ---
+torch==2.11.0+cu128
+faster-whisper==1.2.1
+numpy==2.5.0
+sounddevice==0.5.5
+scipy==1.18.0
 
-# .\.venv\Scripts\activate
-# pip --version
-# pip list
-# pip install -r requirements.txt
+# --- Transitive dependencies (pinned for reproducible installs) ---
+annotated-doc==0.0.4
+anyio==4.14.1
+av==17.1.0
+certifi==2026.6.17
+cffi==2.0.0
+click==8.4.2
+colorama==0.4.6
+ctranslate2==4.8.0
+filelock==3.29.4
+flatbuffers==25.12.19
+fsspec==2026.6.0
+h11==0.16.0
+hf-xet==1.5.1
+httpcore==1.0.9
+httpx==0.28.1
+huggingface_hub==1.21.0
+idna==3.18
+Jinja2==3.1.6
+markdown-it-py==4.2.0
+MarkupSafe==3.0.3
+mdurl==0.1.2
+mpmath==1.3.0
+networkx==3.6.1
+onnxruntime==1.27.0
+packaging==26.2
+protobuf==7.35.1
+pycparser==3.0
+Pygments==2.20.0
+PyYAML==6.0.3
+rich==15.0.0
+setuptools==70.2.0
+shellingham==1.5.4
+sympy==1.14.0
+tokenizers==0.23.1
+tqdm==4.68.3
+typer==0.25.1
+typing_extensions==4.15.0
 
-# delete all ->
-# pip freeze | % { pip uninstall -y ($_ -split '==')[0] }
+# Recreate the environment with the latest installed Python:
+#   py -m venv .venv
+#   .\.venv\Scripts\activate
+#   python -m pip install --upgrade pip
+#   pip install -r requirements.txt

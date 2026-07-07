@@ -1,12 +1,32 @@
 import sys
 import os
-import torch
+import glob
+import sysconfig
+import traceback
 from faster_whisper import WhisperModel
+
+
+def _enable_cuda_dlls():
+    """Make CUDA DLLs discoverable so the GPU can be used on Windows.
+
+    torch ships a complete, self-consistent set of CUDA libraries (cudart/cublas/cudnn)
+    in torch/lib; we add that folder (and any standalone nvidia/* packages) to the DLL
+    search path so CTranslate2 can load them.
+    """
+    try:
+        site = sysconfig.get_paths()["purelib"]
+        candidates = [os.path.join(site, "torch", "lib")]
+        candidates += glob.glob(os.path.join(site, "nvidia", "*", "bin"))
+        for dll_dir in candidates:
+            if os.path.isdir(dll_dir):
+                os.add_dll_directory(dll_dir)
+    except Exception as e:
+        print(f"Whisper: could not register CUDA DLL dirs: {e}", file=sys.stderr)
 
 def main():
 
     if len(sys.argv) < 4:
-        print("Whisper: Arguments not found")
+        print("Whisper: arguments not found (need audio_path, model_dir, language)", file=sys.stderr)
         sys.exit(1)
 
     audio_path = sys.argv[1]
@@ -14,34 +34,36 @@ def main():
     language = sys.argv[3]
 
     if not os.path.isfile(audio_path):
-        print("Whisper: Audio file not found:")
+        print(f"Whisper: audio file not found: {audio_path}", file=sys.stderr)
         sys.exit(1)
 
     if not os.path.isdir(model_dir):
-        print("Whisper: Model directory not found:")
+        print(f"Whisper: model directory not found: {model_dir}", file=sys.stderr)
         sys.exit(1)
 
     if not language:
-        print("Whisper: Language is empty", file=sys.stderr)
+        print("Whisper: language is empty", file=sys.stderr)
         sys.exit(1)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    _enable_cuda_dlls()
 
-    try:
-        model = WhisperModel(
-            model_size_or_path=model_dir,
-            compute_type="int8",
-            device=device
-        )
-        segments, _ = model.transcribe(
-            audio_path,
-            language=language
-        )
-        text = " ".join([seg.text for seg in segments])
-        print(text)
-    except Exception as e:
-        print("Whisper: Exception ", str(e), file=sys.stderr)
+    text = None
+    last_error = None
+    for dev in ("cuda", "cpu"):
+        try:
+            model = WhisperModel(model_size_or_path=model_dir, compute_type="int8", device=dev)
+            segments, _ = model.transcribe(audio_path, language=language)
+            text = " ".join(seg.text for seg in segments)
+            break
+        except Exception as e:
+            last_error = e
+            print(f"Whisper: {dev} failed: {e}", file=sys.stderr)
+    if text is None:
+        print(f"Whisper: transcription failed on all devices: {last_error}", file=sys.stderr)
+        traceback.print_exc()
         sys.exit(1)
+
+    print(text)
 
 if __name__ == "__main__":
     main()

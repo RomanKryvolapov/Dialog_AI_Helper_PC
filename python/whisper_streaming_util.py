@@ -1,13 +1,33 @@
 import sys
 import os
+import glob
+import sysconfig
 import json
 import base64
 import threading
 import time
 
 import numpy as np
-import torch
 from faster_whisper import WhisperModel
+
+
+def _enable_cuda_dlls():
+    """Make CUDA DLLs discoverable so the GPU can be used on Windows.
+
+    torch ships a complete, self-consistent set of CUDA libraries (cudart/cublas/cudnn)
+    in torch/lib; we add that folder (and any standalone nvidia/* packages) to the DLL
+    search path so CTranslate2 can load them.
+    """
+    try:
+        site = sysconfig.get_paths()["purelib"]
+        candidates = [os.path.join(site, "torch", "lib")]
+        candidates += glob.glob(os.path.join(site, "nvidia", "*", "bin"))
+        for dll_dir in candidates:
+            if os.path.isdir(dll_dir):
+                os.add_dll_directory(dll_dir)
+    except Exception as e:
+        sys.stderr.write(f"whisper streaming: could not register CUDA DLL dirs: {e}\n")
+        sys.stderr.flush()
 
 # Streaming Whisper helper with sentence-based segmentation.
 #
@@ -51,11 +71,22 @@ def main():
         print(json.dumps({"type": "error", "text": "model dir not found"}), flush=True)
         sys.exit(1)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    try:
-        model = WhisperModel(model_size_or_path=model_dir, compute_type="int8", device=device)
-    except Exception as e:
-        print(json.dumps({"type": "error", "text": "load: " + str(e)}), flush=True)
+    _enable_cuda_dlls()
+    model = None
+    for dev in ("cuda", "cpu"):
+        try:
+            m = WhisperModel(model_size_or_path=model_dir, compute_type="int8", device=dev)
+            # Warm-up on a short silent buffer to surface missing CUDA libs before real audio arrives.
+            list(m.transcribe(np.zeros(16000, dtype=np.float32), language=language)[0])
+            model = m
+            sys.stderr.write(f"whisper streaming: using {dev}\n")
+            sys.stderr.flush()
+            break
+        except Exception as e:
+            sys.stderr.write(f"whisper streaming: {dev} unavailable: {e}\n")
+            sys.stderr.flush()
+    if model is None:
+        print(json.dumps({"type": "error", "text": "model load failed on any device (cuda, cpu)"}), flush=True)
         sys.exit(1)
 
     lock = threading.Lock()

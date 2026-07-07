@@ -115,6 +115,7 @@ val defaultApplicationInfo = ApplicationInfo(
     googleCloudToken = "",
     openAiToken = "",
     claudeToken = "",
+    speechmaticsToken = "HAhJV3sdXZ8phV8twyRVx6qZVkhdDpmo",
     prompt = PromptModel(
         name = "Translate text",
         prompt = PROMPT_TRANSLATE_TEXT,

@@ -1,7 +1,7 @@
 plugins {
     id 'application'
-    id 'org.jetbrains.kotlin.jvm' version '2.3.20'
-    id 'org.jetbrains.kotlin.plugin.serialization' version '2.3.20'
+    id 'org.jetbrains.kotlin.jvm' version '2.4.0'
+    id 'org.jetbrains.kotlin.plugin.serialization' version '2.4.0'
     id 'org.openjfx.javafxplugin' version '0.1.0'
 }
 
@@ -10,7 +10,7 @@ application {
 }
 
 javafx {
-    version = '26'
+    version = '26.0.1'
     modules = ['javafx.controls', 'javafx.base', 'javafx.graphics']
 }
 
@@ -22,15 +22,15 @@ repositories {
 }
 
 ext {
-    kotlinVersion = '2.3.20'
-    kotlinxCoroutines = '1.10.2'
-    javaFxVersion =  '26'
-    ktor_version = "3.4.2"
-    logback_version = '1.5.32'
+    kotlinVersion = '2.4.0'
+    kotlinxCoroutines = '1.11.0'
+    javaFxVersion =  '26.0.1'
+    ktor_version = "3.5.0"
+    logback_version = '1.5.35'
     kotlinx_serialization_json_version = "1.11.0"
     moshi_version = '1.15.2'
-    lc_4_j_version = '1.13.0'
-    koin_version = '4.2.1'
+    lc_4_j_version = '1.16.3'
+    koin_version = '4.2.2'
 }
 
 
@@ -45,9 +45,9 @@ dependencies {
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-javafx:$kotlinxCoroutines"
     implementation "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:$kotlinx_serialization_json_version"
 
-    implementation 'net.java.dev.jna:jna:5.18.1'
+    implementation 'net.java.dev.jna:jna:5.19.1'
 
-    implementation("org.json:json:20251224")
+    implementation("org.json:json:20260522")
 
     implementation "io.ktor:ktor-client-core:$ktor_version"
     implementation "io.ktor:ktor-client-cio:$ktor_version"
@@ -57,7 +57,7 @@ dependencies {
     implementation "ch.qos.logback:logback-classic:$logback_version"
     implementation "com.squareup.moshi:moshi:$moshi_version"
     implementation "com.squareup.moshi:moshi-kotlin:$moshi_version"
-    implementation "org.slf4j:slf4j-api:2.0.17"
+    implementation "org.slf4j:slf4j-api:2.0.18"
 
     implementation "dev.langchain4j:langchain4j:$lc_4_j_version"
     implementation "dev.langchain4j:langchain4j-open-ai:$lc_4_j_version"
@@ -75,12 +75,12 @@ dependencies {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(24)
+        languageVersion = JavaLanguageVersion.of(26)
     }
 }
 
 kotlin {
-    jvmToolchain(24)
+    jvmToolchain(26)
 }
 
 tasks.register('runMainKt', JavaExec) {

@@ -564,6 +564,7 @@ class MessagesTab(
                 VoiceRecognitionEngine.WHISPER_STREAMING -> whisperStreamingUtil.feedAudio(pcm)
                 VoiceRecognitionEngine.SHERPA_ONNX -> sherpaRecognizer.feedAudio(pcm)
                 VoiceRecognitionEngine.WHISPER_BATCH -> {}
+                VoiceRecognitionEngine.SPEECHMATICS -> {}
             }
         }
         audioChunker.onUtteranceEnd = {
@@ -640,6 +641,13 @@ class MessagesTab(
                     splitMaxWords = appInfo.sherpaConfig.splitMaxWords,
                     maxHangMillis = appInfo.sherpaConfig.maxHangMillis,
                 )
+            }
+            VoiceRecognitionEngine.SPEECHMATICS -> {
+                whisperStreamingUtil.stop()
+                sherpaRecognizer.stop()
+                audioChunker.streamingFeedsContinuously = false
+                audioChunker.streamingModeEnabled = false
+                log.warn("Speechmatics engine selected, but the realtime client is not wired yet — no transcription will occur")
             }
             VoiceRecognitionEngine.WHISPER_BATCH -> {
                 whisperStreamingUtil.stop()

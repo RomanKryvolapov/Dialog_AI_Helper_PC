@@ -96,7 +96,12 @@ class WhisperUtilImpl(
                     }
                     val exitCode = process.waitFor()
                     if (exitCode != 0) {
-                        log.warn("Whisper process exited with code $exitCode for ${wavFile.name}")
+                        val details = result.toString().trim()
+                        if (details.isNotBlank()) {
+                            log.warn("Whisper failed (exit $exitCode) for ${wavFile.name}:\n$details")
+                        } else {
+                            log.warn("Whisper failed (exit $exitCode) for ${wavFile.name} with no output")
+                        }
                     } else {
                         val text = result.toString()
                             .replace(Regex("""(\.\s*){2,}"""), "")

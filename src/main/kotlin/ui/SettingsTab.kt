@@ -230,6 +230,13 @@ class SettingsTab(
                 onClicked = { saveAppInfo(getAppInfo().copy(claudeToken = it)) }
             )
             addButton(title = "Get Claude API key", buttonColor = COLOUR_BLUE, onClicked = { openUrl("https://console.anthropic.com/settings/keys") })
+
+            addTitleLabel("Speechmatics API key:")
+            addTextFieldWithCopyPasteActionButtons(
+                fieldText = appInfo.speechmaticsToken,
+                onClicked = { saveAppInfo(getAppInfo().copy(speechmaticsToken = it)) }
+            )
+            addButton(title = "Get Speechmatics API key", buttonColor = COLOUR_BLUE, onClicked = { openUrl("https://portal.speechmatics.com/manage-access/") })
         }
         return scrollOf(box)
     }
@@ -239,7 +246,8 @@ class SettingsTab(
         addButton(title = "Download Whisper model", buttonColor = COLOUR_BLUE, onClicked = { openUrl("https://huggingface.co/Systran") })
 
         addTitleLabel("Whisper model folder:")
-        addTextFieldWithSaveButton(
+        var modelField: javafx.scene.control.TextInputControl? = null
+        modelField = addTextFieldWithSaveButton(
             fieldText = appInfo.whisperModelPath,
             buttonTitle = "Select folder with model files",
             buttonColor = COLOUR_GREEN,
@@ -249,6 +257,7 @@ class SettingsTab(
                     log.error("Select model folder but selected directory is null")
                     return@addTextFieldWithSaveButton
                 }
+                modelField?.text = selectedDirectory.absolutePath
                 saveAppInfo(getAppInfo().copy(whisperModelPath = selectedDirectory.absolutePath))
             }
         )
@@ -292,6 +301,12 @@ class SettingsTab(
         val box = VBox(4.0).apply {
             padding = Insets(0.0, 20.0, 20.0, 20.0)
             addWhisperModelControls(appInfo)
+            addTitleLabel("Python environment:")
+            addButton(
+                title = "Install / update Python packages (requirements.txt)",
+                buttonColor = COLOUR_BLUE,
+                onClicked = { installPythonPackages() }
+            )
             addIntField("Silence threshold percents", appInfo.whisperModelConfig.silenceThresholdPercents, 0) { v ->
                 val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(silenceThresholdPercents = v)))
             }
@@ -336,7 +351,8 @@ class SettingsTab(
             padding = Insets(0.0, 20.0, 20.0, 20.0)
 
             addTitleLabel("Sherpa-ONNX streaming model folder (encoder/decoder/joiner .onnx + tokens.txt):")
-            addTextFieldWithSaveButton(
+            var sherpaField: javafx.scene.control.TextInputControl? = null
+            sherpaField = addTextFieldWithSaveButton(
                 fieldText = appInfo.sherpaModelPath,
                 buttonTitle = "Select folder with sherpa model files",
                 buttonColor = COLOUR_GREEN,
@@ -346,6 +362,7 @@ class SettingsTab(
                         log.error("Select sherpa model folder but selected directory is null")
                         return@addTextFieldWithSaveButton
                     }
+                    sherpaField?.text = selectedDirectory.absolutePath
                     saveAppInfo(getAppInfo().copy(sherpaModelPath = selectedDirectory.absolutePath))
                 }
             )
@@ -387,6 +404,22 @@ class SettingsTab(
             Desktop.getDesktop().browse(URI(url))
         } else {
             log.warn("Desktop is not supported")
+        }
+    }
+
+    private fun installPythonPackages() {
+        val pythonDir = java.io.File(java.io.File("").absolutePath, "python")
+        val command = "cd /d \"${pythonDir.absolutePath}\" && " +
+            "py -m venv .venv && " +
+            ".venv\\Scripts\\python.exe -m pip install --upgrade pip && " +
+            ".venv\\Scripts\\python.exe -m pip install -r requirements.txt"
+        try {
+            ProcessBuilder("cmd", "/c", "start", "Install Python packages", "cmd", "/k", command)
+                .directory(pythonDir)
+                .start()
+        } catch (e: Exception) {
+            log.error("Failed to launch package install terminal: ${e.message}", e)
+            ownerStage?.showAlert(alertTitle = "Error", alertContent = "Could not open terminal: ${e.message}")
         }
     }
 
