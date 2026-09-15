@@ -1,0 +1,8 @@
+{
+  "fetch_ttl_sec": 60,
+  "gate_enabled": true,
+  "zones": {
+    "session": { "YELLOW": 50, "ORANGE": 80, "RED": 90 },
+    "weekly": { "YELLOW": 80, "ORANGE": 90, "RED": 95 }
+  }
+}

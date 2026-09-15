@@ -46,3 +46,7 @@ bin/
 
 /models/
 /dialogs/
+
+### Local environment settings (API tokens) ###
+.env
+!.env.example

@@ -20,11 +20,9 @@ import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
 import kotlinx.coroutines.launch
 import mainThreadScope
-import models.domain.ClaudeModelsEnum
-import models.domain.GoogleAiModelsEnum
 import models.domain.LlmModel
-import models.domain.LlmModelEngine
-import models.domain.OpenAiModelsEnum
+import models.domain.SherpaModelConfig
+import models.domain.allLlmModels
 import org.slf4j.LoggerFactory
 import repository.PreferencesRepository
 import ui.base.BaseTab
@@ -57,7 +55,6 @@ class SettingsTab(
     companion object {
         const val WINDOW_BACKGROUND_COLOUR = "#323232"
         private const val SIDEBAR_BACKGROUND_COLOUR = "#2b2b2b"
-        private val DECODING_METHODS = listOf("greedy_search", "modified_beam_search")
     }
 
     private val log = LoggerFactory.getLogger("SettingsTab")
@@ -163,10 +160,9 @@ class SettingsTab(
             if (devices.isEmpty()) {
                 addLabel("Not found")
             } else {
+                // Not saved when it falls back to the first device: that would turn a stand-in into
+                // a stored choice and stop `.env` (or a device plugged in later) from ever applying.
                 val lastSelected = devices.firstOrNull { appInfo.lastSelectedDevice == it.name }
-                if (lastSelected == null) {
-                    saveAppInfo(getAppInfo().copy(lastSelectedDevice = devices.first().name))
-                }
                 addComboBox(
                     items = devices,
                     selectedItem = lastSelected ?: devices.first(),
@@ -191,7 +187,7 @@ class SettingsTab(
             padding = Insets(0.0, 20.0, 20.0, 20.0)
 
             addTitleLabel("AI model:")
-            val models = getModelsList()
+            val models = allLlmModels()
             addComboBox(
                 items = models,
                 selectedItem = models.firstOrNull { it.id == appInfo.selectedModel.id } ?: appInfo.selectedModel,
@@ -374,8 +370,10 @@ class SettingsTab(
 
             addTitleLabel("Decoding method:")
             addComboBox(
-                items = DECODING_METHODS,
-                selectedItem = appInfo.sherpaConfig.decodingMethod.takeIf { it in DECODING_METHODS } ?: DECODING_METHODS.first(),
+                items = SherpaModelConfig.DECODING_METHODS,
+                selectedItem = appInfo.sherpaConfig.decodingMethod
+                    .takeIf { it in SherpaModelConfig.DECODING_METHODS }
+                    ?: SherpaModelConfig.DECODING_METHODS.first(),
                 toStringFn = { it },
                 onSelected = { method ->
                     val c = getAppInfo()
@@ -431,39 +429,5 @@ class SettingsTab(
         }
     }
 
-    private fun getModelsList(): List<LlmModel> {
-        return buildList {
-            GoogleAiModelsEnum.entries.forEach {
-                add(
-                    LlmModel(
-                        id = it.type,
-                        description = it.title,
-                        engine = LlmModelEngine.GOOGLE,
-                        googleAiModel = it,
-                    )
-                )
-            }
-            OpenAiModelsEnum.entries.forEach {
-                add(
-                    LlmModel(
-                        id = it.type,
-                        description = it.getDescription(),
-                        engine = LlmModelEngine.OPENAI,
-                        openAiModel = it,
-                    )
-                )
-            }
-            ClaudeModelsEnum.entries.forEach {
-                add(
-                    LlmModel(
-                        id = it.type,
-                        description = it.getDescription(),
-                        engine = LlmModelEngine.CLAUDE,
-                        claudeModel = it,
-                    )
-                )
-            }
-        }
-    }
 
 }

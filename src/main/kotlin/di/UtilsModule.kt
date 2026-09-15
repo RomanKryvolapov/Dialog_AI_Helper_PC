@@ -8,10 +8,13 @@ import models.domain.ApplicationInfoNullable
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.bind
 import org.koin.dsl.module
+import utils.ApplicationInfoEnvOverlay
 import utils.AudioChunker
 import utils.AudioChunkerImpl
 import utils.DialogLogger
 import utils.DialogLoggerImpl
+import utils.EnvSettings
+import utils.EnvSettingsImpl
 import utils.SherpaOnnxRecognizer
 import utils.SherpaOnnxRecognizerImpl
 import utils.WhisperStreamingUtil
@@ -22,6 +25,9 @@ import java.time.Duration
 import java.util.prefs.Preferences
 
 val utilsModule = module {
+
+    singleOf(::EnvSettingsImpl) bind EnvSettings::class
+    singleOf(::ApplicationInfoEnvOverlay)
 
     singleOf(::AudioChunkerImpl) bind AudioChunker::class
     singleOf(::WhisperUtilImpl) bind WhisperUtil::class

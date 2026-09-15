@@ -2,3 +2,21 @@
 *.carpa filter=lfs diff=lfs merge=lfs -text
 *.fst filter=lfs diff=lfs merge=lfs -text
 models/** filter=lfs diff=lfs merge=lfs -text
+
+# usage-limits hook: the launcher must stay LF (a CRLF shebang breaks Git Bash
+# on Windows, which is how Claude Code runs hook commands there).
+.claude/hooks/usage-limits text eol=lf
+scripts/usage-limits-src/*.sh text eol=lf
+
+# Prebuilt hook binaries are committed so end users need no Go toolchain.
+scripts/usage-limits-darwin-arm64 binary
+scripts/usage-limits-linux-amd64 binary
+scripts/usage-limits-windows-amd64.exe binary
+
+# play-sound hook: same LF-launcher + committed-binary pattern.
+.claude/hooks/play-sound text eol=lf
+scripts/play-sound-src/*.sh text eol=lf
+
+scripts/play-sound-darwin-arm64 binary
+scripts/play-sound-linux-amd64 binary
+scripts/play-sound-windows-amd64.exe binary

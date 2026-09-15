@@ -1,0 +1,37 @@
+#!/bin/sh
+# play-sound — thin cross-platform launcher for the Go play-sound hook.
+#
+# Mirrors the usage-limits / work-audit launchers. Plays the bundled
+# .claude/sounds/notify.wav on Stop / StopFailure — no Node, no extra runtime.
+# The wav path is passed to the binary as its first argument.
+#
+# settings.json invokes it as:
+#   "${CLAUDE_PROJECT_DIR}/.claude/hooks/play-sound"
+#
+# Keep this file LF-only (see .gitattributes) — a CRLF shebang breaks Git Bash.
+
+case "$(uname -s 2>/dev/null)" in
+	Darwin*)               name="play-sound-darwin-arm64" ;;
+	Linux*)                name="play-sound-linux-amd64" ;;
+	MINGW*|MSYS*|CYGWIN*)  name="play-sound-windows-amd64.exe" ;;
+	*)                     name="play-sound-linux-amd64" ;;
+esac
+
+# Find the binary and the sound from this launcher's own location first
+# (<project>/.claude/hooks/), so it also works when run from a shell without
+# CLAUDE_PROJECT_DIR exported; the variable stays as the fallback.
+self=$(CDPATH= cd -- "$(dirname -- "$0")/../.." 2>/dev/null && pwd)
+
+for root in "$self" "${CLAUDE_PROJECT_DIR:-}"; do
+	[ -n "$root" ] || continue
+	if [ -x "$root/scripts/$name" ]; then
+		# The binary resolves the project root from this variable; export it so a hand-run from
+		# another directory still writes and reads inside the project.
+		CLAUDE_PROJECT_DIR="$root"
+		export CLAUDE_PROJECT_DIR
+		exec "$root/scripts/$name" "$root/.claude/sounds/notify.wav"
+	fi
+done
+
+# Never take the session down: if no binary is found, exit cleanly.
+exit 0

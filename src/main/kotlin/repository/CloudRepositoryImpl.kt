@@ -8,6 +8,7 @@ import dev.langchain4j.model.googleai.GeminiThinkingConfig
 import dev.langchain4j.model.googleai.GoogleAiGeminiStreamingChatModel
 import dev.langchain4j.model.input.Prompt
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel
+import models.domain.ClaudeModelsEnum
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -163,15 +164,18 @@ class CloudRepositoryImpl(
     }
 
     override fun streamClaude(model: String, apiKey: String, prompt: Prompt): Flow<String> {
-        val chatModel = AnthropicStreamingChatModel.builder()
+        val builder = AnthropicStreamingChatModel.builder()
             .apiKey(apiKey)
             .modelName(model)
-            .temperature(0.8)
             .logRequests(false)
             .logResponses(false)
             .timeout(REQUEST_TIMEOUT)
             .listeners(listOf(ChatLogger()))
-            .build()
+        // Claude 5 and later removed the sampling parameters and reject a request that carries one.
+        if (ClaudeModelsEnum.byType(model)?.supportsTemperature != false) {
+            builder.temperature(0.8)
+        }
+        val chatModel = builder.build()
         return streamingFlow("Claude[$model]") { handler ->
             chatModel.chat(prompt.text(), handler)
         }
