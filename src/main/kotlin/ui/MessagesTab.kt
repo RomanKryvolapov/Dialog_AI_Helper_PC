@@ -223,13 +223,15 @@ class MessagesTab(
             return
         }
         if (!audioChunker.inRunning()) {
-            val device = audioChunker.getAvailableInputDevices().firstOrNull {
-                it.name == appInfo.lastSelectedDevice
-            }
+            val devices = audioChunker.getAvailableInputDevices()
+            val device = devices.firstOrNull { it.name == appInfo.lastSelectedDevice }
+                ?: devices.firstOrNull()?.also {
+                    log.info("No audio device chosen yet, falling back to ${it.name}")
+                }
             if (device == null) {
                 ownerStage?.showAlert(
-                    alertTitle = "No Device Selected",
-                    alertContent = "Please select an audio device in the Settings tab."
+                    alertTitle = "No Audio Device",
+                    alertContent = "No audio input device was found."
                 )
                 return
             }

@@ -55,15 +55,15 @@ Standard tools (`Read`, `Edit`, `Grep`, `Glob`, `Bash`) are only allowed for:
 
 | Area | Choice |
 |------|--------|
-| Language | Kotlin 2.3.20 on JVM 24 |
+| Language | Kotlin 2.4.10 on JVM 26 |
 | Build | Gradle (`build.gradle` Groovy DSL, `application` plugin) |
-| UI | JavaFX 26 (Stage/Scene/TabPane, CSS from `src/main/resources/styles/`) |
-| DI | Koin 4.2.1 |
-| HTTP | Ktor client 3.4.2 (CIO engine, content-negotiation, logging) |
+| UI | JavaFX 26.0.2 (Stage/Scene/TabPane, CSS from `src/main/resources/styles/`) |
+| DI | Koin 4.2.2 |
+| HTTP | Ktor client 3.5.2 (CIO engine, content-negotiation, logging) |
 | JSON | Moshi 1.15.2 + kotlinx.serialization 1.11.0 |
-| LLM clients | langchain4j 1.13.0 — Google Gemini/Gemma, OpenAI, Anthropic Claude (all streaming) |
-| Voice recognition | Three selectable engines (`VoiceRecognitionEngine`): **Whisper batch** (faster-whisper one-shot subprocess), **Whisper streaming** (persistent Python `whisper_streaming_util.py`), **Sherpa-ONNX** (in-process JNI, vendored jars in `libs/`) |
-| Logging | Logback 1.5.32 + SLF4J |
+| LLM clients | langchain4j 1.19.0 — Google Gemini/Gemma, OpenAI, Anthropic Claude (all streaming) |
+| Voice recognition | Three selectable engines (`VoiceRecognitionEngine`): **Whisper batch** (faster-whisper one-shot subprocess), **Whisper streaming** (persistent Python `whisper_streaming_util.py`), **Sherpa-ONNX** 1.13.6 (in-process JNI, vendored jars in `libs/`) |
+| Logging | Logback 1.6.3 + SLF4J 2.0.18 |
 | Python utils | `python/` scripts invoked as subprocesses (see `python/requirements.txt`); separate `.venv` under `python/.venv/` |
 
 ## Module layout (`src/main/kotlin/`)
@@ -71,12 +71,13 @@ Standard tools (`Read`, `Edit`, `Grep`, `Glob`, `Bash`) are only allowed for:
 - `app/` — `Main.kt` (entry point) and `DialogApplication.kt` (JavaFX `Application`, Koin bootstrap; top tabs = **Messages** + **Settings**; overwrites prompts from code on startup when `OVERWRITE_PROMPTS_FROM_CODE`)
 - `ui/` — `MessagesTab`, `SettingsTab`, `PromptTab`, `ConsoleTab` (plus `ui/base/`). Only **Messages** and **Settings** are top-level tabs; **Settings** is a master-detail screen (left sidebar of categories: General / LLM / Whisper batch / Whisper streaming / Sherpa-ONNX / Prompts / Console) that embeds `PromptTab.content` and `ConsoleTab.content` as categories.
 - `di/` — Koin modules (`AllModules`, `RepositoryModule`, `UiModule`, `UtilsModule`, `MappersModule`)
-- `repository/` — `CloudRepository`, `PreferencesRepository` + their `*Impl`. `PreferencesRepositoryImpl` **chunks** the JSON across multiple prefs keys (`java.util.prefs` caps a single value at 8 KB; the prompts blow past it).
+- `repository/` — `CloudRepository`, `PreferencesRepository` + their `*Impl`. `PreferencesRepositoryImpl` **chunks** the JSON across multiple prefs keys (`java.util.prefs` caps a single value at 8 KB; the prompts blow past it). It also layers `.env` over the saved values via `ApplicationInfoEnvOverlay`: on read a setting the user has not filled in comes from `.env`; on write only values that differ from the `.env`/built-in fallbacks are stored, so an untouched setting stays unset and later `.env` edits keep taking effect.
 - `models/` — `common/`, `domain/`, `network/…`. Key domain types: `ApplicationInfo`, `VoiceRecognitionEngine`, `GoogleAiModelsEnum` (limits + `title` + `supportsStreaming`), `WhisperModelConfig`, `SherpaModelConfig`, `PromptModel`
 - `mappers/` — `base/`, `domain/`, `network/`
 - `utils/` — `AudioChunker`, `WhisperUtil` (batch), `WhisperStreamingUtil` (streaming), `SherpaOnnxRecognizer` (in-process), `TranslationRateLimiter`, `DialogLogger`, `ChatLogger`, `AppStatus` (+ `*Impl`)
 - `extensions/` — `CommonExtensions.kt`, `ViewExtensions.kt`
 - `Consts.kt` — colours, `OVERWRITE_PROMPTS_FROM_CODE` flag, the built-in prompts (`translateWithContextPrompt` + base/answer), default `ApplicationInfo`, coroutine scopes
+- `.env` (git-ignored) / `.env.example` — optional fallback values for every field of `ApplicationInfo`; key names live in `ApplicationInfoEnvOverlay`, parsing in `EnvSettingsImpl`. Order: saved setting → OS environment variable → `.env` → built-in default.
 - `libs/` — **vendored** sherpa-onnx desktop jars (API + win-x64 native libs), referenced by `build.gradle`
 
 ## How the app runs

@@ -52,11 +52,30 @@ The app supports three streaming LLM backends via [langchain4j](https://docs.lan
   Get an API key from [Google AI Studio](https://aistudio.google.com/app/apikey) (or enable the Gemini API in [Google Cloud Console](https://console.cloud.google.com/apis/api/generativelanguage.googleapis.com/) and use a [Cloud API key](https://cloud.google.com/docs/authentication/api-keys)).  
   Different models have different [free usage limits](https://ai.google.dev/gemini-api/docs/rate-limits) — the model list in the app shows requests/min, requests/day and tokens/min for each one. The default model is `gemma-3-27b-it`, which gives 14,400 free requests per day.
 
-* **OpenAI** — GPT-5.4 mini / GPT-5.4 nano. Requires an [OpenAI API key](https://platform.openai.com/api-keys).
+* **OpenAI** — GPT-5.6 Terra / GPT-5.6 Luna (the two smaller tiers of the 5.6 family) and GPT-5.4 mini / GPT-5.4 nano. Requires an [OpenAI API key](https://platform.openai.com/api-keys).
 
-* **Anthropic Claude** — Claude Haiku 4.5. Requires an [Anthropic API key](https://console.anthropic.com/settings/keys).
+* **Anthropic Claude** — Claude Sonnet 5 / Claude Haiku 4.5 (the two cheapest current models). Requires an [Anthropic API key](https://console.anthropic.com/settings/keys).
 
 Paste the relevant API token into the **Settings** tab. If a model hits its limits, just switch to another one in the model dropdown.
+
+## Settings from a `.env` file
+
+Every field of the **Settings** screen can also be filled from a `.env` file in the project root —
+handy for keeping API tokens out of the app's saved settings and out of git.
+
+Copy `.env.example` to `.env` and fill in what you need. Each setting is resolved in this order:
+
+1. the value saved in the app — wins whenever it is filled in
+2. an OS environment variable of the same name
+3. the `.env` file
+4. the built-in default
+
+So `.env` is a fallback, not an override: it supplies a setting while the corresponding field in
+the app is still empty. The app only stores a setting you actually changed away from the `.env` /
+built-in value, so editing `.env` and restarting takes effect for everything you have not chosen
+yourself in the app. A setting you did choose keeps winning — to hand it back to `.env`, clear that
+field in Settings and save. Whenever a `.env` key is overridden that way, the Console category says
+so. `.env` is git-ignored; `.env.example` lists every key.
 
 ## Prompts
 

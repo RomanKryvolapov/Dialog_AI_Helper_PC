@@ -1,7 +1,7 @@
 plugins {
     id 'application'
-    id 'org.jetbrains.kotlin.jvm' version '2.4.0'
-    id 'org.jetbrains.kotlin.plugin.serialization' version '2.4.0'
+    id 'org.jetbrains.kotlin.jvm' version '2.4.10'
+    id 'org.jetbrains.kotlin.plugin.serialization' version '2.4.10'
     id 'org.openjfx.javafxplugin' version '0.1.0'
 }
 
@@ -10,7 +10,7 @@ application {
 }
 
 javafx {
-    version = '26.0.1'
+    version = '26.0.2'
     modules = ['javafx.controls', 'javafx.base', 'javafx.graphics']
 }
 
@@ -22,14 +22,14 @@ repositories {
 }
 
 ext {
-    kotlinVersion = '2.4.0'
+    kotlinVersion = '2.4.10'
     kotlinxCoroutines = '1.11.0'
-    javaFxVersion =  '26.0.1'
-    ktor_version = "3.5.0"
-    logback_version = '1.5.35'
+    javaFxVersion =  '26.0.2'
+    ktor_version = "3.5.2"
+    logback_version = '1.6.3'
     kotlinx_serialization_json_version = "1.11.0"
     moshi_version = '1.15.2'
-    lc_4_j_version = '1.16.3'
+    lc_4_j_version = '1.19.0'
     koin_version = '4.2.2'
 }
 
@@ -47,7 +47,7 @@ dependencies {
 
     implementation 'net.java.dev.jna:jna:5.19.1'
 
-    implementation("org.json:json:20260522")
+    implementation("org.json:json:20260814")
 
     implementation "io.ktor:ktor-client-core:$ktor_version"
     implementation "io.ktor:ktor-client-cio:$ktor_version"
@@ -70,7 +70,7 @@ dependencies {
 
     // sherpa-onnx desktop (in-process streaming ASR): API jar + Windows x64 native libs.
     // Vendored from https://github.com/k2-fsa/sherpa-onnx/releases (no desktop Maven artifact).
-    implementation files('libs/sherpa-onnx-v1.13.2.jar', 'libs/sherpa-onnx-native-lib-win-x64-v1.13.2.jar')
+    implementation files('libs/sherpa-onnx-jvm-1.13.6.jar', 'libs/sherpa-onnx-native-lib-win-x64-1.13.6.jar')
 }
 
 java {

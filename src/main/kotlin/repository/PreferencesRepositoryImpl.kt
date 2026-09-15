@@ -1,13 +1,13 @@
 package repository
 
 import com.squareup.moshi.JsonAdapter
-import defaultApplicationInfo
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import mappers.domain.ApplicationInfoMapper
 import models.domain.ApplicationInfo
 import models.domain.ApplicationInfoNullable
+import utils.ApplicationInfoEnvOverlay
 import java.util.prefs.PreferenceChangeEvent
 import java.util.prefs.PreferenceChangeListener
 import java.util.prefs.Preferences
@@ -15,6 +15,7 @@ import java.util.prefs.Preferences
 class PreferencesRepositoryImpl(
     private val prefs: Preferences,
     private val applicationInfoMapper: ApplicationInfoMapper,
+    private val applicationInfoEnvOverlay: ApplicationInfoEnvOverlay,
     private val applicationInfoAdapter: JsonAdapter<ApplicationInfoNullable>,
 ) : PreferencesRepository {
 
@@ -46,25 +47,24 @@ class PreferencesRepositoryImpl(
     }
 
     override fun getAppInfo(): ApplicationInfo {
-        try {
+        val stored = try {
             val json = readJson()
-            if (json.isNullOrBlank()) return defaultApplicationInfo
-            val applicationInfoNullable = applicationInfoAdapter.fromJson(json) ?: return defaultApplicationInfo
-            return applicationInfoMapper.reverse(applicationInfoNullable)
+            if (json.isNullOrBlank()) ApplicationInfoNullable()
+            else applicationInfoAdapter.fromJson(json) ?: ApplicationInfoNullable()
         } catch (e: Exception) {
             e.printStackTrace()
-            return defaultApplicationInfo
+            ApplicationInfoNullable()
         }
+        return applicationInfoMapper.reverse(applicationInfoEnvOverlay.fillFromEnv(stored))
     }
 
     override fun saveAppInfo(applicationInfo: ApplicationInfo) {
         val applicationInfoNullable = applicationInfoMapper.map(applicationInfo)
-        writeJson(applicationInfoAdapter.toJson(applicationInfoNullable))
+        writeJson(applicationInfoAdapter.toJson(applicationInfoEnvOverlay.dropFallbackValues(applicationInfoNullable)))
     }
 
     override fun clear() {
-        val applicationInfoNullable = applicationInfoMapper.map(defaultApplicationInfo)
-        writeJson(applicationInfoAdapter.toJson(applicationInfoNullable))
+        writeJson(applicationInfoAdapter.toJson(ApplicationInfoNullable()))
     }
 
     /** Reassembles the JSON from chunk keys; falls back to the legacy single-key value. */

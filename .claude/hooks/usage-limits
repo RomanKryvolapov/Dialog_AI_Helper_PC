@@ -1,0 +1,40 @@
+#!/bin/sh
+# usage-limits — thin cross-platform launcher for the Go usage-limits hook.
+#
+# Claude Code runs hook commands through sh -c on macOS/Linux and through
+# Git Bash on Windows, so this POSIX script runs everywhere Claude Code does —
+# no Node, no extra runtime. It picks the prebuilt binary for the current OS
+# (one arch per OS is shipped) and hands off all arguments and stdin unchanged.
+#
+# settings.json invokes it as:
+#   "${CLAUDE_PROJECT_DIR}/.claude/hooks/usage-limits" --mode inject --event ...
+#
+# Keep this file LF-only (see .gitattributes) — a CRLF shebang breaks Git Bash.
+
+case "$(uname -s 2>/dev/null)" in
+	Darwin*)               name="usage-limits-darwin-arm64" ;;
+	Linux*)                name="usage-limits-linux-amd64" ;;
+	MINGW*|MSYS*|CYGWIN*)  name="usage-limits-windows-amd64.exe" ;;
+	*)                     name="usage-limits-linux-amd64" ;;
+esac
+
+# Find the binary from this launcher's own location first — it lives in
+# <project>/.claude/hooks/, so running it straight from a shell works even when
+# CLAUDE_PROJECT_DIR is not exported (it is set for hooks, not for plain commands).
+# The variable stays as the fallback.
+self=$(CDPATH= cd -- "$(dirname -- "$0")/../.." 2>/dev/null && pwd)
+
+for root in "$self" "${CLAUDE_PROJECT_DIR:-}"; do
+	[ -n "$root" ] || continue
+	if [ -x "$root/scripts/$name" ]; then
+		# The binary resolves the project root from this variable; export it so a hand-run from
+		# another directory still writes and reads inside the project.
+		CLAUDE_PROJECT_DIR="$root"
+		export CLAUDE_PROJECT_DIR
+		exec "$root/scripts/$name" "$@"
+	fi
+done
+
+# A limits helper must never take the session down: if no binary is found, exit
+# cleanly with no output rather than erroring the hook.
+exit 0
