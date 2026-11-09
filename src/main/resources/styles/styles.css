@@ -25,13 +25,20 @@
     -fx-background-insets: 0 0 0 0;
 }
 
-/* Стиль обычной (неактивной) вкладки */
+/* Ширина вкладки: все вкладки и кнопки диалога рядом с ними (.header-button) одной ширины */
+.tab-pane {
+    -fx-tab-min-width: 150px;
+    -fx-tab-max-width: 150px;
+}
+
+/* Стиль обычной (неактивной) вкладки. Правый отступ равен правому вырезу фона (10px):
+   текст по центру видимой плашки, а вырез — промежуток между вкладками */
 .tab-pane .tab {
     -fx-pref-height: 42px;
     -fx-min-height: 42px;
     -fx-max-height: 42px;
     -fx-background-color: #242424;
-    -fx-padding: 10 80 10 80;
+    -fx-padding: 10 10 10 0;
     -fx-background-insets: 0 10 0 0;
     -fx-border-color: transparent;
     -fx-focus-color: transparent;
@@ -355,4 +362,29 @@
     -fx-text-fill: #777777;
     -fx-opacity: 0.6;
     -fx-cursor: default;
+}
+
+/* Status line under the messages: what the live loop is doing and which translation method answers */
+.label.status-label {
+    -fx-pref-height: 30px;
+    -fx-min-height: 30px;
+    -fx-max-height: 30px;
+    -fx-font-size: 15px;
+    -fx-text-fill: #BBBBBB;
+    -fx-alignment: center-left;
+}
+
+/* Number before each translation method on Settings → General (1 first, then 2 and 3) */
+.label.chain-number {
+    -fx-font-size: 18px;
+    -fx-text-fill: #AAAAAA;
+    -fx-min-width: 24px;
+    -fx-max-width: 24px;
+}
+
+/* «Старт диалога» и «Очистить» в строке вкладок: той же ширины, что и вкладки (-fx-tab-min-width выше) */
+.button.header-button {
+    -fx-pref-width: 150px;
+    -fx-min-width: 150px;
+    -fx-max-width: 150px;
 }

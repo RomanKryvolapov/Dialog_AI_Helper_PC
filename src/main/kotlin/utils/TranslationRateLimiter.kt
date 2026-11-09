@@ -18,7 +18,6 @@ import java.time.ZoneId
 class TranslationRateLimiter {
 
     private val lock = Any()
-    private val zonePacific = ZoneId.of("America/Los_Angeles")
 
     private var rpm: Int? = null
     private var tpm: Int? = null
@@ -79,6 +78,18 @@ class TranslationRateLimiter {
         }
     }
 
+    /**
+     * Called when the server says the day's quota is used up (its count can be ahead of ours, which
+     * restarts with the app): nothing more is sent until the daily reset at midnight Pacific.
+     */
+    fun exhaustDay() {
+        synchronized(lock) {
+            val now = System.currentTimeMillis()
+            prune(now)
+            cooldownUntil = maxOf(cooldownUntil, dayResetAt)
+        }
+    }
+
     private fun prune(now: Long) {
         val windowStart = now - WINDOW_MS
         while (requestTimes.isNotEmpty() && requestTimes.first() <= windowStart) requestTimes.removeFirst()
@@ -90,13 +101,15 @@ class TranslationRateLimiter {
         }
     }
 
-    private fun nextPacificMidnight(now: Long): Long =
-        Instant.ofEpochMilli(now).atZone(zonePacific)
-            .toLocalDate().plusDays(1).atStartOfDay(zonePacific)
-            .toInstant().toEpochMilli()
-
     companion object {
         private const val WINDOW_MS = 60_000L
         private const val DEFAULT_COOLDOWN_MS = 60_000L
+        private val ZONE_PACIFIC: ZoneId = ZoneId.of("America/Los_Angeles")
+
+        /** When Google's daily quotas reset next: midnight Pacific time. */
+        fun nextPacificMidnight(now: Long): Long =
+            Instant.ofEpochMilli(now).atZone(ZONE_PACIFIC)
+                .toLocalDate().plusDays(1).atStartOfDay(ZONE_PACIFIC)
+                .toInstant().toEpochMilli()
     }
 }

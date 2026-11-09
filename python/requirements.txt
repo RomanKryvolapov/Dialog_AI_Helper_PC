@@ -5,15 +5,21 @@
 # folder to the DLL search path and fall back to CPU automatically if the GPU is unavailable.
 # torch is built for CUDA 12.8 (cu128), which supports Blackwell GPUs (RTX 50xx).
 #
+# Held back on purpose (checked 2026-11-08 on an RTX 5070 Ti):
+# - torch stays at 2.11.0+cu128: it is the last CUDA 12 build for Python 3.14; newer builds ship
+#   only CUDA 13 libraries, which CTranslate2 (built against CUDA 12) cannot use.
+# - ctranslate2 stays at 4.8.0: 4.8.5 fails to load cublas64_12.dll from torch/lib and silently
+#   falls back to CPU (several times slower); 4.8.0 runs on the GPU.
+#
 # The PyTorch CUDA wheels live on a dedicated package index:
 --extra-index-url https://download.pytorch.org/whl/cu128
 
 # --- Direct dependencies ---
 torch==2.11.0+cu128
 faster-whisper==1.2.1
-numpy==2.5.0
-sounddevice==0.5.5
-scipy==1.18.0
+numpy==2.5.4
+sounddevice==0.5.6
+scipy==1.18.1
 
 # --- Transitive dependencies (pinned for reproducible installs) ---
 annotated-doc==0.0.4
@@ -39,7 +45,7 @@ MarkupSafe==3.0.3
 mdurl==0.1.2
 mpmath==1.3.0
 networkx==3.6.1
-onnxruntime==1.27.0
+onnxruntime==1.31.1
 packaging==26.2
 protobuf==7.35.1
 pycparser==3.0

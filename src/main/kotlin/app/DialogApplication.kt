@@ -17,6 +17,7 @@ import javafx.scene.control.ProgressBar
 import javafx.scene.control.ScrollPane
 import javafx.scene.control.Tab
 import javafx.scene.control.TabPane
+import javafx.scene.control.Tooltip
 import javafx.scene.layout.HBox
 import javafx.scene.layout.Region
 import javafx.scene.layout.StackPane
@@ -26,6 +27,7 @@ import javafx.util.Duration as FxDuration
 import kotlinx.coroutines.launch
 import mainThreadScope
 import models.domain.PromptModel
+import models.domain.resolveLlmModel
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import org.koin.core.context.startKoin
@@ -34,8 +36,8 @@ import ui.ConsoleTab
 import ui.MessagesTab
 import ui.PromptTab
 import ui.SettingsTab
-import utils.AppStatus
 import utils.AudioChunker
+import utils.TokenUsageTracker
 import java.lang.management.ManagementFactory
 
 class DialogApplication : Application(), KoinComponent {
@@ -47,9 +49,34 @@ class DialogApplication : Application(), KoinComponent {
     private val promptTab: PromptTab by inject()
     private val settingsTab: SettingsTab by inject()
     private val consoleTab: ConsoleTab by inject()
+    private val tokenUsageTracker: TokenUsageTracker by inject()
 
     companion object {
         var ownerStage: Stage? = null
+        private const val MESSAGES_TAB_INDEX = 0
+        /** The tab header row's height, as styles.css sets it. */
+        private const val TOP_BAR_HEIGHT = 64.0
+
+        /** 950, 12.3k, 1.2M — short enough for the top bar. */
+        internal fun compactCount(count: Long): String = when {
+            count < 1_000 -> count.toString()
+            count < 1_000_000 -> String.format(java.util.Locale.ROOT, "%.1fk", count / 1_000.0)
+            else -> String.format(java.util.Locale.ROOT, "%.1fM", count / 1_000_000.0)
+        }
+
+        internal fun tokensTooltip(totals: TokenUsageTracker.Totals): String = buildString {
+            appendLine("Tokens this dialog has used since Clear dialog, translations and conversation notes,")
+            append("as the providers reported them: in ${totals.input}, out ${totals.output}, ${totals.answers} answers")
+            totals.byModel.forEach { (id, usage) ->
+                val title = resolveLlmModel(id)?.title ?: id
+                appendLine()
+                append("$title: in ${usage.input}, out ${usage.output}, ${usage.answers} answers")
+            }
+            if (totals.unreported > 0) {
+                appendLine()
+                append("${totals.unreported} answers came without a token count")
+            }
+        }
     }
 
     override fun start(primaryStage: Stage) {
@@ -107,7 +134,7 @@ class DialogApplication : Application(), KoinComponent {
         }
 
         val micBar = ProgressBar(0.0).apply {
-            prefWidth = 140.0
+            prefWidth = 110.0
             prefHeight = 18.0
         }
 
@@ -116,7 +143,7 @@ class DialogApplication : Application(), KoinComponent {
         }
 
         val ramBar = ProgressBar(0.0).apply {
-            prefWidth = 140.0
+            prefWidth = 110.0
             prefHeight = 18.0
         }
 
@@ -124,12 +151,27 @@ class DialogApplication : Application(), KoinComponent {
             style = overlayLabelStyle
         }
 
-        val topRightBar = HBox(12.0, micLabel, micBar, ramLabel, ramBar, ramValueLabel).apply {
+        val meters = HBox(12.0, micLabel, micBar, ramLabel, ramBar, ramValueLabel).apply {
             alignment = Pos.CENTER_LEFT
-            padding = Insets(18.0, 0.0, 0.0, 16.0)
             isMouseTransparent = true
+        }
+
+        // The dialog's buttons act on the Messages tab only; on the other tabs they stay in view, disabled.
+        messagesTab.headerControls.disableProperty()
+            .bind(tabPane.selectionModel.selectedIndexProperty().isNotEqualTo(MESSAGES_TAB_INDEX))
+
+        // The top bar sits in the tab header row, right of the tab names: the dialog's buttons, then the
+        // microphone and memory meters.
+        // No left padding: the last tab's own right inset is the gap, the same as between the tabs.
+        // Not part of the mouse-transparent meters: its tooltip breaks the count down.
+        val tokensLabel = Label().apply { style = overlayLabelStyle }
+
+        val topBar = HBox(24.0, messagesTab.headerControls, meters, tokensLabel).apply {
+            alignment = Pos.CENTER_LEFT
+            minHeight = TOP_BAR_HEIGHT
+            prefHeight = TOP_BAR_HEIGHT
+            maxHeight = TOP_BAR_HEIGHT
             maxWidth = Region.USE_PREF_SIZE
-            maxHeight = Region.USE_PREF_SIZE
             StackPane.setAlignment(this, Pos.TOP_LEFT)
         }
 
@@ -151,12 +193,19 @@ class DialogApplication : Application(), KoinComponent {
         }
 
         mainThreadScope.launch {
+            tokenUsageTracker.totals.collect { totals ->
+                tokensLabel.text = "Tokens ${compactCount(totals.total)}"
+                tokensLabel.tooltip = Tooltip(tokensTooltip(totals))
+            }
+        }
+
+        mainThreadScope.launch {
             audioChunker.noiceLevelFlow.collect { level ->
                 micBar.progress = level.coerceIn(0, 100) / 100.0
             }
         }
 
-        val root = StackPane(tabPane, topRightBar)
+        val root = StackPane(tabPane, topBar)
 
         val screenBounds: Rectangle2D =
             Screen.getScreens().let { if (it.size > 1) it[1] else it[0] }.visualBounds
@@ -183,9 +232,9 @@ class DialogApplication : Application(), KoinComponent {
         javafx.application.Platform.runLater {
             val headersRegion = tabPane.lookup(".tab-header-area > .headers-region") as? Region
             if (headersRegion != null) {
-                topRightBar.translateXProperty().bind(headersRegion.widthProperty())
+                topBar.translateXProperty().bind(headersRegion.widthProperty())
             } else {
-                System.err.println("[DialogApplication] .headers-region not found, overlay pinned to left edge")
+                System.err.println("[DialogApplication] .headers-region not found, top bar pinned to left edge")
             }
         }
     }

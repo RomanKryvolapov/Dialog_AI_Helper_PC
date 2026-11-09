@@ -4,6 +4,7 @@ import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.module
 import ui.ConsoleTab
 import ui.MessagesTab
+import ui.MethodChainSelector
 import ui.PromptTab
 import ui.SettingsTab
 
@@ -13,5 +14,6 @@ val uiModule = module {
     singleOf(::SettingsTab)
     singleOf(::PromptTab)
     singleOf(::ConsoleTab)
+    singleOf(::MethodChainSelector)
 
 }

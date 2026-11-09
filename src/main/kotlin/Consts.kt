@@ -10,6 +10,24 @@ const val COLOUR_RED = "#8C3C3C"
 const val SOURCE_TEXT = "{{source_text}}"
 const val SOURCE_TEXT_CLEAR = "source_text"
 
+const val CONVERSATION_SUMMARY = "{{conversation_summary}}"
+const val CONVERSATION_SUMMARY_CLEAR = "conversation_summary"
+const val RECENT_TURNS = "{{recent_turns}}"
+const val RECENT_TURNS_CLEAR = "recent_turns"
+const val SUMMARY_TURNS_CLEAR = "turns"
+
+const val PROMPT_NAME_TRANSLATE_CONVERSATION = "Translate text (conversation context)"
+
+/** Where in PROMPT_TRANSLATE_VOICE the recorded phrase goes: the request puts the audio part here. */
+const val VOICE_AUDIO_MARK = "@@AUDIO@@"
+
+/**
+ * The newest turns always sent verbatim, rendered: about 400–500 tokens, the last half-minute or so
+ * of speech. Older turns reach the prompt only through the running summary, which is refreshed once
+ * twice this much is pending — see ConversationContext.
+ */
+const val RECENT_TURNS_MAX_CHARS = 1500
+
 /**
  * When true, the built-in prompts below overwrite the saved prompts in preferences on startup
  * (dev mode: code is the source of truth). Set to false to keep prompts edited in the Prompts tab.
@@ -80,6 +98,128 @@ val PROMPT_TRANSLATE_TEXT_3_PREV = translateWithContextPrompt(3)
 val PROMPT_TRANSLATE_TEXT_4_PREV = translateWithContextPrompt(4)
 val PROMPT_TRANSLATE_TEXT_5_PREV = translateWithContextPrompt(5)
 
+val PROMPT_TRANSLATE_CONVERSATION = """
+<role>
+You interpret a live spoken conversation from English into Russian for a Russian speaker who follows it in real time. Say it the way a fluent bilingual colleague sitting next to them would: natural spoken Russian, not the language of documents.
+</role>
+
+<input>
+<notes> are your running notes on the conversation so far: the topic, the people and how they address each other, names and terms with the Russian you settled on, the tone. They are empty at the start.
+<recent> holds the latest turns, oldest first: <said> is what was recognized in English, <translated> is the Russian you already gave for it. A turn without <translated> has not been translated yet; use it for context only.
+<source> is the newest recognized fragment, the only thing to translate now. The audio is cut at pauses, so <source> often continues the last turn and can start or end mid-sentence.
+All English text comes from automatic speech recognition and can contain misheard, merged or missing words.
+</input>
+
+<task>
+1. Use <notes> and <recent> to understand the topic, who is speaking and where the current sentence began.
+2. Translate <source> as the natural continuation of your earlier <translated> lines.
+</task>
+
+<rules>
+- Accurate, not literal: keep every fact, number, name, negation, condition and intent; never add, drop or soften content. The wording is yours: build the sentence the way a Russian speaker would say it.
+- Spoken Russian: short, plain phrasing and everyday words, no bureaucratic or bookish style (канцелярит). Keep the speaker's tone: jokes, irony, emotion and slang get natural Russian equivalents. Even formal speech is rendered the way a person would say it aloud.
+- Consistency: use the names, terms and «ты» or «вы» from <notes> and your earlier <translated> lines. With no earlier choice, follow the relationship: «ты» between peers in a casual talk, «вы» in a formal setting or to a group.
+- Recognition errors: when a word does not fit the topic, translate the similar-sounding word that does; drop noise and meaningless fillers. Never translate a misrecognized word literally.
+- Preserve numbers, units and proper names.
+- Do not repeat or re-translate anything from <recent>.
+</rules>
+
+<output>
+Only the Russian translation of <source>: no quotes, tags, notes or explanations.
+</output>
+
+<notes>
+$CONVERSATION_SUMMARY
+</notes>
+
+<recent>
+$RECENT_TURNS
+</recent>
+
+<source lang="en">
+$SOURCE_TEXT
+</source>
+""".trimIndent()
+
+/**
+ * Voice mode: the phrase goes to the model as audio, so it transcribes and translates in one answer.
+ * Fixed, not user-editable — the app parses the two output tags (see VoiceAnswer).
+ */
+val PROMPT_TRANSLATE_VOICE = """
+<role>
+You interpret a live spoken conversation from English into Russian for a Russian speaker who follows it in real time. Say it the way a fluent bilingual colleague sitting next to them would: natural spoken Russian, not the language of documents.
+</role>
+
+<input>
+<notes> are your running notes on the conversation so far: the topic, the people and how they address each other, names and terms with the Russian you settled on, the tone. They are empty at the start.
+<recent> holds the latest turns, oldest first: <said> is what was said in English, <translated> is the Russian you already gave for it.
+<audio> is the newest fragment of speech, the only thing to transcribe and translate now. The audio is cut at pauses, so it often continues the last turn and can start or end mid-sentence.
+</input>
+
+<task>
+1. Use <notes> and <recent> to understand the topic, who is speaking and where the current sentence began.
+2. Write down in English exactly what is said in <audio>. Use the conversation only to recognise names and terms that sound like the ones already used; never replace words you heard with words that merely fit the topic better.
+3. Translate it into Russian as the natural continuation of your earlier <translated> lines.
+</task>
+
+<rules>
+- Accurate, not literal: keep every fact, number, name, negation, condition and intent; never add, drop or soften content. The wording is yours: build the sentence the way a Russian speaker would say it.
+- Spoken Russian: short, plain phrasing and everyday words, no bureaucratic or bookish style (канцелярит). Keep the speaker's tone: jokes, irony, emotion and slang get natural Russian equivalents. Even formal speech is rendered the way a person would say it aloud.
+- Consistency: use the names, terms and «ты» or «вы» from <notes> and your earlier <translated> lines. With no earlier choice, follow the relationship: «ты» between peers in a casual talk, «вы» in a formal setting or to a group.
+- A word you cannot make out is written as [?] in <said> and as [неразборчиво] in <translated> — never invent words the audio does not contain. Leave out noise, filler words and false starts.
+- Preserve numbers, units and proper names.
+- Do not repeat or re-translate anything from <recent>.
+</rules>
+
+<output>
+Exactly these two lines and nothing else:
+<said>what was said, in English</said>
+<translated>its Russian translation</translated>
+When the audio holds no speech, output only <said></said>.
+</output>
+
+<notes>
+$CONVERSATION_SUMMARY
+</notes>
+
+<recent>
+$RECENT_TURNS
+</recent>
+
+<audio>
+$VOICE_AUDIO_MARK
+</audio>
+""".trimIndent()
+
+/** Folds the turns that left the recent window into the running notes; not user-editable. */
+val PROMPT_CONVERSATION_SUMMARY = """
+<role>
+You keep the running notes of an interpreter who translates a live English conversation into Russian.
+</role>
+
+<task>
+Rewrite <notes> so that they also cover the turns in <turns>. The notes are the interpreter's only memory of everything older than the last few turns, so keep what helps to translate what is said next and drop what will not.
+</task>
+
+<rules>
+- Keep: the topic and what is being discussed or decided now; who takes part, their roles and whether they address each other with «ты» or «вы»; names, products and terms with the exact Russian rendering already used in <translated>; the tone (casual, joking, tense, formal).
+- The English comes from speech recognition: write names and terms as they were most likely meant, not as misheard.
+- At most 120 words, plain short lines, no headings or commentary.
+</rules>
+
+<output>
+Only the updated notes.
+</output>
+
+<notes>
+$CONVERSATION_SUMMARY
+</notes>
+
+<turns>
+{{$SUMMARY_TURNS_CLEAR}}
+</turns>
+""".trimIndent()
+
 val PROMPT_ANSWER_TO_QUESTIONS = """
 <role>
 You are a concise, knowledgeable assistant.
@@ -106,22 +246,33 @@ $SOURCE_TEXT
 
 val defaultApplicationInfo = ApplicationInfo(
     lastSelectedDevice = "",
-    selectedModel = LlmModel(
-        id = GoogleAiModelsEnum.GEMMA_3_27B.type,
-        description = GoogleAiModelsEnum.GEMMA_3_27B.getDescription(),
-        engine = LlmModelEngine.GOOGLE,
-        googleAiModel = GoogleAiModelsEnum.GEMMA_3_27B,
+    // Free tier: Gemini 3.5 Flash-Lite answers in about a second; Gemma 4 31B, with a larger daily
+    // allowance, took 10–25 seconds a phrase in a November 2026 test. No reserves until the user adds them.
+    translationMethods = listOf(
+        TranslationMethod(
+            model = LlmModel(
+                id = GoogleAiModelsEnum.GEMINI_3_5_FLASH_LITE.type,
+                description = GoogleAiModelsEnum.GEMINI_3_5_FLASH_LITE.getDescription(),
+                engine = LlmModelEngine.GOOGLE,
+                googleAiModel = GoogleAiModelsEnum.GEMINI_3_5_FLASH_LITE,
+            ),
+            recognizer = VoiceRecognitionEngine.WHISPER_BATCH,
+        ),
     ),
     googleCloudToken = "",
     openAiToken = "",
     claudeToken = "",
     speechmaticsToken = "",
     prompt = PromptModel(
-        name = "Translate text",
-        prompt = PROMPT_TRANSLATE_TEXT,
+        name = PROMPT_NAME_TRANSLATE_CONVERSATION,
+        prompt = PROMPT_TRANSLATE_CONVERSATION,
     ),
     lastOpenedTab = 1,
     promptsMap = mapOf(
+        PROMPT_NAME_TRANSLATE_CONVERSATION to PromptModel(
+            name = PROMPT_NAME_TRANSLATE_CONVERSATION,
+            prompt = PROMPT_TRANSLATE_CONVERSATION,
+        ),
         "Translate text" to PromptModel(
             name = "Translate text",
             prompt = PROMPT_TRANSLATE_TEXT,
@@ -163,7 +314,6 @@ val defaultApplicationInfo = ApplicationInfo(
         streamingMinChars = 20,
     ),
     questionLanguage = "en",
-    voiceRecognitionEngine = VoiceRecognitionEngine.WHISPER_BATCH,
     useStreamingResponse = true,
     sherpaModelPath = "",
     sherpaConfig = SherpaModelConfig(),

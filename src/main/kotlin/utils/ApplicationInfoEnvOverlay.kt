@@ -6,9 +6,13 @@ import models.domain.LlmModel
 import models.domain.PromptModel
 import models.domain.SherpaModelConfig
 import models.domain.SherpaModelConfigNullable
+import models.domain.TranslationMethod
 import models.domain.VoiceRecognitionEngine
 import models.domain.WhisperModelConfigNullable
-import models.domain.findLlmModelById
+import models.domain.onRecognizer
+import models.domain.resolveLlmModel
+import models.domain.resolveMethodChain
+import models.domain.resolveTranslationMethod
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 
@@ -40,6 +44,8 @@ class ApplicationInfoEnvOverlay(
         const val KEY_QUESTION_LANGUAGE = "DIALOG_QUESTION_LANGUAGE"
         const val KEY_VOICE_RECOGNITION_ENGINE = "DIALOG_VOICE_RECOGNITION_ENGINE"
 
+        const val KEY_TRANSLATION_METHODS = "DIALOG_TRANSLATION_METHODS"
+        /** Older single-model key: a text method, used when [KEY_TRANSLATION_METHODS] is not set. */
         const val KEY_LLM_MODEL_ID = "DIALOG_LLM_MODEL_ID"
         const val KEY_USE_STREAMING_RESPONSE = "DIALOG_USE_STREAMING_RESPONSE"
         const val KEY_GOOGLE_API_KEY = "DIALOG_GOOGLE_API_KEY"
@@ -75,11 +81,36 @@ class ApplicationInfoEnvOverlay(
 
     private val envLlmModel: LlmModel? by lazy {
         val id = envSettings.getString(KEY_LLM_MODEL_ID) ?: return@lazy null
-        findLlmModelById(id) ?: run {
+        resolveLlmModel(id) ?: run {
             warnOnce(KEY_LLM_MODEL_ID, "$KEY_LLM_MODEL_ID does not name a known model, ignored")
             null
         }
     }
+
+    /** The key the `.env` chain comes from: the methods list, or the older single model as a text method. */
+    private val envTranslationMethodsKey: String by lazy {
+        if (envSettings.getString(KEY_TRANSLATION_METHODS) != null) KEY_TRANSLATION_METHODS else KEY_LLM_MODEL_ID
+    }
+
+    private val envTranslationMethods: List<String>? by lazy {
+        val listed = envSettings.getString(KEY_TRANSLATION_METHODS)
+            ?: return@lazy envLlmModel?.let { listOf("${TranslationMethod.LEGACY_TEXT_PREFIX}:${it.id}") }
+        val keys = listed.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val known = keys.filter { resolveTranslationMethod(it) != null }
+        if (known.size < keys.size) {
+            warnOnce(KEY_TRANSLATION_METHODS, "$KEY_TRANSLATION_METHODS names unknown methods, ignored: ${keys - known.toSet()}")
+        }
+        known.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * The chain `.env` or the default would give, as the keys the app saves ("text:" keys of `.env` resolved
+     * on its recogniser), so a saved chain that only repeats it is not stored.
+     */
+    private fun fallbackMethodKeys(): List<String> =
+        resolveMethodChain(envTranslationMethods.orEmpty(), legacyRecognizer = envVoiceRecognitionEngine)
+            .ifEmpty { onRecognizer(defaultApplicationInfo.translationMethods, envVoiceRecognitionEngine) }
+            .map { it.key }
 
     private val envDecodingMethod: String? by lazy {
         val method = envSettings.getString(KEY_SHERPA_DECODING_METHOD) ?: return@lazy null
@@ -105,7 +136,8 @@ class ApplicationInfoEnvOverlay(
             voiceRecognitionEngine = stored.voiceRecognitionEngine
                 .orEnvValue(KEY_VOICE_RECOGNITION_ENGINE, envVoiceRecognitionEngine),
 
-            selectedModel = envSelectedModel(stored.selectedModel),
+            translationMethods = stored.translationMethods
+                .orEnvValue(envTranslationMethodsKey, envTranslationMethods),
             useStreamingResponse = stored.useStreamingResponse
                 .orEnvValue(KEY_USE_STREAMING_RESPONSE, envUseStreamingResponse()),
             googleCloudToken = stored.googleCloudToken.orEnv(KEY_GOOGLE_API_KEY, envGoogleToken()),
@@ -163,11 +195,11 @@ class ApplicationInfoEnvOverlay(
                 .dropIfFallback(envAudioInputDevice() ?: defaultApplicationInfo.lastSelectedDevice),
             questionLanguage = toSave.questionLanguage
                 .dropIfFallback(envQuestionLanguage() ?: defaultApplicationInfo.questionLanguage),
-            voiceRecognitionEngine = toSave.voiceRecognitionEngine
-                .dropIfFallback(envVoiceRecognitionEngine ?: defaultApplicationInfo.voiceRecognitionEngine),
+            // Part of each text method now; the old field is only read, to migrate it.
+            voiceRecognitionEngine = null,
 
-            selectedModel = toSave.selectedModel
-                ?.takeUnless { it.id == (envLlmModel ?: defaultApplicationInfo.selectedModel).id },
+            translationMethods = toSave.translationMethods?.takeUnless { it == fallbackMethodKeys() },
+            selectedModel = null,
             useStreamingResponse = toSave.useStreamingResponse
                 .dropIfFallback(envUseStreamingResponse() ?: defaultApplicationInfo.useStreamingResponse),
             googleCloudToken = toSave.googleCloudToken
@@ -257,14 +289,6 @@ class ApplicationInfoEnvOverlay(
 
     private fun warnOnce(key: String, message: String) {
         if (warnedKeys.add(key)) log.warn(message)
-    }
-
-    private fun envSelectedModel(stored: LlmModel?): LlmModel? {
-        if (stored == null) return envLlmModel
-        if (envLlmModel != null && envLlmModel?.id != stored.id) {
-            envSettings.noteOverriddenByStoredValue(KEY_LLM_MODEL_ID)
-        }
-        return stored
     }
 
     /** A blank saved string counts as "not filled in", so a fallback supplies it. */

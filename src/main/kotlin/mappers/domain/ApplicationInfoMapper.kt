@@ -8,6 +8,8 @@ import models.domain.SherpaModelConfig
 import models.domain.SherpaModelConfigNullable
 import models.domain.WhisperModelConfig
 import models.domain.WhisperModelConfigNullable
+import models.domain.onRecognizer
+import models.domain.resolveMethodChain
 
 class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfoNullable>() {
 
@@ -15,7 +17,8 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
         return with(model) {
             ApplicationInfo(
                 lastSelectedDevice = lastSelectedDevice ?: defaultApplicationInfo.lastSelectedDevice,
-                selectedModel = selectedModel ?: defaultApplicationInfo.selectedModel,
+                translationMethods = resolveMethodChain(translationMethods.orEmpty(), legacyRecognizer = voiceRecognitionEngine)
+                    .ifEmpty { onRecognizer(defaultApplicationInfo.translationMethods, voiceRecognitionEngine) },
                 googleCloudToken = googleCloudToken ?: defaultApplicationInfo.googleCloudToken,
                 openAiToken = openAiToken ?: defaultApplicationInfo.openAiToken,
                 claudeToken = claudeToken ?: defaultApplicationInfo.claudeToken,
@@ -28,7 +31,6 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                 whisperModelPath = whisperModelPath ?: defaultApplicationInfo.whisperModelPath,
                 whisperModelConfig = reverseWhisperConfig(whisperModelConfig),
                 questionLanguage = questionLanguage ?: defaultApplicationInfo.questionLanguage,
-                voiceRecognitionEngine = voiceRecognitionEngine ?: defaultApplicationInfo.voiceRecognitionEngine,
                 useStreamingResponse = useStreamingResponse ?: defaultApplicationInfo.useStreamingResponse,
                 sherpaModelPath = sherpaModelPath ?: defaultApplicationInfo.sherpaModelPath,
                 sherpaConfig = reverseSherpaConfig(sherpaConfig),
@@ -40,7 +42,7 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
         return with(model) {
             ApplicationInfoNullable(
                 lastSelectedDevice = lastSelectedDevice,
-                selectedModel = selectedModel,
+                translationMethods = translationMethods.map { it.key },
                 googleCloudToken = googleCloudToken,
                 openAiToken = openAiToken,
                 claudeToken = claudeToken,
@@ -53,7 +55,6 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                 whisperModelPath = whisperModelPath,
                 whisperModelConfig = mapWhisperConfig(whisperModelConfig),
                 questionLanguage = questionLanguage,
-                voiceRecognitionEngine = voiceRecognitionEngine,
                 useStreamingResponse = useStreamingResponse,
                 sherpaModelPath = sherpaModelPath,
                 sherpaConfig = mapSherpaConfig(sherpaConfig),

@@ -20,9 +20,7 @@ import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
 import kotlinx.coroutines.launch
 import mainThreadScope
-import models.domain.LlmModel
 import models.domain.SherpaModelConfig
-import models.domain.allLlmModels
 import org.slf4j.LoggerFactory
 import repository.PreferencesRepository
 import ui.base.BaseTab
@@ -31,7 +29,6 @@ import java.awt.Desktop
 import java.net.URI
 import javax.sound.sampled.Mixer
 
-import models.domain.VoiceRecognitionEngine
 
 import extensions.addCheckBox
 import javafx.scene.control.CheckBox
@@ -47,6 +44,7 @@ class SettingsTab(
     private val audioChunker: AudioChunker,
     private val promptTab: PromptTab,
     private val consoleTab: ConsoleTab,
+    private val methodChainSelector: MethodChainSelector,
     preferencesRepository: PreferencesRepository,
 ) : BaseTab(
     preferencesRepository = preferencesRepository,
@@ -59,7 +57,6 @@ class SettingsTab(
 
     private val log = LoggerFactory.getLogger("SettingsTab")
 
-    private var streamingResponseBox: VBox? = null
     private val detailContainer = StackPane().apply {
         background = Background(BackgroundFill(Color.web(WINDOW_BACKGROUND_COLOUR), null, null))
     }
@@ -105,7 +102,6 @@ class SettingsTab(
         left = sidebar
         center = detailContainer
 
-        applyModelStreamingVisibility(appInfo.selectedModel)
         generalCategoryButton.isSelected = true
         showCategory(generalScroll)
     }
@@ -147,13 +143,9 @@ class SettingsTab(
         val box = VBox(4.0).apply {
             padding = Insets(0.0, 20.0, 20.0, 20.0)
 
-            addTitleLabel("Voice recognition engine:")
-            addComboBox(
-                items = VoiceRecognitionEngine.entries,
-                selectedItem = appInfo.voiceRecognitionEngine,
-                toStringFn = { it.title },
-                onSelected = { engine -> saveAppInfo(getAppInfo().copy(voiceRecognitionEngine = engine)) }
-            )
+            addTitleLabel("Translation method: 1 first, then 2 and 3 when the one before fails")
+            addLabel("How the speech is heard → which model translates (only a speech recogniser needs one)")
+            children.add(methodChainSelector.node)
 
             addTitleLabel("Audio device for voice recognition:")
             val devices: List<Mixer.Info> = audioChunker.getAvailableInputDevices()
@@ -186,25 +178,11 @@ class SettingsTab(
         val box = VBox(4.0).apply {
             padding = Insets(0.0, 20.0, 20.0, 20.0)
 
-            addTitleLabel("AI model:")
-            val models = allLlmModels()
-            addComboBox(
-                items = models,
-                selectedItem = models.firstOrNull { it.id == appInfo.selectedModel.id } ?: appInfo.selectedModel,
-                toStringFn = { it.description ?: "" },
-                onSelected = {
-                    saveAppInfo(getAppInfo().copy(selectedModel = it))
-                    applyModelStreamingVisibility(it)
-                }
+            addCheckBox(
+                text = "Use streaming response (show translation as it is generated)",
+                checked = appInfo.useStreamingResponse,
+                onToggle = { checked -> saveAppInfo(getAppInfo().copy(useStreamingResponse = checked)) },
             )
-
-            streamingResponseBox = VBox(4.0).apply {
-                addCheckBox(
-                    text = "Use streaming response (show translation as it is generated)",
-                    checked = appInfo.useStreamingResponse,
-                    onToggle = { checked -> saveAppInfo(getAppInfo().copy(useStreamingResponse = checked)) },
-                )
-            }.also { children.add(it) }
 
             addTitleLabel("Google Cloud API key:")
             addTextFieldWithCopyPasteActionButtons(
@@ -420,14 +398,5 @@ class SettingsTab(
             ownerStage?.showAlert(alertTitle = "Error", alertContent = "Could not open terminal: ${e.message}")
         }
     }
-
-    private fun applyModelStreamingVisibility(model: LlmModel) {
-        val supports = model.googleAiModel?.supportsStreaming == true
-        streamingResponseBox?.apply {
-            isVisible = supports
-            isManaged = supports
-        }
-    }
-
 
 }
