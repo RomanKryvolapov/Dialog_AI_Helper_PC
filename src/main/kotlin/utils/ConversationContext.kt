@@ -55,6 +55,15 @@ class ConversationContext {
         fun renderTurns(turns: List<ConversationTurn>): String =
             turns.map(::render).filter { it.isNotEmpty() }.joinToString("\n")
 
+        /**
+         * The text of the turn [n] before the phrase ({{previous_text_n}}, newest = 1), counting only turns that
+         * have text: one still waiting for its transcript, or later found to be silence, takes no slot.
+         */
+        fun previousText(turns: List<ConversationTurn>, n: Int): String {
+            val spoken = turns.filter { it.source.isNotEmpty() }
+            return spoken.getOrNull(spoken.size - n)?.source.orEmpty()
+        }
+
         /** How many of the newest [turns] fit [maxChars] once rendered — at least [minTurns] of them. */
         private fun newestCount(turns: List<ConversationTurn>, maxChars: Int, minTurns: Int): Int {
             var count = 0

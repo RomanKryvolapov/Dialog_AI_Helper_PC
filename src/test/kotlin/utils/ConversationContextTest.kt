@@ -218,6 +218,19 @@ class ConversationContextTest {
     }
 
     @Test
+    fun `a turn without text takes no previous-sentence slot`() {
+        val context = ConversationContext()
+        context.add("we start the meeting now", summarize = false)
+        val noise = context.add("", summarize = false).turn // a chunk still with Whisper, later heard as silence
+        val before = context.add("the release slipped", summarize = false).before
+        context.discard(noise)
+        assertEquals("we start the meeting now", ConversationContext.previousText(before.turns, 1))
+        assertEquals("", ConversationContext.previousText(before.turns, 2))
+        noise.source = "late transcript"
+        assertEquals("late transcript", ConversationContext.previousText(before.turns, 1), "once it has text it counts")
+    }
+
+    @Test
     fun `a voice phrase joins the conversation once its transcript arrives, and silence is discarded`() {
         val context = ConversationContext()
         context.say(1)

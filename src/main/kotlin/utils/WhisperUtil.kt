@@ -4,21 +4,27 @@ import java.io.File
 
 interface WhisperUtil {
 
-    var onResultListener: ((String) -> Unit)?
-
     /**
-     * Called when a chunk produced no text: `whisperFailed` is true when Whisper itself failed (no Python,
-     * the process crashed, was cancelled or evicted by the concurrency limit), false when it heard nothing.
+     * One phrase recorded at pauses ([wavFile], deleted afterwards), transcribed by the one-shot script.
+     * Each call answers for its own phrase, so the result goes to that phrase however the runs overlap.
      */
-    var onFailureListener: ((whisperFailed: Boolean) -> Unit)?
-
-    fun runFasterWhisper(wavFile: File, language: String)
+    suspend fun recognize(wavFile: File, language: String): WhisperResult
 
     /**
-     * One recorded phrase transcribed on its own, outside the listener flow — for a phrase a voice method
-     * could not translate that falls through to a text method. The text, or null when Whisper failed or
-     * heard nothing.
+     * Like [recognize] for a phrase held in memory — one a voice method could not translate that falls
+     * through to a text method. The text, or null when Whisper failed or heard nothing.
      */
     suspend fun transcribe(wav: ByteArray, language: String): String?
 
+}
+
+/** What Whisper made of one phrase. */
+sealed interface WhisperResult {
+    data class Heard(val text: String) : WhisperResult
+
+    /** It ran and heard no speech. */
+    data object Silence : WhisperResult
+
+    /** Whisper itself failed: no Python, the process did not start, crashed, or was evicted by the concurrency limit. */
+    data object Failed : WhisperResult
 }
