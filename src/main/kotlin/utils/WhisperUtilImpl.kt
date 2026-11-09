@@ -28,8 +28,6 @@ class WhisperUtilImpl(
     @Volatile
     private var maxConcurrentProcesses = 5
 
-    override var onResultListener: ((String) -> Unit)? = null
-    override var onFailureListener: ((whisperFailed: Boolean) -> Unit)? = null
 
     private data class ProcessEntry(val process: Process, val job: Job)
 
@@ -47,28 +45,13 @@ class WhisperUtilImpl(
         }
     }
 
-    /** What one run of the script came to. */
-    private sealed interface Outcome {
-        data class Heard(val text: String) : Outcome
-        /** It ran and heard no speech. */
-        data object Silence : Outcome
-        /** Whisper itself failed: no Python, the process did not start, crashed, or was cancelled. */
-        data object Failed : Outcome
-    }
-
-    override fun runFasterWhisper(wavFile: File, language: String) {
-        backgroundThreadScope.launch {
-            var outcome: Outcome = Outcome.Failed
-            try {
-                outcome = runWhisper(wavFile, language)
-            } finally {
-                when (val done = outcome) {
-                    is Outcome.Heard -> onResultListener?.invoke(done.text)
-                    Outcome.Silence -> runCatching { onFailureListener?.invoke(false) }
-                    Outcome.Failed -> runCatching { onFailureListener?.invoke(true) }
-                }
-            }
-        }
+    override suspend fun recognize(wavFile: File, language: String): WhisperResult = try {
+        runWhisper(wavFile, language)
+    } catch (e: CancellationException) {
+        // The caller itself was cancelled: pass that on. Otherwise only this Whisper process was evicted by
+        // the concurrency limit, which is a failed transcription, not a cancellation.
+        currentCoroutineContext().ensureActive()
+        WhisperResult.Failed
     }
 
     override suspend fun transcribe(wav: ByteArray, language: String): String? {
@@ -78,18 +61,11 @@ class WhisperUtilImpl(
             log.error("Could not write the phrase for Whisper: ${e.message}", e)
             return null
         }
-        return try {
-            (runWhisper(file, language) as? Outcome.Heard)?.text
-        } catch (e: CancellationException) {
-            // The caller itself was cancelled: pass that on. Otherwise only this Whisper process was
-            // evicted by the concurrency limit, which is a failed transcription, not a cancellation.
-            currentCoroutineContext().ensureActive()
-            null
-        }
+        return (recognize(file, language) as? WhisperResult.Heard)?.text
     }
 
     /** Runs the one-shot Whisper script on [wavFile] (deleted afterwards). */
-    private suspend fun runWhisper(wavFile: File, language: String): Outcome = withContext(Dispatchers.IO) {
+    private suspend fun runWhisper(wavFile: File, language: String): WhisperResult = withContext(Dispatchers.IO) {
         log.debug("run whisper on ${wavFile.name}")
         try {
             val projectRoot = File("").absolutePath
@@ -99,7 +75,7 @@ class WhisperUtilImpl(
             val pythonExecutable = File(venvPythonPath)
             if (!pythonExecutable.exists()) {
                 log.error("Python executable not found at: $venvPythonPath")
-                return@withContext Outcome.Failed
+                return@withContext WhisperResult.Failed
             }
 
             val processBuilder = ProcessBuilder(
@@ -118,7 +94,7 @@ class WhisperUtilImpl(
                 processBuilder.start()
             } catch (e: Exception) {
                 log.error("Failed to start whisper process: ${e.message}", e)
-                return@withContext Outcome.Failed
+                return@withContext WhisperResult.Failed
             }
 
             val entry = ProcessEntry(process, coroutineContext[Job]!!)
@@ -147,7 +123,7 @@ class WhisperUtilImpl(
                     } else {
                         log.warn("Whisper failed (exit $exitCode) for ${wavFile.name} with no output")
                     }
-                    Outcome.Failed
+                    WhisperResult.Failed
                 } else {
                     val text = result.toString()
                         .replace(Regex("""(\.\s*){2,}"""), "")
@@ -155,9 +131,9 @@ class WhisperUtilImpl(
                     log.debug("whisper text: $text")
                     if (text.isBlank()) {
                         log.warn("Whisper produced empty text for ${wavFile.name}")
-                        Outcome.Silence
+                        WhisperResult.Silence
                     } else {
-                        Outcome.Heard(text)
+                        WhisperResult.Heard(text)
                     }
                 }
             } finally {
@@ -170,7 +146,7 @@ class WhisperUtilImpl(
             throw e
         } catch (e: Exception) {
             log.error("Exception during whisper execution: ${e.message}", e)
-            Outcome.Failed
+            WhisperResult.Failed
         } finally {
             if (!wavFile.delete()) {
                 log.warn("Failed to delete chunk ${wavFile.name}")

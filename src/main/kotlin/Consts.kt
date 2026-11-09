@@ -1,6 +1,9 @@
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.javafx.JavaFx
+import org.slf4j.LoggerFactory
 import models.domain.*
 
 const val COLOUR_GREEN = "#3C713C"
@@ -320,8 +323,17 @@ val defaultApplicationInfo = ApplicationInfo(
 )
 
 
-val mainThreadScope = CoroutineScope(Dispatchers.JavaFx)
+/**
+ * Logs a coroutine that failed with nothing to catch it. With the [SupervisorJob]s below such a failure ends
+ * only that coroutine: with a plain job it cancelled its whole scope, and with it every other piece of work
+ * there — the translation scheduler, recognition, the settings listeners — until the app was restarted.
+ */
+private val logUncaught = CoroutineExceptionHandler { _, error ->
+    LoggerFactory.getLogger("Coroutines").error("A background task failed: ${error.message}", error)
+}
 
-val backgroundThreadScope = CoroutineScope(Dispatchers.IO)
+val mainThreadScope = CoroutineScope(SupervisorJob() + Dispatchers.JavaFx + logUncaught)
 
-val defaultThreadScope = CoroutineScope(Dispatchers.Default)
+val backgroundThreadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + logUncaught)
+
+val defaultThreadScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + logUncaught)

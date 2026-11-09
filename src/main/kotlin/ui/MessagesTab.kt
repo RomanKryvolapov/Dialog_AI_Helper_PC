@@ -51,6 +51,7 @@ import ui.base.BaseTab
 import utils.AppStatus
 import utils.AudioChunker
 import utils.DialogLogger
+import utils.WhisperResult
 import utils.WhisperUtil
 
 import dev.langchain4j.model.input.Prompt
@@ -174,11 +175,6 @@ class MessagesTab(
     @Volatile
     private var translationEpoch = 0L
 
-    /** UI-thread only: rows with placeholder text waiting for Whisper results, oldest first. */
-    private val pendingRows = ArrayDeque<PendingRow>()
-
-    /** A row waiting for Whisper, with its recording when a voice method in the chain may need it. */
-    private class PendingRow(val index: Int, val audio: PhraseAudio?)
 
     private var labelMessagePartVoiceRecognition = ""
     private var labelMessagePartProcessMessage = ""
@@ -376,53 +372,16 @@ class MessagesTab(
             labelMessagePartRecord = ""
             updateLabelMessage()
         }
-        whisperUtil.onResultListener = { resultString ->
-            labelMessagePartVoiceRecognition = "Whisper result ready"
-            updateLabelMessage()
-            dialogLogger.logQuestion(resultString)
-            Platform.runLater {
-                val wasAtBottom = isScrolledToBottom()
-                val pending = pendingRows.removeFirstOrNull()
-                val idx = pending?.index ?: messageBox.children.size
-                val entry = createMessageEntry(
-                    DialogItem(originalMessage = resultString, messageFromAi = "..."),
-                )
-                if (idx in 0 until messageBox.children.size) {
-                    messageBox.children[idx] = entry
-                } else {
-                    messageBox.children.add(entry)
-                }
-                if (wasAtBottom) scrollToBottom()
-                processMessage(index = idx, message = resultString, audio = pending?.audio)
-            }
-        }
-        whisperUtil.onFailureListener = { whisperFailed ->
-            Platform.runLater {
-                val pending = pendingRows.removeFirstOrNull() ?: return@runLater
-                val audio = pending.audio
-                if (whisperFailed && audio != null) {
-                    // Method 1 could not hear it, but the recording is kept for a voice method further down
-                    // the chain: the phrase goes on to it like after any other failure of method 1.
-                    log.warn("Whisper failed for a chunk, handing the recording to the next method")
-                    setProcessStatus("Whisper failed — the phrase goes to the next method")
-                    processMessage(index = pending.index, message = "", audio = audio, failedMethod = getAppInfo().primaryMethod)
-                    return@runLater
-                }
-                log.warn(if (whisperFailed) "Whisper failed for a chunk, removing placeholder row" else "Whisper heard nothing in a chunk, removing placeholder row")
-                if (pending.index in 0 until messageBox.children.size) {
-                    messageBox.children.removeAt(pending.index)
-                }
-            }
-        }
     }
 
     /**
-     * Whisper (batch) recognises the phrase for a text primary method. When a voice method is among the
-     * reserves, the recording is kept with the phrase so that method can hear it if the primary fails.
+     * Whisper (batch) recognises the phrase for a text method 1: its row is added at once, and the result of
+     * this phrase's own Whisper run fills that row, however the runs of other phrases overlap it. When a
+     * voice method is among the reserves, the recording is kept so that method can hear it if method 1 fails.
      */
     private fun onWhisperPhrase(wavFile: File) {
-        val keepRecording = getAppInfo().translationMethods.any { it.voice }
-        val audio = if (keepRecording) {
+        val appInfo = getAppInfo()
+        val audio = if (appInfo.translationMethods.any { it.voice }) {
             try {
                 PhraseAudio(wavFile.readBytes())
             } catch (e: IOException) {
@@ -434,36 +393,99 @@ class MessagesTab(
         updateLabelMessage()
         Platform.runLater {
             val wasAtBottom = isScrolledToBottom()
-            val idx = messageBox.children.size
-            pendingRows.addLast(PendingRow(idx, audio))
-            messageBox.children.add(
-                createMessageEntry(
-                    DialogItem(originalMessage = "...", messageFromAi = "..."),
-                )
-            )
+            val index = messageBox.children.size
+            messageBox.children.add(createMessageEntry(DialogItem(originalMessage = "...", messageFromAi = "...")))
             if (wasAtBottom) scrollToBottom()
+            val epoch = translationEpoch
+            val added = beginTurn("")
+            backgroundThreadScope.launch {
+                val result = whisperUtil.recognize(wavFile, appInfo.questionLanguage)
+                // After Clear dialog the row and the turn belong to a screen and a conversation that are gone.
+                Platform.runLater { if (epoch == translationEpoch) onWhisperResult(index, added, result, audio) }
+            }
         }
-        whisperUtil.runFasterWhisper(
-            wavFile = wavFile,
-            language = getAppInfo().questionLanguage,
-        )
     }
 
-    /** [failedMethod]: the method that already failed this phrase (Whisper could not hear it for method 1). */
-    private fun processMessage(index: Int, message: String, audio: PhraseAudio? = null, failedMethod: TranslationMethod? = null) {
+    /** FX thread: settles the row and the turn of one phrase Whisper (batch) has finished with. */
+    private fun onWhisperResult(index: Int, added: ConversationContext.Added, result: WhisperResult, audio: PhraseAudio?) {
+        when (result) {
+            is WhisperResult.Heard -> {
+                labelMessagePartVoiceRecognition = "Whisper result ready"
+                updateLabelMessage()
+                dialogLogger.logQuestion(result.text)
+                val wasAtBottom = isScrolledToBottom()
+                if (index in 0 until messageBox.children.size) {
+                    messageBox.children[index] = createMessageEntry(DialogItem(originalMessage = result.text, messageFromAi = "..."))
+                }
+                if (wasAtBottom) scrollToBottom()
+                added.turn.source = result.text
+                enqueueTranslation(index, added, audio)
+            }
+            WhisperResult.Failed -> if (audio != null) {
+                // Method 1 could not hear it, but the recording is kept for a voice method further down the
+                // chain: the phrase goes on to it like after any other failure of method 1, and that method's
+                // transcript fills the turn.
+                log.warn("Whisper failed for a phrase, handing the recording to the next method")
+                setProcessStatus("Whisper failed — the phrase goes to the next method")
+                enqueueTranslation(index, added, audio, failedMethod = getAppInfo().primaryMethod)
+            } else {
+                log.warn("Whisper failed for a phrase, hiding its row")
+                conversationContext.discard(added.turn)
+                hideRow(index)
+            }
+            WhisperResult.Silence -> {
+                log.debug("Whisper heard nothing in a phrase, hiding its row")
+                conversationContext.discard(added.turn)
+                hideRow(index)
+            }
+        }
+    }
+
+    /**
+     * Hidden rather than removed: later phrases' rows are addressed by index, and removing one would shift
+     * every row after it, so their translations would land in the wrong rows.
+     */
+    private fun hideRow(index: Int) {
+        messageBox.children.getOrNull(index)?.apply {
+            isVisible = false
+            isManaged = false
+        }
+    }
+
+    /** A phrase whose text (or recording, [audio]) is ready: it joins the conversation and the translation queue. */
+    private fun processMessage(index: Int, message: String, audio: PhraseAudio? = null) {
         if (audio == null && message.isBlank()) {
             log.error("Translate message is empty")
             return
         }
-        ensureSchedulerStarted()
+        enqueueTranslation(index, beginTurn(message), audio)
+    }
+
+    /**
+     * The phrase's turn in the conversation, taken now — for a Whisper (batch) phrase when its row appears,
+     * before its text is known, so turns keep the order the phrases were said in however the Whisper runs
+     * finish. A turn with no text yet stays out of every prompt and every summary until it gets one.
+     */
+    private fun beginTurn(source: String): ConversationContext.Added {
         val appInfo = getAppInfo()
         val added = conversationContext.add(
-            source = message,
+            source = source,
             // The voice prompt always carries the running notes, so a chain with a voice method keeps them.
             summarize = appInfo.translationMethods.any { it.voice } ||
                 appInfo.prompt.prompt.contains(CONVERSATION_SUMMARY),
         )
         added.fold?.let { foldConversation(it, appInfo) }
+        return added
+    }
+
+    /** [failedMethod]: the method that already failed this phrase (Whisper could not hear it for method 1). */
+    private fun enqueueTranslation(
+        index: Int,
+        added: ConversationContext.Added,
+        audio: PhraseAudio?,
+        failedMethod: TranslationMethod? = null,
+    ) {
+        ensureSchedulerStarted()
         val task = TranslationTask(
             seq = ++translationSeq,
             index = index,
@@ -576,7 +598,6 @@ class MessagesTab(
      * [maxConcurrency] text translations run in parallel, voice phrases one at a time. Each translation runs
      * in its own coroutine so a slow or hung request never blocks the others.
      */
-
     private suspend fun runSchedulerLoop() {
         while (true) {
             val task = takeNextTask()
@@ -600,11 +621,18 @@ class MessagesTab(
                 requeueTask(task)
                 continue
             }
-            var choice = choose(task, chain, appInfo)
-            if (choice is MethodChoice.NoneLeft && task.tried.isNotEmpty() && task.attempts < MAX_TRANSLATION_ATTEMPTS) {
-                // Every method has failed this phrase once: another pass from the top of the chain.
-                task.tried.clear()
-                choice = choose(task, chain, appInfo)
+            val choice = try {
+                chooseWithRetryPass(task, chain, appInfo)
+            } catch (e: CancellationException) {
+                sem.release()
+                throw e
+            } catch (e: Exception) {
+                // Most likely a prompt edited into one the template engine refuses. This phrase cannot be
+                // prepared; the loop goes on, and without the slot it took.
+                sem.release()
+                log.error("A phrase could not be prepared: ${e.message}", e)
+                failTranslation(task, task.failures + "its request could not be prepared: ${e.message}")
+                continue
             }
             when (choice) {
                 is MethodChoice.Use -> backgroundThreadScope.launch {
@@ -635,6 +663,14 @@ class MessagesTab(
                 }
             }
         }
+    }
+
+    /** [choose], and when every method has failed the phrase once, another pass from the top of the chain. */
+    private fun chooseWithRetryPass(task: TranslationTask, chain: List<TranslationMethod>, appInfo: ApplicationInfo): MethodChoice {
+        val choice = choose(task, chain, appInfo)
+        if (choice !is MethodChoice.NoneLeft || task.tried.isEmpty() || task.attempts >= MAX_TRANSLATION_ATTEMPTS) return choice
+        task.tried.clear()
+        return choose(task, chain, appInfo)
     }
 
     private suspend fun olderPhraseAwaitsTranscript(task: TranslationTask): Boolean =
@@ -681,7 +717,7 @@ class MessagesTab(
         val earlier = task.context.turns
         for (i in 1..5) {
             if (promptText.contains("{{previous_text_$i}}")) {
-                variables["previous_text_$i"] = earlier.getOrNull(earlier.size - i)?.source.orEmpty()
+                variables["previous_text_$i"] = ConversationContext.previousText(earlier, i)
             }
         }
         if (promptText.contains(CONVERSATION_SUMMARY)) {
@@ -885,7 +921,14 @@ class MessagesTab(
             updateMessageAt(index = task.index, newItem = DialogItem(originalMessage = heard, messageFromAi = "..."))
         }
         val template = templateFor(method, appInfo)
-        val prompt = PromptTemplate.from(template).apply(buildPromptVariables(template, task))
+        val prompt = try {
+            PromptTemplate.from(template).apply(buildPromptVariables(template, task))
+        } catch (e: Exception) {
+            // A prompt edited into one the template engine refuses: no method can be asked with it.
+            log.error("The prompt could not be built: ${e.message}", e)
+            failTranslation(task, task.failures + "its request could not be prepared: ${e.message}")
+            return
+        }
         var finalText = ""
         try {
             streamFor(method, appInfo, prompt, task.audio)
