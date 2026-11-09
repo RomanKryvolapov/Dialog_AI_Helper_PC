@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.callbackFlow
 import mappers.domain.ApplicationInfoMapper
 import models.domain.ApplicationInfo
 import models.domain.ApplicationInfoNullable
+import models.domain.TranslationMethod
+import models.domain.resolveTranslationMethod
 import utils.ApplicationInfoEnvOverlay
 import java.util.prefs.PreferenceChangeEvent
 import java.util.prefs.PreferenceChangeListener
@@ -27,6 +29,21 @@ class PreferencesRepositoryImpl(
         // java.util.prefs caps a single value at Preferences.MAX_VALUE_LENGTH (8192 chars);
         // the serialized ApplicationInfo (with all prompts) exceeds that, so we store it in chunks.
         private const val CHUNK_SIZE = 3000
+
+        /**
+         * A model saved before translation methods existed becomes method 1, a text method on the recogniser
+         * saved then (the mapper resolves "text:" keys on it). Saved methods the catalog no longer knows are
+         * dropped; a chain with none left counts as unset, so `.env` and then the default supply it. Dropped
+         * models move to their successors when the chain is resolved.
+         */
+        internal fun migrated(stored: ApplicationInfoNullable): ApplicationInfoNullable {
+            val keys = stored.translationMethods
+                ?: stored.selectedModel?.let { listOf("${TranslationMethod.LEGACY_TEXT_PREFIX}:${it.id}") }
+            return stored.copy(
+                translationMethods = keys?.filter { resolveTranslationMethod(it) != null }?.takeIf { it.isNotEmpty() },
+                selectedModel = null,
+            )
+        }
     }
 
     override val appInfoFlow: Flow<ApplicationInfo> = callbackFlow {
@@ -55,7 +72,7 @@ class PreferencesRepositoryImpl(
             e.printStackTrace()
             ApplicationInfoNullable()
         }
-        return applicationInfoMapper.reverse(applicationInfoEnvOverlay.fillFromEnv(stored))
+        return applicationInfoMapper.reverse(applicationInfoEnvOverlay.fillFromEnv(migrated(stored)))
     }
 
     override fun saveAppInfo(applicationInfo: ApplicationInfo) {

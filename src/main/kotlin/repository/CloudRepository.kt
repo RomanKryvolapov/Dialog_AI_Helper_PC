@@ -12,7 +12,13 @@ interface CloudRepository {
      */
     fun streamGoogleAI(model: String, apiKey: String, prompt: Prompt): Flow<String>
 
+    /** Like [streamGoogleAI], with one recorded phrase ([wav], 16 kHz mono WAV) placed where the prompt marks it. */
+    fun streamGoogleAIWithAudio(model: String, apiKey: String, prompt: Prompt, wav: ByteArray): Flow<String>
+
     fun streamOpenAI(model: String, apiKey: String, prompt: Prompt): Flow<String>
+
+    /** Like [streamOpenAI], with one recorded phrase ([wav], 16 kHz mono WAV) placed where the prompt marks it. */
+    fun streamOpenAIWithAudio(model: String, apiKey: String, prompt: Prompt, wav: ByteArray): Flow<String>
 
     fun streamClaude(model: String, apiKey: String, prompt: Prompt): Flow<String>
 

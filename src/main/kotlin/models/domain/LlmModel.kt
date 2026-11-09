@@ -18,4 +18,17 @@ data class LlmModel(
         get() = googleAiModel?.limitTokensInMinute ?: openAiModel?.limitTokensInMinute
     val limitTokensInDay: Int?
         get() = googleAiModel?.limitTokensInDay ?: openAiModel?.limitTokensInDay
+
+    val title: String
+        get() = googleAiModel?.title ?: openAiModel?.title ?: claudeModel?.title ?: id
+    val shortTitle: String
+        get() = googleAiModel?.shortTitle ?: openAiModel?.shortTitle ?: claudeModel?.shortTitle ?: id
+
+    /** Takes a recorded phrase as input. */
+    val hearsAudio: Boolean
+        get() = googleAiModel?.hearsAudio ?: openAiModel?.hearsAudio ?: false
+
+    /** Answers a text-only request. */
+    val readsText: Boolean
+        get() = openAiModel?.readsText ?: true
 }

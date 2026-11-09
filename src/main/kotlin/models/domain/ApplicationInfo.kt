@@ -2,7 +2,12 @@ package models.domain
 
 data class ApplicationInfo(
     val lastSelectedDevice: String,
-    val selectedModel: LlmModel,
+    /**
+     * Method 1 first, then its reserves in the order they are tried; never empty. Method 1 also decides
+     * how the audio is taken in: cut into recorded phrases (a voice method, Whisper batch) or streamed to
+     * its recogniser.
+     */
+    val translationMethods: List<TranslationMethod>,
     val googleCloudToken: String,
     val openAiToken: String,
     val claudeToken: String,
@@ -15,8 +20,9 @@ data class ApplicationInfo(
     val whisperModelPath: String,
     val whisperModelConfig: WhisperModelConfig,
     val questionLanguage: String,
-    val voiceRecognitionEngine: VoiceRecognitionEngine,
     val useStreamingResponse: Boolean,
     val sherpaModelPath: String,
     val sherpaConfig: SherpaModelConfig,
-)
+) {
+    val primaryMethod: TranslationMethod get() = translationMethods.first()
+}

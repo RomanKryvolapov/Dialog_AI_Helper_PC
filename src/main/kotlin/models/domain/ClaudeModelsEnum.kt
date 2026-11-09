@@ -2,16 +2,20 @@ package models.domain
 
 import models.common.TypeEnum
 
-/**
- * The two cheapest current Claude models. [supportsTemperature] is false from Claude 5 onwards:
- * those models removed the sampling parameters and answer a request carrying one with a 400.
- */
 enum class ClaudeModelsEnum(
     override val type: String,
-    val supportsTemperature: Boolean,
+    val title: String,
+    val shortTitle: String,
+    val thinkingOffType: String,
 ) : TypeEnum {
-    CLAUDE_SONNET_5(type = "claude-sonnet-5", supportsTemperature = false),
-    CLAUDE_HAIKU_4_5(type = "claude-haiku-4-5", supportsTemperature = true);
+    // Sonnet 5.5 rejects "disabled"; "between_tools" thinks only between tool calls, and the app
+    // sends none.
+    CLAUDE_SONNET_5_5(
+        type = "claude-sonnet-5-5",
+        title = "Claude Sonnet 5.5",
+        shortTitle = "Sonnet 5.5",
+        thinkingOffType = "between_tools",
+    );
 
     fun getDescription() = "Claude: $type"
 
