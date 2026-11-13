@@ -6,6 +6,7 @@ import COLOUR_RED
 import javafx.collections.FXCollections
 import javafx.geometry.Insets
 import javafx.geometry.Pos
+import javafx.scene.Node
 import javafx.scene.control.*
 import javafx.scene.input.Clipboard
 import javafx.scene.input.ClipboardContent
@@ -18,140 +19,115 @@ import kotlinx.coroutines.launch
 import mainThreadScope
 import java.io.File
 
-fun VBox.addLabel(text: String): Label {
-    val label = Label(text)
-    children.add(label.apply {
-        maxWidth = Double.MAX_VALUE
-    })
-    return label
+// The Settings pages share one layout: a left-aligned column of sections, each a title, the grey note under it
+// when there is one, the control, then a row of buttons of one width. The widths and the type are in styles.css;
+// the gaps are the constants below and the button colours are the COLOUR_* constants of Consts.kt.
+
+private const val PAGE_GAP = 32.0
+/** The gap between the sections of a group (see [addGroup]). */
+const val GROUP_GAP = 24.0
+private const val SECTION_GAP = 8.0
+private const val BUTTON_GAP = 12.0
+private const val ERROR_STYLE = "error-label"
+
+/** A Settings page: its sections one under another, left-aligned, with the same padding on every page. */
+fun settingsPage(build: VBox.() -> Unit): VBox = VBox(PAGE_GAP).apply {
+    padding = Insets(20.0, 24.0, 32.0, 24.0)
+    build()
 }
 
+/** One setting: its [title], the grey [note] under it when there is one, then whatever [build] adds. */
+fun settingsSection(title: String, note: String? = null, build: VBox.() -> Unit = {}): VBox =
+    heading(title, note).apply(build)
 
-fun VBox.addTitleLabel(text: String) {
-    children.add(Label(text).apply {
-        maxWidth = Double.MAX_VALUE
-        styleClass.add("title-label")
-    })
+fun VBox.addSection(title: String, note: String? = null, build: VBox.() -> Unit = {}): VBox =
+    settingsSection(title, note, build).also { children.add(it) }
+
+/**
+ * Settings that belong together under one heading: a line sets the group off from what is above it, and the
+ * sections [build] adds sit further apart than a setting's own parts.
+ */
+fun VBox.addGroup(title: String, note: String? = null, build: VBox.() -> Unit): VBox =
+    VBox(GROUP_GAP, heading(title, note, group = true)).apply {
+        styleClass.add("settings-group")
+        build()
+    }.also { children.add(it) }
+
+private fun heading(title: String, note: String?, group: Boolean = false): VBox = VBox(SECTION_GAP).apply {
+    children.add(titleLabel(title).apply { if (group) styleClass.add("group-title") })
+    note?.let { children.add(noteLabel(it)) }
 }
 
-fun VBox.addTextField(
-    fieldText: String,
-    lines: Int = 1,
-): TextInputControl {
-    val field = if (lines == 1) {
-        TextField(fieldText)
-    } else {
-        TextArea(fieldText).apply {
-            isWrapText = true
-            prefRowCount = lines
-        }
-    }
-    val fieldContainer = HBox(field).apply {
-        alignment = Pos.CENTER
-        padding = Insets(0.0, 20.0, 0.0, 20.0)
-        field.prefWidthProperty().bind(widthProperty().multiply(0.6))
-    }
-    children.add(fieldContainer)
-    return field
+fun titleLabel(text: String): Label = Label(text).apply { styleClass.add("title-label") }
+
+fun noteLabel(text: String): Label = Label(text).apply { styleClass.add("note-label") }
+
+/** Where a setting says what became of it ("Saved", or why it was refused), beside its buttons. */
+fun statusLabel(): Label = noteLabel("")
+
+/** The same for what [field] holds: it goes blank as soon as the text changes again, so it never speaks of older text. */
+fun statusLabel(field: TextInputControl): Label = statusLabel().also { status ->
+    field.textProperty().addListener { _, _, _ -> status.showNote("") }
 }
 
-fun VBox.addTextFieldWithSaveButton(
-    lines: Int = 1,
-    fieldText: String,
-    buttonTitle: String,
-    buttonColor: String,
-    onClicked: (String) -> Unit,
-): TextInputControl {
-    val field = if (lines == 1) {
-        TextField(fieldText)
-    } else {
-        TextArea(fieldText).apply {
-            isWrapText = true
-            prefRowCount = lines
-        }
-    }
-    val buttonWidthBinding = field.prefWidthProperty().divide(3)
-    val button = Button(buttonTitle).apply {
-        style = "-fx-background-color: $buttonColor"
-        prefWidthProperty().bind(buttonWidthBinding)
-        setOnAction {
-            onClicked(field.text)
-        }
-    }
-    val buttonContainer = HBox(4.0).apply {
-        alignment = Pos.CENTER
-        padding = Insets(0.0, 20.0, 0.0, 20.0)
-        children.add(button)
-        button.prefWidthProperty().bind(widthProperty().multiply(0.6))
-    }
-    val fieldContainer = HBox(field).apply {
-        alignment = Pos.CENTER
-        padding = Insets(0.0, 20.0, 0.0, 20.0)
-        field.prefWidthProperty().bind(widthProperty().multiply(0.6))
-    }
-    children.addAll(fieldContainer, buttonContainer)
-    return field
+fun Label.showNote(text: String) {
+    styleClass.remove(ERROR_STYLE)
+    this.text = text
 }
 
-fun VBox.addTextFieldWithCopyPasteActionButtons(
-    fieldText: String,
-    lines: Int = 1,
-    buttonTitle: String = "Save",
-    onClicked: (String) -> Unit
-): TextInputControl {
-    val field = if (lines == 1) {
-        TextField(fieldText)
-    } else {
-        TextArea(fieldText).apply {
-            isWrapText = true
-            prefRowCount = lines
-        }
-    }
-    val buttonWidthBinding = field.prefWidthProperty().divide(3)
-    val copyButton = Button("Copy").apply {
-        style += "-fx-background-color: $COLOUR_BLUE"
-        prefWidthProperty().bind(buttonWidthBinding)
-        setOnAction {
-            val content = ClipboardContent()
-            content.putString(field.text)
-            Clipboard.getSystemClipboard().setContent(content)
-        }
-    }
-    val pasteButton = Button("Paste").apply {
-        style += "-fx-background-color: $COLOUR_GREEN"
-        prefWidthProperty().bind(buttonWidthBinding)
-        setOnAction {
-            val clipboard = Clipboard.getSystemClipboard()
-            if (clipboard.hasString()) field.text = clipboard.string
-        }
-    }
-    val saveButton = Button(buttonTitle).apply {
-        style += "-fx-background-color: $COLOUR_RED"
-        prefWidthProperty().bind(buttonWidthBinding)
-        setOnAction {
-            onClicked(field.text)
-        }
-    }
-    val buttonsContainer = HBox(4.0, copyButton, pasteButton, saveButton).apply {
-        alignment = Pos.CENTER
-        padding = Insets(0.0, 20.0, 0.0, 20.0)
-    }
-    val fieldContainer = HBox(field).apply {
-        alignment = Pos.CENTER
-        padding = Insets(0.0, 20.0, 0.0, 20.0)
-        field.prefWidthProperty().bind(widthProperty().multiply(0.6))
-    }
-    children.addAll(fieldContainer, buttonsContainer)
-    return field
+fun Label.showError(text: String) {
+    if (ERROR_STYLE !in styleClass) styleClass.add(ERROR_STYLE)
+    this.text = text
+}
+
+/** Every Settings button is as wide as the next; the colour says what it does: green saves, red clears, blue is the rest. */
+fun settingsButton(title: String, colour: String, onClicked: () -> Unit): Button = Button(title).apply {
+    styleClass.add("settings-button")
+    style = "-fx-background-color: $colour;"
+    setOnAction { onClicked() }
+}
+
+fun saveButton(onClicked: () -> Unit): Button = settingsButton("Save", COLOUR_GREEN, onClicked)
+
+fun actionButton(title: String, onClicked: () -> Unit): Button = settingsButton(title, COLOUR_BLUE, onClicked)
+
+fun copyButton(field: TextInputControl): Button = actionButton("Copy") {
+    Clipboard.getSystemClipboard().setContent(ClipboardContent().apply { putString(field.text) })
+}
+
+fun pasteButton(field: TextInputControl): Button = actionButton("Paste") {
+    val clipboard = Clipboard.getSystemClipboard()
+    if (clipboard.hasString()) field.text = clipboard.string
+}
+
+/** The buttons of a setting, left-aligned under its control. */
+fun VBox.addButtons(vararg nodes: Node): HBox =
+    HBox(BUTTON_GAP, *nodes).apply { alignment = Pos.CENTER_LEFT }.also { children.add(it) }
+
+private fun fieldStyle(short: Boolean) = if (short) "settings-field-short" else "settings-field"
+
+/** A text field as wide as the column lets it be, or [short] for a number. */
+fun settingsTextField(value: String, short: Boolean = false): TextField =
+    TextField(value).apply { styleClass.add(fieldStyle(short)) }
+
+fun VBox.addTextField(value: String): TextField = settingsTextField(value).also { children.add(it) }
+
+fun settingsTextArea(text: String, rows: Int, editable: Boolean = true): TextArea = TextArea(text).apply {
+    styleClass.add("settings-text-area")
+    isWrapText = true
+    isEditable = editable
+    prefRowCount = rows
 }
 
 fun <T> VBox.addComboBox(
     items: List<T>,
     selectedItem: T?,
     toStringFn: (T) -> String,
-    onSelected: (T) -> Unit
+    onSelected: (T) -> Unit = {},
+    short: Boolean = false,
 ): ComboBox<T> {
     val comboBox = ComboBox(FXCollections.observableArrayList(items)).apply {
+        styleClass.add(fieldStyle(short))
         cellFactory = javafx.util.Callback {
             object : ListCell<T>() {
                 override fun updateItem(item: T?, empty: Boolean) {
@@ -171,32 +147,8 @@ fun <T> VBox.addComboBox(
         }
         visibleRowCount = 50
     }
-    val container = HBox(comboBox).apply {
-        alignment = Pos.CENTER
-        padding = Insets(0.0, 20.0, 0.0, 20.0)
-        comboBox.prefWidthProperty().bind(widthProperty().multiply(0.6))
-    }
-    children.add(container)
+    children.add(comboBox)
     return comboBox
-}
-
-fun VBox.addButton(
-    title: String,
-    buttonColor: String,
-    onClicked: () -> Unit
-): Button {
-    val button = Button(title).apply {
-        style = "-fx-background-color: $buttonColor;"
-        setOnAction { onClicked.invoke() }
-    }
-    val buttonContainer = HBox(4.0).apply {
-        alignment = Pos.CENTER
-        padding = Insets(0.0, 20.0, 0.0, 20.0)
-        children.add(button)
-        button.prefWidthProperty().bind(widthProperty().multiply(0.6))
-    }
-    children.add(buttonContainer)
-    return button
 }
 
 fun VBox.addCheckBox(
@@ -208,11 +160,7 @@ fun VBox.addCheckBox(
         isSelected = checked
         selectedProperty().addListener { _, _, isNowSelected -> onToggle(isNowSelected) }
     }
-    val container = HBox(checkBox).apply {
-        alignment = Pos.CENTER
-        padding = Insets(0.0, 20.0, 0.0, 20.0)
-    }
-    children.add(container)
+    children.add(checkBox)
     return checkBox
 }
 
@@ -243,42 +191,6 @@ fun Stage.showAlert(
         val result = alert.showAndWait()
         if (result.isPresent && result.get() == okButtonType) {
             onPositive?.invoke()
-        }
-    }
-}
-
-fun Stage.showAlertWithAction(
-    alertTitle: String,
-    alertContent: String,
-    positiveButtonText: String = "OK",
-    negativeButtonText: String = "Cancel",
-    onPositive: () -> Unit
-) {
-    mainThreadScope.launch {
-        val okButtonType = ButtonType(positiveButtonText, ButtonBar.ButtonData.OK_DONE)
-        val cancelButtonType = ButtonType(negativeButtonText, ButtonBar.ButtonData.CANCEL_CLOSE)
-        val alert = Alert(Alert.AlertType.CONFIRMATION, "", okButtonType, cancelButtonType).apply {
-            initOwner(this@showAlertWithAction)
-            title = alertTitle
-            headerText = null
-            dialogPane.content = Label(alertContent).apply {
-                isWrapText = true
-                minHeight = Region.USE_PREF_SIZE
-            }
-        }
-        val dialogButtons = alert.dialogPane.lookupButton(okButtonType)
-        dialogButtons.style += """
-            -fx-background-color: $COLOUR_GREEN;
-            -fx-padding: 0 20 0 20;
-        """.trimIndent()
-        val cancelButton = alert.dialogPane.lookupButton(cancelButtonType)
-        cancelButton.style += """
-            -fx-background-color: $COLOUR_RED;
-            -fx-padding: 0 20 0 20;
-        """.trimIndent()
-        val result = alert.showAndWait()
-        if (result.isPresent && result.get() == okButtonType) {
-            onPositive()
         }
     }
 }

@@ -31,4 +31,8 @@ data class LlmModel(
     /** Answers a text-only request. */
     val readsText: Boolean
         get() = openAiModel?.readsText ?: true
+
+    /** The settings a request to this model may carry; a model outside the catalog takes none. */
+    val parameterSupport: ModelParameterSupport
+        get() = googleAiModel?.parameters ?: openAiModel?.parameters ?: claudeModel?.parameters ?: ModelParameterSupport()
 }

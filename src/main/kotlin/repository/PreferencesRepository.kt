@@ -8,6 +8,5 @@ interface PreferencesRepository {
     val appInfoFlow: Flow<ApplicationInfo>
     fun getAppInfo(): ApplicationInfo
     fun saveAppInfo(applicationInfo: ApplicationInfo)
-    fun clear()
 
 }

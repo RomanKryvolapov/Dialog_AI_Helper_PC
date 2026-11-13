@@ -14,6 +14,12 @@ interface SherpaOnnxRecognizer {
     var onPartialListener: ((String) -> Unit)?
     var onFinalListener: ((String) -> Unit)?
 
+    /**
+     * Called when the recogniser stops working on its own — it could not start, reported an error, or its process
+     * went away — with what happened; never after [stop].
+     */
+    var onFailureListener: ((String) -> Unit)?
+
     /** Loads the streaming model from [modelDir] (encoder/decoder/joiner .onnx + tokens.txt). */
     fun start(modelDir: String, numThreads: Int, decodingMethod: String, maxActivePaths: Int, splitMaxWords: Int, maxHangMillis: Long)
 

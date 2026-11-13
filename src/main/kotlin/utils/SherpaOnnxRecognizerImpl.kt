@@ -16,6 +16,7 @@ class SherpaOnnxRecognizerImpl : SherpaOnnxRecognizer {
 
     override var onPartialListener: ((String) -> Unit)? = null
     override var onFinalListener: ((String) -> Unit)? = null
+    override var onFailureListener: ((String) -> Unit)? = null
 
     @Volatile
     private var recognizer: OnlineRecognizer? = null
@@ -33,11 +34,13 @@ class SherpaOnnxRecognizerImpl : SherpaOnnxRecognizer {
         this.maxHangMillis = maxHangMillis
         if (modelDir.isBlank()) {
             log.error("Sherpa: model path is empty")
+            onFailureListener?.invoke("no Sherpa-ONNX model is set")
             return
         }
         val dir = File(modelDir)
         if (!dir.isDirectory) {
             log.error("Sherpa: model dir not found: $modelDir")
+            onFailureListener?.invoke("the Sherpa-ONNX model folder is missing")
             return
         }
         val onnxFiles = dir.listFiles { f -> f.isFile && f.name.endsWith(".onnx", ignoreCase = true) }
@@ -53,6 +56,7 @@ class SherpaOnnxRecognizerImpl : SherpaOnnxRecognizer {
         val tokens = File(dir, "tokens.txt").takeIf { it.isFile }?.absolutePath
         if (encoder == null || decoder == null || joiner == null || tokens == null) {
             log.error("Sherpa: missing model files in $modelDir (encoder=$encoder decoder=$decoder joiner=$joiner tokens=$tokens)")
+            onFailureListener?.invoke("the Sherpa-ONNX model folder lacks its model files")
             return
         }
         try {
@@ -92,6 +96,7 @@ class SherpaOnnxRecognizerImpl : SherpaOnnxRecognizer {
         } catch (e: Throwable) {
             log.error("Sherpa: failed to init: ${e.message}", e)
             stop()
+            onFailureListener?.invoke("Sherpa-ONNX could not start: ${e.message}")
         }
     }
 
@@ -121,6 +126,7 @@ class SherpaOnnxRecognizerImpl : SherpaOnnxRecognizer {
                 }
             } catch (e: Throwable) {
                 log.error("Sherpa: decode error: ${e.message}", e)
+                onFailureListener?.invoke("Sherpa-ONNX could not decode: ${e.message}")
             }
         }
     }

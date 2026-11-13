@@ -12,6 +12,7 @@ enum class GoogleAiModelsEnum(
     val limitRequestsInDay: Int?,
     val limitTokensInMinute: Int?,
     val limitTokensInDay: Int?,
+    val parameters: ModelParameterSupport,
 ) : TypeEnum {
     // Free tier only. These are the free-tier limits of the project the app was set up with, as AI Studio
     // (Rate limit page) showed them on 2026-11-08; Google publishes no fixed numbers, and a paid tier
@@ -27,6 +28,15 @@ enum class GoogleAiModelsEnum(
         limitRequestsInDay = 500,
         limitTokensInMinute = 250_000,
         limitTokensInDay = null,
+        // Takes all four thinking levels (high thought for about 400 tokens on a short phrase); no budget.
+        parameters = ModelParameterSupport(
+            temperature = true,
+            topP = true,
+            topK = true,
+            thinkingLevels = listOf("minimal", "low", "medium", "high"),
+            defaultThinking = "minimal",
+            defaultTemperature = 0.8,
+        ),
     ),
     // Gemma 4: 30 requests a minute and 14,400 a day, but only 16,000 input tokens a minute — about ten
     // phrases a minute with the conversation context, the binding limit in a fast conversation.
@@ -39,6 +49,7 @@ enum class GoogleAiModelsEnum(
         limitRequestsInDay = 14_400,
         limitTokensInMinute = 16_000,
         limitTokensInDay = null,
+        parameters = GEMMA_4_PARAMETERS,
     ),
     GEMMA_4_26B_A4B(
         type = "gemma-4-26b-a4b-it",
@@ -49,8 +60,22 @@ enum class GoogleAiModelsEnum(
         limitRequestsInDay = 14_400,
         limitTokensInMinute = 16_000,
         limitTokensInDay = null,
+        parameters = GEMMA_4_PARAMETERS,
     );
 
     fun getDescription() = "$title — $type (RPM=$limitRequestsInMinute, RPD=$limitRequestsInDay, " +
         "TPM=${limitTokensInMinute ?: "∞"}, TPD=${limitTokensInDay ?: "∞"})"
+
 }
+
+/**
+ * Gemma 4 refuses every thinking level but "minimal" (400, or a 500 for "high"), and without one it thinks
+ * for about 450 tokens and can take a minute: "minimal" is sent and not offered as a choice.
+ */
+private val GEMMA_4_PARAMETERS = ModelParameterSupport(
+    temperature = true,
+    topP = true,
+    topK = true,
+    defaultThinking = "minimal",
+    defaultTemperature = 0.8,
+)

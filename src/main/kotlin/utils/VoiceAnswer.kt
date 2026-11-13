@@ -2,7 +2,7 @@ package utils
 
 /**
  * A voice-mode answer as it streams in: the model's transcript of the phrase and its translation,
- * each null until its tag has opened (see PROMPT_TRANSLATE_VOICE for the format).
+ * each null until its tag has opened (see VOICE_INSTRUCTIONS for the format).
  */
 data class VoiceAnswer(val said: String?, val translated: String?) {
 

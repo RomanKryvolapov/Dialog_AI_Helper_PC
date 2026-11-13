@@ -12,17 +12,20 @@ data class ApplicationInfo(
     val openAiToken: String,
     val claudeToken: String,
     val speechmaticsToken: String,
-    val prompt: PromptModel,
+    /** Everything the translation requests are made of (Settings → Main prompt, Voice prompt). */
+    val prompts: PromptSettings,
+    /** The request settings the user chose per model id (Settings → LLM); a model not here takes its defaults. */
+    val modelParameters: Map<String, ModelParameters>,
     val lastOpenedTab: Int,
-    val promptsMap: Map<String, PromptModel>,
-    val sendTextEverySymbols: Int,
-    val sendTextEveryMilliseconds: Long,
     val whisperModelPath: String,
     val whisperModelConfig: WhisperModelConfig,
     val questionLanguage: String,
     val useStreamingResponse: Boolean,
     val sherpaModelPath: String,
     val sherpaConfig: SherpaModelConfig,
+    val speechmaticsConfig: SpeechmaticsConfig,
+    /** The Questions mode (Settings → Questions, the box in the top bar). */
+    val questions: QuestionsSettings,
 ) {
     val primaryMethod: TranslationMethod get() = translationMethods.first()
 }

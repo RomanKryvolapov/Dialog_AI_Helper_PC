@@ -12,6 +12,12 @@ interface WhisperStreamingUtil {
     var onPartialListener: ((String) -> Unit)?
     var onFinalListener: ((String) -> Unit)?
 
+    /**
+     * Called when the recogniser stops working on its own — it could not start, reported an error, or its process
+     * went away — with what happened; never after [stop].
+     */
+    var onFailureListener: ((String) -> Unit)?
+
     /** (Re)starts the recognizer process. Safe to call repeatedly; restarts on change. */
     fun start(modelPath: String, language: String, stepMillis: Long, minChars: Int, maxUtteranceMillis: Long)
 

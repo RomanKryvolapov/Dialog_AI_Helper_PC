@@ -1,26 +1,37 @@
 package ui
 
-import COLOUR_BLUE
-import COLOUR_GREEN
 import app.DialogApplication.Companion.ownerStage
-import extensions.addButton
+import extensions.actionButton
+import extensions.addButtons
+import extensions.addCheckBox
 import extensions.addComboBox
-import extensions.addLabel
-import extensions.addTextFieldWithCopyPasteActionButtons
-import extensions.addTextFieldWithSaveButton
-import extensions.addTitleLabel
+import extensions.addSection
+import extensions.addTextField
 import extensions.chooseDirectory
+import extensions.copyButton
+import extensions.noteLabel
+import extensions.pasteButton
+import extensions.saveButton
+import extensions.settingsPage
 import extensions.showAlert
+import extensions.showNote
+import extensions.statusLabel
 import javafx.geometry.Insets
-import javafx.scene.control.ComboBox
-import javafx.scene.control.TextInputControl
+import javafx.geometry.Pos
+import javafx.scene.Node
+import javafx.scene.control.ScrollPane
+import javafx.scene.control.ToggleButton
+import javafx.scene.control.ToggleGroup
 import javafx.scene.layout.Background
 import javafx.scene.layout.BackgroundFill
+import javafx.scene.layout.BorderPane
+import javafx.scene.layout.HBox
+import javafx.scene.layout.StackPane
 import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
-import kotlinx.coroutines.launch
-import mainThreadScope
 import models.domain.SherpaModelConfig
+import models.domain.SpeechmaticsConfig
+import models.domain.WhisperModelConfig
 import org.slf4j.LoggerFactory
 import repository.PreferencesRepository
 import ui.base.BaseTab
@@ -29,20 +40,12 @@ import java.awt.Desktop
 import java.net.URI
 import javax.sound.sampled.Mixer
 
-
-import extensions.addCheckBox
-import javafx.scene.control.CheckBox
-
-import javafx.scene.control.ScrollPane
-import javafx.scene.control.ToggleButton
-import javafx.scene.control.ToggleGroup
-import javafx.scene.layout.BorderPane
-import javafx.scene.layout.StackPane
-import models.domain.ApplicationInfo
-
 class SettingsTab(
     private val audioChunker: AudioChunker,
-    private val promptTab: PromptTab,
+    private val mainPromptTab: MainPromptTab,
+    private val questionsPromptTab: QuestionsPromptTab,
+    private val voicePromptTab: VoicePromptTab,
+    private val modelParametersPane: ModelParametersPane,
     private val consoleTab: ConsoleTab,
     private val methodChainSelector: MethodChainSelector,
     preferencesRepository: PreferencesRepository,
@@ -53,6 +56,8 @@ class SettingsTab(
     companion object {
         const val WINDOW_BACKGROUND_COLOUR = "#323232"
         private const val SIDEBAR_BACKGROUND_COLOUR = "#2b2b2b"
+        private const val CHAIN_MAX_WIDTH = 1200.0
+        private const val CHAIN_ROW_PADDING = 20.0
     }
 
     private val log = LoggerFactory.getLogger("SettingsTab")
@@ -64,46 +69,33 @@ class SettingsTab(
     val content: BorderPane = BorderPane().apply {
         background = Background(BackgroundFill(Color.web(WINDOW_BACKGROUND_COLOUR), null, null))
 
-        val appInfo = getAppInfo()
-
-        val generalScroll = buildGeneralPane(appInfo)
-        val llmScroll = buildLlmPane(appInfo)
-        val whisperBatchScroll = buildWhisperBatchPane(appInfo)
-        val whisperStreamingScroll = buildWhisperStreamingPane(appInfo)
-        val sherpaScroll = buildSherpaPane(appInfo)
-        val promptsScroll = wrapNode(promptTab.content)
-        val consoleScroll = wrapNode(consoleTab.content)
-
+        // The sidebar lists them in this order.
+        val pages = listOf(
+            "General" to buildGeneralPane(),
+            "Phrases" to buildPhrasesPane(),
+            "LLM" to scrollOf(modelParametersPane.content),
+            "API keys" to buildApiKeysPane(),
+            "Whisper" to buildWhisperPane(),
+            "Sherpa-ONNX" to buildSherpaPane(),
+            "Speechmatics" to buildSpeechmaticsPane(),
+            "Main prompt" to scrollOf(mainPromptTab.content),
+            "Voice prompt" to scrollOf(voicePromptTab.content),
+            "Questions" to scrollOf(questionsPromptTab.content),
+            "Console" to wrapNode(consoleTab.content),
+        )
         val group = ToggleGroup()
-        val generalCategoryButton = categoryButton("General", group) { showCategory(generalScroll) }
-        val llmCategoryButton = categoryButton("LLM", group) { showCategory(llmScroll) }
-        val whisperBatchCategoryButton = categoryButton("Whisper (batch)", group) { showCategory(whisperBatchScroll) }
-        val whisperStreamingCategoryButton = categoryButton("Whisper (streaming)", group) { showCategory(whisperStreamingScroll) }
-        val sherpaCategoryButton = categoryButton("Sherpa-ONNX", group) { showCategory(sherpaScroll) }
-        val promptsCategoryButton = categoryButton("Prompts", group) { showCategory(promptsScroll) }
-        val consoleCategoryButton = categoryButton("Console", group) { showCategory(consoleScroll) }
+        val categoryButtons = pages.map { (title, page) -> categoryButton(title, group) { showCategory(page) } }
 
-        val sidebar = VBox(
-            8.0,
-            generalCategoryButton,
-            llmCategoryButton,
-            whisperBatchCategoryButton,
-            whisperStreamingCategoryButton,
-            sherpaCategoryButton,
-            promptsCategoryButton,
-            consoleCategoryButton,
-        ).apply {
+        left = VBox(8.0, *categoryButtons.toTypedArray()).apply {
             padding = Insets(20.0, 12.0, 20.0, 12.0)
             prefWidth = 240.0
             minWidth = 240.0
             background = Background(BackgroundFill(Color.web(SIDEBAR_BACKGROUND_COLOUR), null, null))
         }
-
-        left = sidebar
         center = detailContainer
 
-        generalCategoryButton.isSelected = true
-        showCategory(generalScroll)
+        categoryButtons.first().isSelected = true
+        showCategory(pages.first().second)
     }
 
     private fun categoryButton(title: String, group: ToggleGroup, onShow: () -> Unit): ToggleButton {
@@ -118,7 +110,7 @@ class SettingsTab(
         }
     }
 
-    private fun showCategory(node: javafx.scene.Node) {
+    private fun showCategory(node: Node) {
         detailContainer.children.setAll(node)
     }
 
@@ -130,7 +122,7 @@ class SettingsTab(
         }
     }
 
-    private fun wrapNode(node: javafx.scene.Node): ScrollPane {
+    private fun wrapNode(node: Node): ScrollPane {
         return ScrollPane(node).apply {
             isFitToWidth = true
             isFitToHeight = true
@@ -139,18 +131,25 @@ class SettingsTab(
         }
     }
 
-    private fun buildGeneralPane(appInfo: ApplicationInfo): ScrollPane {
-        val box = VBox(4.0).apply {
-            padding = Insets(0.0, 20.0, 20.0, 20.0)
+    private fun buildGeneralPane(): ScrollPane = scrollOf(settingsPage {
+        val appInfo = getAppInfo()
 
-            addTitleLabel("Translation method: 1 first, then 2 and 3 when the one before fails")
-            addLabel("How the speech is heard → which model translates (only a speech recogniser needs one)")
-            children.add(methodChainSelector.node)
+        addSection(
+            title = "Translation method",
+            note = "Method 1 translates until it fails; then method 2 takes over for the rest of the dialog, and method 3 " +
+                "after it if that fails too (stop and start the dialog to begin with method 1 again). Each method is how " +
+                "the speech is heard → which model translates (only a speech recogniser needs one).",
+        ) {
+            children.add(leftAligned(methodChainSelector.node))
+        }
 
-            addTitleLabel("Audio device for voice recognition:")
+        addSection(
+            title = "Audio device",
+            note = "Where the speech comes from: a microphone, or a virtual cable that carries the call or the conference.",
+        ) {
             val devices: List<Mixer.Info> = audioChunker.getAvailableInputDevices()
             if (devices.isEmpty()) {
-                addLabel("Not found")
+                children.add(noteLabel("Not found"))
             } else {
                 // Not saved when it falls back to the first device: that would turn a stand-in into
                 // a stored choice and stop `.env` (or a device plugged in later) from ever applying.
@@ -159,220 +158,295 @@ class SettingsTab(
                     items = devices,
                     selectedItem = lastSelected ?: devices.first(),
                     toStringFn = { mixerInfo -> mixerInfo.name },
-                    onSelected = { mixerInfo -> saveAppInfo(getAppInfo().copy(lastSelectedDevice = mixerInfo.name)) }
+                    onSelected = { mixerInfo -> saveAppInfo(getAppInfo().copy(lastSelectedDevice = mixerInfo.name)) },
                 )
             }
+        }
 
-            addTitleLabel("Question language")
-            addTextFieldWithSaveButton(
-                fieldText = appInfo.questionLanguage,
-                buttonTitle = "Save",
-                buttonColor = COLOUR_GREEN,
-                onClicked = { result -> saveAppInfo(getAppInfo().copy(questionLanguage = result)) }
+        addSection(
+            title = "Speech language",
+            note = "The language being spoken, as a code: en, ru, de… The speech recognisers (Whisper, Speechmatics) listen for it.",
+        ) {
+            val field = addTextField(appInfo.questionLanguage)
+            val status = statusLabel(field)
+            addButtons(
+                saveButton {
+                    saveAppInfo(getAppInfo().copy(questionLanguage = field.text))
+                    status.showNote("Saved")
+                },
+                status,
             )
         }
-        return scrollOf(box)
+    })
+
+    /**
+     * Temporary: the chain selector centres its rows itself and pads them [CHAIN_ROW_PADDING] on each side, so here
+     * they are moved to the left, that padding is cancelled and the width held to [CHAIN_MAX_WIDTH], to line up with
+     * the rest of the page. Remove this when the selector aligns left on its own.
+     */
+    private fun leftAligned(chain: VBox): VBox {
+        chain.maxWidth = CHAIN_MAX_WIDTH
+        chain.children.filterIsInstance<HBox>().forEach { it.alignment = Pos.CENTER_LEFT }
+        VBox.setMargin(chain, Insets(0.0, 0.0, 0.0, -CHAIN_ROW_PADDING))
+        return chain
     }
 
-    private fun buildLlmPane(appInfo: ApplicationInfo): ScrollPane {
-        val box = VBox(4.0).apply {
-            padding = Insets(0.0, 20.0, 20.0, 20.0)
-
-            addCheckBox(
-                text = "Use streaming response (show translation as it is generated)",
-                checked = appInfo.useStreamingResponse,
-                onToggle = { checked -> saveAppInfo(getAppInfo().copy(useStreamingResponse = checked)) },
-            )
-
-            addTitleLabel("Google Cloud API key:")
-            addTextFieldWithCopyPasteActionButtons(
-                fieldText = appInfo.googleCloudToken,
-                onClicked = { saveAppInfo(getAppInfo().copy(googleCloudToken = it)) }
-            )
-            addButton(title = "Get Google API key", buttonColor = COLOUR_BLUE, onClicked = { openUrl("https://aistudio.google.com/apikey") })
-
-            addTitleLabel("OpenAI API key:")
-            addTextFieldWithCopyPasteActionButtons(
-                fieldText = appInfo.openAiToken,
-                onClicked = { saveAppInfo(getAppInfo().copy(openAiToken = it)) }
-            )
-            addButton(title = "Get OpenAI API key", buttonColor = COLOUR_BLUE, onClicked = { openUrl("https://platform.openai.com/api-keys") })
-
-            addTitleLabel("Claude (Anthropic) API key:")
-            addTextFieldWithCopyPasteActionButtons(
-                fieldText = appInfo.claudeToken,
-                onClicked = { saveAppInfo(getAppInfo().copy(claudeToken = it)) }
-            )
-            addButton(title = "Get Claude API key", buttonColor = COLOUR_BLUE, onClicked = { openUrl("https://console.anthropic.com/settings/keys") })
-
-            addTitleLabel("Speechmatics API key:")
-            addTextFieldWithCopyPasteActionButtons(
-                fieldText = appInfo.speechmaticsToken,
-                onClicked = { saveAppInfo(getAppInfo().copy(speechmaticsToken = it)) }
-            )
-            addButton(title = "Get Speechmatics API key", buttonColor = COLOUR_BLUE, onClicked = { openUrl("https://portal.speechmatics.com/manage-access/") })
-        }
-        return scrollOf(box)
-    }
-
-    private fun VBox.addWhisperModelControls(appInfo: ApplicationInfo) {
-        addTitleLabel("Whisper model download:")
-        addButton(title = "Download Whisper model", buttonColor = COLOUR_BLUE, onClicked = { openUrl("https://huggingface.co/Systran") })
-
-        addTitleLabel("Whisper model folder:")
-        var modelField: javafx.scene.control.TextInputControl? = null
-        modelField = addTextFieldWithSaveButton(
-            fieldText = appInfo.whisperModelPath,
-            buttonTitle = "Select folder with model files",
-            buttonColor = COLOUR_GREEN,
-            onClicked = {
-                val selectedDirectory = ownerStage?.chooseDirectory(title = "Select Folder")
-                if (selectedDirectory == null) {
-                    log.error("Select model folder but selected directory is null")
-                    return@addTextFieldWithSaveButton
-                }
-                modelField?.text = selectedDirectory.absolutePath
-                saveAppInfo(getAppInfo().copy(whisperModelPath = selectedDirectory.absolutePath))
-            }
+    private fun buildPhrasesPane(): ScrollPane = scrollOf(settingsPage {
+        addSection(
+            title = "Cutting speech into phrases",
+            note = "Where one phrase ends and the next begins, before it is recognised and translated. The values " +
+                "below serve Whisper (batch and streaming) and the voice models, and in part Speechmatics (see each " +
+                "one); Sherpa-ONNX finds the pauses itself (see its page).",
         )
-    }
-
-    private fun VBox.addIntField(title: String, value: Int, min: Int, save: (Int) -> Unit) {
-        addTitleLabel(title)
-        addTextFieldWithSaveButton(
-            fieldText = value.toString(),
-            buttonTitle = "Save",
-            buttonColor = COLOUR_GREEN,
-            onClicked = { raw ->
-                val result = raw.toIntOrNull()
-                if (result == null || result < min) {
-                    ownerStage?.showAlert(alertTitle = "Error", alertContent = "Must be an integer >= $min")
-                    return@addTextFieldWithSaveButton
-                }
-                save(result)
-            }
+        children.add(
+            numberSetting(
+                title = "Silence threshold, %",
+                description = "Sound quieter than this, as the Mic meter at the top shows it, counts as silence. " +
+                    "Raise it when background noise starts phrases, lower it when quiet speech is missed.",
+                value = { whisperConfig().silenceThresholdPercents },
+                min = 0,
+            ) { v -> saveWhisperConfig { it.copy(silenceThresholdPercents = v) } }
         )
-    }
-
-    private fun VBox.addLongField(title: String, value: Long, min: Long, save: (Long) -> Unit) {
-        addTitleLabel(title)
-        addTextFieldWithSaveButton(
-            fieldText = value.toString(),
-            buttonTitle = "Save",
-            buttonColor = COLOUR_GREEN,
-            onClicked = { raw ->
-                val result = raw.toLongOrNull()
-                if (result == null || result < min) {
-                    ownerStage?.showAlert(alertTitle = "Error", alertContent = "Must be an integer >= $min")
-                    return@addTextFieldWithSaveButton
-                }
-                save(result)
-            }
+        children.add(
+            millisecondsSetting(
+                title = "Pause that ends a phrase, ms",
+                description = "How long the speaker must be silent before the phrase counts as finished and goes on. " +
+                    "Shorter means quicker answers, but a sentence may be cut at a breath; longer keeps sentences whole " +
+                    "and answers later. Speechmatics ends a phrase by itself after half a second of silence, so a " +
+                    "longer pause changes nothing there.",
+                value = { whisperConfig().maxSilenceMilliseconds },
+                min = 1,
+            ) { v -> saveWhisperConfig { it.copy(maxSilenceMilliseconds = v) } }
         )
-    }
+        children.add(
+            millisecondsSetting(
+                title = "Longest phrase, ms",
+                description = "A phrase that runs this long without a pause is cut anyway, and the speech goes on in " +
+                    "the next one. Speechmatics does not use it.",
+                value = { whisperConfig().maxChunkDurationMilliseconds },
+                min = 1,
+            ) { v -> saveWhisperConfig { it.copy(maxChunkDurationMilliseconds = v) } }
+        )
+    })
 
-    private fun buildWhisperBatchPane(appInfo: ApplicationInfo): ScrollPane {
-        val box = VBox(4.0).apply {
-            padding = Insets(0.0, 20.0, 20.0, 20.0)
-            addWhisperModelControls(appInfo)
-            addTitleLabel("Python environment:")
-            addButton(
-                title = "Install / update Python packages (requirements.txt)",
-                buttonColor = COLOUR_BLUE,
-                onClicked = { installPythonPackages() }
+    private fun buildApiKeysPane(): ScrollPane = scrollOf(settingsPage {
+        val appInfo = getAppInfo()
+        addApiKey(
+            title = "Google Cloud API key",
+            note = "For the Gemini and Gemma models, the voice one included.",
+            value = appInfo.googleCloudToken,
+            getKeyUrl = "https://aistudio.google.com/apikey",
+        ) { saveAppInfo(getAppInfo().copy(googleCloudToken = it)) }
+        addApiKey(
+            title = "OpenAI API key",
+            note = "For the GPT models, GPT-Audio included.",
+            value = appInfo.openAiToken,
+            getKeyUrl = "https://platform.openai.com/api-keys",
+        ) { saveAppInfo(getAppInfo().copy(openAiToken = it)) }
+        addApiKey(
+            title = "Claude (Anthropic) API key",
+            note = "For the Claude models.",
+            value = appInfo.claudeToken,
+            getKeyUrl = "https://console.anthropic.com/settings/keys",
+        ) { saveAppInfo(getAppInfo().copy(claudeToken = it)) }
+        addApiKey(
+            title = "Speechmatics API key",
+            note = "For the Speechmatics speech recogniser; its other settings are on the Speechmatics page.",
+            value = appInfo.speechmaticsToken,
+            getKeyUrl = "https://portal.speechmatics.com/manage-access/",
+        ) { saveAppInfo(getAppInfo().copy(speechmaticsToken = it)) }
+    })
+
+    private fun VBox.addApiKey(title: String, note: String, value: String, getKeyUrl: String, save: (String) -> Unit) {
+        addSection(title, note) {
+            val field = addTextField(value)
+            val status = statusLabel(field)
+            addButtons(
+                saveButton {
+                    save(field.text)
+                    status.showNote("Saved")
+                },
+                pasteButton(field),
+                copyButton(field),
+                actionButton("Get key") { openUrl(getKeyUrl) },
+                status,
             )
-            addIntField("Silence threshold percents", appInfo.whisperModelConfig.silenceThresholdPercents, 0) { v ->
-                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(silenceThresholdPercents = v)))
-            }
-            addLongField("Max silence milliseconds (end of phrase)", appInfo.whisperModelConfig.maxSilenceMilliseconds, 1) { v ->
-                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(maxSilenceMilliseconds = v)))
-            }
-            addLongField("Max chunk duration milliseconds (force cut)", appInfo.whisperModelConfig.maxChunkDurationMilliseconds, 1) { v ->
-                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(maxChunkDurationMilliseconds = v)))
-            }
-            addIntField("Max concurrent Whisper processes (oldest killed when exceeded)", appInfo.whisperModelConfig.maxConcurrentProcesses, 1) { v ->
-                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(maxConcurrentProcesses = v)))
-            }
         }
-        return scrollOf(box)
     }
 
-    private fun buildWhisperStreamingPane(appInfo: ApplicationInfo): ScrollPane {
-        val box = VBox(4.0).apply {
-            padding = Insets(0.0, 20.0, 20.0, 20.0)
-            addWhisperModelControls(appInfo)
-            addIntField("Silence threshold percents", appInfo.whisperModelConfig.silenceThresholdPercents, 0) { v ->
-                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(silenceThresholdPercents = v)))
-            }
-            addLongField("Max silence milliseconds (flush trailing phrase)", appInfo.whisperModelConfig.maxSilenceMilliseconds, 1) { v ->
-                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(maxSilenceMilliseconds = v)))
-            }
-            addLongField("Max utterance milliseconds (safety force-finalize)", appInfo.whisperModelConfig.maxChunkDurationMilliseconds, 1) { v ->
-                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(maxChunkDurationMilliseconds = v)))
-            }
-            addLongField("Streaming step, ms (how often partial results are produced)", appInfo.whisperModelConfig.streamingStepMilliseconds, 100) { v ->
-                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(streamingStepMilliseconds = v)))
-            }
-            addIntField("Min characters per phrase (groups shorter sentences)", appInfo.whisperModelConfig.streamingMinChars, 1) { v ->
-                val c = getAppInfo(); saveAppInfo(c.copy(whisperModelConfig = c.whisperModelConfig.copy(streamingMinChars = v)))
-            }
+    /** A model folder: Browse fills the field, Save stores what it holds, and Download opens where the models are. */
+    private fun VBox.addModelFolder(title: String, note: String, path: String, downloadUrl: String, save: (String) -> Unit) {
+        addSection(title, note) {
+            val field = addTextField(path)
+            val status = statusLabel(field)
+            addButtons(
+                saveButton {
+                    save(field.text.trim())
+                    status.showNote("Saved")
+                },
+                actionButton("Browse…") {
+                    ownerStage?.chooseDirectory(title = "Select folder")?.let { field.text = it.absolutePath }
+                },
+                actionButton("Download models") { openUrl(downloadUrl) },
+                status,
+            )
         }
-        return scrollOf(box)
     }
 
-    private fun buildSherpaPane(appInfo: ApplicationInfo): ScrollPane {
-        val box = VBox(4.0).apply {
-            padding = Insets(0.0, 20.0, 20.0, 20.0)
+    private fun buildWhisperPane(): ScrollPane = scrollOf(settingsPage {
+        addModelFolder(
+            title = "Whisper model folder",
+            note = "The folder with a faster-whisper model: download one, unpack it and select the folder.",
+            path = getAppInfo().whisperModelPath,
+            downloadUrl = "https://huggingface.co/Systran",
+        ) { saveAppInfo(getAppInfo().copy(whisperModelPath = it)) }
+        addSection(
+            title = "Python environment",
+            note = "Whisper runs in Python. This opens a console that creates the environment in the python folder " +
+                "and installs the packages from requirements.txt; run it again to update them.",
+        ) {
+            addButtons(actionButton("Install packages") { installPythonPackages() })
+        }
+        children.add(
+            numberSetting(
+                title = "Max concurrent processes",
+                description = "Whisper (batch) starts one process per phrase. When more than this many run at once, " +
+                    "the oldest is stopped.",
+                value = { whisperConfig().maxConcurrentProcesses },
+                min = 1,
+            ) { v -> saveWhisperConfig { it.copy(maxConcurrentProcesses = v) } }
+        )
+        children.add(
+            millisecondsSetting(
+                title = "Streaming step, ms",
+                description = "Whisper (streaming) reads the speech again this often, so the phrase on screen updates " +
+                    "as it is said. Shorter is livelier and loads the machine more.",
+                value = { whisperConfig().streamingStepMilliseconds },
+                min = 100,
+            ) { v -> saveWhisperConfig { it.copy(streamingStepMilliseconds = v) } }
+        )
+        children.add(
+            numberSetting(
+                title = "Streaming min characters",
+                description = "Whisper (streaming) sends a sentence on only once it is this long; a shorter one is " +
+                    "joined with the next.",
+                value = { whisperConfig().streamingMinChars },
+                min = 1,
+            ) { v -> saveWhisperConfig { it.copy(streamingMinChars = v) } }
+        )
+    })
 
-            addTitleLabel("Sherpa-ONNX streaming model folder (encoder/decoder/joiner .onnx + tokens.txt):")
-            var sherpaField: javafx.scene.control.TextInputControl? = null
-            sherpaField = addTextFieldWithSaveButton(
-                fieldText = appInfo.sherpaModelPath,
-                buttonTitle = "Select folder with sherpa model files",
-                buttonColor = COLOUR_GREEN,
-                onClicked = {
-                    val selectedDirectory = ownerStage?.chooseDirectory(title = "Select Folder")
-                    if (selectedDirectory == null) {
-                        log.error("Select sherpa model folder but selected directory is null")
-                        return@addTextFieldWithSaveButton
-                    }
-                    sherpaField?.text = selectedDirectory.absolutePath
-                    saveAppInfo(getAppInfo().copy(sherpaModelPath = selectedDirectory.absolutePath))
-                }
-            )
-            addButton(
-                title = "Download sherpa-onnx streaming models",
-                buttonColor = COLOUR_BLUE,
-                onClicked = { openUrl("https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models") }
-            )
-
-            addTitleLabel("Decoding method:")
+    private fun buildSherpaPane(): ScrollPane = scrollOf(settingsPage {
+        addModelFolder(
+            title = "Sherpa-ONNX model folder",
+            note = "A streaming model: a folder with the encoder, decoder and joiner .onnx files and tokens.txt.",
+            path = getAppInfo().sherpaModelPath,
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+        ) { saveAppInfo(getAppInfo().copy(sherpaModelPath = it)) }
+        addSection(
+            title = "Decoding method",
+            note = "greedy_search is the fastest; modified_beam_search is more accurate and slower.",
+        ) {
             addComboBox(
                 items = SherpaModelConfig.DECODING_METHODS,
-                selectedItem = appInfo.sherpaConfig.decodingMethod
+                selectedItem = sherpaConfig().decodingMethod
                     .takeIf { it in SherpaModelConfig.DECODING_METHODS }
                     ?: SherpaModelConfig.DECODING_METHODS.first(),
                 toStringFn = { it },
-                onSelected = { method ->
-                    val c = getAppInfo()
-                    saveAppInfo(c.copy(sherpaConfig = c.sherpaConfig.copy(decodingMethod = method)))
-                }
+                onSelected = { method -> saveSherpaConfig { it.copy(decodingMethod = method) } },
             )
-
-            addIntField("Threads (numThreads)", appInfo.sherpaConfig.numThreads, 1) { v ->
-                val c = getAppInfo(); saveAppInfo(c.copy(sherpaConfig = c.sherpaConfig.copy(numThreads = v)))
-            }
-            addIntField("Max active paths (for modified_beam_search)", appInfo.sherpaConfig.maxActivePaths, 1) { v ->
-                val c = getAppInfo(); saveAppInfo(c.copy(sherpaConfig = c.sherpaConfig.copy(maxActivePaths = v)))
-            }
-            addIntField("Max words per message (0 = split only on pause)", appInfo.sherpaConfig.splitMaxWords, 0) { v ->
-                val c = getAppInfo(); saveAppInfo(c.copy(sherpaConfig = c.sherpaConfig.copy(splitMaxWords = v)))
-            }
-            addLongField("Force-translate after ms (max time a phrase may hang; 0 = off)", appInfo.sherpaConfig.maxHangMillis, 0) { v ->
-                val c = getAppInfo(); saveAppInfo(c.copy(sherpaConfig = c.sherpaConfig.copy(maxHangMillis = v)))
-            }
         }
-        return scrollOf(box)
+        children.add(
+            numberSetting(
+                title = "Threads",
+                description = "How many CPU threads the recogniser may use.",
+                value = { sherpaConfig().numThreads },
+                min = 1,
+            ) { v -> saveSherpaConfig { it.copy(numThreads = v) } }
+        )
+        children.add(
+            numberSetting(
+                title = "Max active paths",
+                description = "How many candidate transcriptions modified_beam_search keeps at each step; " +
+                    "greedy_search ignores it.",
+                value = { sherpaConfig().maxActivePaths },
+                min = 1,
+            ) { v -> saveSherpaConfig { it.copy(maxActivePaths = v) } }
+        )
+        children.add(
+            numberSetting(
+                title = "Max words per phrase",
+                description = "A phrase this many words long is sent on even without a pause. 0 sends only at a pause.",
+                value = { sherpaConfig().splitMaxWords },
+                min = 0,
+            ) { v -> saveSherpaConfig { it.copy(splitMaxWords = v) } }
+        )
+        children.add(
+            millisecondsSetting(
+                title = "Longest hang, ms",
+                description = "A phrase that has been going this long is sent on anyway, pause or not. 0 turns it off.",
+                value = { sherpaConfig().maxHangMillis },
+                min = 0,
+            ) { v -> saveSherpaConfig { it.copy(maxHangMillis = v) } }
+        )
+    })
+
+    private fun buildSpeechmaticsPane(): ScrollPane = scrollOf(settingsPage {
+        val config = getAppInfo().speechmaticsConfig
+        addSection(
+            title = "Endpoint",
+            note = "Where the audio is sent and processed: the region in the address keeps it there. " +
+                "The API key is on the API keys page.",
+        ) {
+            addComboBox(
+                items = SpeechmaticsConfig.ENDPOINTS,
+                selectedItem = config.endpoint.takeIf { it in SpeechmaticsConfig.ENDPOINTS }
+                    ?: SpeechmaticsConfig.ENDPOINTS.first(),
+                toStringFn = { it },
+                onSelected = { endpoint -> saveSpeechmaticsConfig { it.copy(endpoint = endpoint) } },
+            )
+        }
+        addSection(
+            title = "Model",
+            note = "Standard, or enhanced: more accurate, slower to settle.",
+        ) {
+            addComboBox(
+                items = SpeechmaticsConfig.MODELS,
+                selectedItem = config.model.takeIf { it in SpeechmaticsConfig.MODELS } ?: SpeechmaticsConfig.MODELS.first(),
+                toStringFn = { it },
+                onSelected = { model -> saveSpeechmaticsConfig { it.copy(model = model) } },
+                short = true,
+            )
+        }
+        addSection(
+            title = "Speakers",
+            note = "Each phrase is labelled with who said it, so the Questions mode knows who asked.",
+        ) {
+            addCheckBox(
+                text = "Label who speaks (S1, S2…)",
+                checked = config.speakerLabels,
+                onToggle = { on -> saveSpeechmaticsConfig { it.copy(speakerLabels = on) } },
+            )
+        }
+    })
+
+    private fun whisperConfig() = getAppInfo().whisperModelConfig
+
+    private fun saveWhisperConfig(change: (WhisperModelConfig) -> WhisperModelConfig) {
+        val appInfo = getAppInfo()
+        saveAppInfo(appInfo.copy(whisperModelConfig = change(appInfo.whisperModelConfig)))
+    }
+
+    private fun sherpaConfig() = getAppInfo().sherpaConfig
+
+    private fun saveSherpaConfig(change: (SherpaModelConfig) -> SherpaModelConfig) {
+        val appInfo = getAppInfo()
+        saveAppInfo(appInfo.copy(sherpaConfig = change(appInfo.sherpaConfig)))
+    }
+
+    private fun saveSpeechmaticsConfig(change: (SpeechmaticsConfig) -> SpeechmaticsConfig) {
+        val appInfo = getAppInfo()
+        saveAppInfo(appInfo.copy(speechmaticsConfig = change(appInfo.speechmaticsConfig)))
     }
 
     private fun openUrl(url: String) {

@@ -9,19 +9,13 @@ import dev.langchain4j.exception.ModelNotFoundException
 import dev.langchain4j.exception.RateLimitException
 import dev.langchain4j.exception.UnresolvedModelServerException
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import models.domain.TranslationMethod
 import java.io.IOException
 import java.net.SocketTimeoutException
 import java.net.http.HttpTimeoutException
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /**
- * What went wrong when a translation method handled a phrase. Every kind sends the phrase on to the
- * next method in the chain; the kind decides how long the failed method then rests (see [MethodHealth]).
+ * What went wrong when a translation method handled a phrase. Every kind makes the method in use hand the
+ * dialog over to the next one in the chain (see ActiveMethod); the kind is what the row and the status say.
  */
 enum class FailureKind(val reason: String) {
     /** 429 for a per-minute limit: the provider asks to slow down. */
@@ -114,169 +108,5 @@ fun classifyFailure(error: Throwable): Failure {
     return Failure(kind, message.take(500), retryAfter)
 }
 
-/**
- * Which translation methods are resting after a failure, and which one translated the latest phrase.
- *
- * A method that failed rests before it is tried again, so the phrases meanwhile go straight to the next
- * method in the chain instead of each first failing on it; when the rest is over, the next phrase tries it
- * again, and a success puts it back in front. How long it rests depends on the failure:
- * - a per-minute limit — as long as the provider asked, or a minute;
- * - a used-up daily quota — as long as the provider asked (OpenAI), or until the daily reset at midnight
- *   Pacific (Google);
- * - no credit left on the account — 15 minutes;
- * - a rejected key or a missing model — until the user changes the keys or the chain ([reset]);
- * - a server, network or request error, or no answer in time — 30 seconds, doubling with every further
- *   failure in a row, up to 5 minutes. Such a rest is soft: when no other method can take the phrase,
- *   the method is tried anyway rather than leaving the phrase waiting.
- * - an unusable answer, a filtered answer, a failed transcription — no rest: that phrase moves on, the
- *   method stays in front for the next one.
- */
-class MethodHealth(private val clock: () -> Long = System::currentTimeMillis) {
-
-    data class Rest(val untilMillis: Long, val reason: String, val soft: Boolean) {
-        val untilSettingsChange: Boolean get() = untilMillis == Long.MAX_VALUE
-
-        fun describe(): String = when {
-            untilSettingsChange -> "$reason — until the settings change"
-            else -> "$reason — until ${CLOCK.format(Instant.ofEpochMilli(untilMillis).atZone(ZoneId.systemDefault()))}"
-        }
-    }
-
-    private val lock = Any()
-    private val failuresInRow = HashMap<String, Int>()
-
-    private val restsState = MutableStateFlow<Map<String, Rest>>(emptyMap())
-
-    /** Methods resting now, by [TranslationMethod.key]. */
-    val rests: StateFlow<Map<String, Rest>> = restsState
-
-    private val lastUsedState = MutableStateFlow<String?>(null)
-
-    /** The key of the method that translated the latest phrase. */
-    val lastUsed: StateFlow<String?> = lastUsedState
-
-    /** The rest [key] is on now, or null if it may be used. */
-    fun restOf(key: String): Rest? = synchronized(lock) {
-        pruneExpiredLocked()
-        restsState.value[key]
-    }
-
-    /** Ends the rests that are over (the UI calls this to repaint; the scheduler's queries do it too). */
-    fun pruneExpired() = synchronized(lock) { pruneExpiredLocked() }
-
-    fun recordSuccess(key: String) = synchronized(lock) {
-        failuresInRow.remove(key)
-        restsState.value = restsState.value - key
-        lastUsedState.value = key
-    }
-
-    /** Puts [key] to rest for as long as [failure] calls for; null when only this phrase moves on. */
-    fun recordFailure(key: String, failure: Failure): Rest? = synchronized(lock) {
-        val now = clock()
-        val rest = when (failure.kind) {
-            FailureKind.RATE_LIMIT ->
-                Rest(now + (failure.retryAfterMillis ?: RATE_LIMIT_REST_MILLIS), failure.kind.reason, soft = false)
-            FailureKind.DAILY_QUOTA -> Rest(
-                failure.retryAfterMillis?.let { now + it } ?: TranslationRateLimiter.nextPacificMidnight(now),
-                failure.kind.reason,
-                soft = false,
-            )
-            FailureKind.BILLING -> Rest(now + BILLING_REST_MILLIS, failure.kind.reason, soft = false)
-            FailureKind.AUTH, FailureKind.NOT_FOUND -> Rest(Long.MAX_VALUE, failure.kind.reason, soft = false)
-            FailureKind.SERVER, FailureKind.NETWORK, FailureKind.TIMEOUT, FailureKind.BAD_REQUEST, FailureKind.UNKNOWN -> {
-                val inRow = (failuresInRow[key] ?: 0) + 1
-                failuresInRow[key] = inRow
-                val millis = (FIRST_REST_MILLIS shl (inRow - 1).coerceAtMost(10)).coerceAtMost(MAX_REST_MILLIS)
-                Rest(now + millis, failure.kind.reason, soft = true)
-            }
-            FailureKind.BAD_ANSWER, FailureKind.CONTENT_FILTERED, FailureKind.TRANSCRIPTION -> null
-        }
-        if (rest != null) restsState.value = restsState.value + (key to rest)
-        rest
-    }
-
-    /** The keys or the chain changed: every method gets a fresh chance. */
-    fun reset() = synchronized(lock) {
-        failuresInRow.clear()
-        restsState.value = emptyMap()
-    }
-
-    private fun pruneExpiredLocked() {
-        val now = clock()
-        val current = restsState.value
-        val live = current.filterValues { it.untilMillis > now }
-        if (live.size != current.size) restsState.value = live
-    }
-
-    companion object {
-        const val FIRST_REST_MILLIS = 30_000L
-        const val MAX_REST_MILLIS = 300_000L
-        const val RATE_LIMIT_REST_MILLIS = 60_000L
-        const val BILLING_REST_MILLIS = 15 * 60_000L
-        private val CLOCK: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
-    }
-}
-
-sealed interface MethodChoice {
-    /** Send the phrase to [method]; its rate limiter has already counted the request. */
-    data class Use(val method: TranslationMethod) : MethodChoice
-
-    /** No method can take the phrase now; the soonest one can is in [millis]. */
-    data class Wait(val millis: Long, val reasons: List<String>) : MethodChoice
-
-    /** No method left in the chain can take this phrase at all. */
-    data class NoneLeft(val reasons: List<String>) : MethodChoice
-}
-
-/** A wait this short for a method's per-minute limit beats handing the phrase to the next method. */
+/** A wait this short for the model's own rate limit is waited out; a longer one counts as a failure of the method. */
 const val SHORT_WAIT_MILLIS = 3_000L
-
-/**
- * Picks the method for a phrase: the first in [chain] (primary, then the reserves in order) that is not in
- * [skip] (failed this phrase already), can work for it ([unusableReason] is null — a key is set, the
- * phrase has the input the method needs), is not resting ([rest]) and whose rate limit lets the request
- * through now ([reserve] returns 0, counting it, or the milliseconds until it could).
- *
- * A method whose limit frees within [SHORT_WAIT_MILLIS] is waited for rather than passed over. When
- * nothing healthy can take the phrase, a method on a soft rest (after a passing error) is used rather than
- * leaving the phrase to wait out the rest.
- */
-fun chooseMethod(
-    chain: List<TranslationMethod>,
-    skip: Set<String>,
-    now: Long,
-    unusableReason: (TranslationMethod) -> String?,
-    rest: (TranslationMethod) -> MethodHealth.Rest?,
-    reserve: (TranslationMethod) -> Long,
-): MethodChoice {
-    val reasons = ArrayList<String>()
-    val candidates = ArrayList<TranslationMethod>()
-    for (method in chain) {
-        if (method.key in skip) continue
-        val unusable = unusableReason(method)
-        if (unusable != null) reasons += "${method.shortTitle}: $unusable" else candidates += method
-    }
-    if (candidates.isEmpty()) return MethodChoice.NoneLeft(reasons)
-
-    var soonest = Long.MAX_VALUE
-    val softResting = ArrayList<TranslationMethod>()
-    for (method in candidates) {
-        val resting = rest(method)
-        if (resting != null && resting.untilMillis > now) {
-            reasons += "${method.shortTitle}: ${resting.describe()}"
-            if (resting.soft) softResting += method else soonest = minOf(soonest, resting.untilMillis - now)
-            continue
-        }
-        val wait = reserve(method)
-        if (wait == 0L) return MethodChoice.Use(method)
-        if (wait <= SHORT_WAIT_MILLIS) return MethodChoice.Wait(wait, reasons)
-        reasons += "${method.shortTitle}: rate limit, free in ${(wait + 999) / 1000} s"
-        soonest = minOf(soonest, wait)
-    }
-    for (method in softResting) {
-        val wait = reserve(method)
-        if (wait == 0L) return MethodChoice.Use(method)
-        soonest = minOf(soonest, wait)
-    }
-    return MethodChoice.Wait(soonest, reasons)
-}

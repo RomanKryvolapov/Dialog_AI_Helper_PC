@@ -7,8 +7,4 @@ abstract class BaseReverseMapper<From, To> : BaseMapper<From, To>() {
 
     abstract fun reverse(model: To): From
 
-    fun reverseList(models: List<To>): List<From> {
-        return models.map(::reverse)
-    }
-
 }

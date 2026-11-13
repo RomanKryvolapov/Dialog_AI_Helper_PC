@@ -5,16 +5,15 @@ import extensions.normalizeAndRemoveEmptyLines
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import repository.PreferencesRepository
-import java.io.BufferedReader
 import java.io.File
 import java.io.IOException
-import java.io.InputStreamReader
 
 class WhisperUtilImpl(
     private val preferencesRepository: PreferencesRepository,
@@ -54,14 +53,14 @@ class WhisperUtilImpl(
         WhisperResult.Failed
     }
 
-    override suspend fun transcribe(wav: ByteArray, language: String): String? {
+    override suspend fun transcribe(wav: ByteArray, language: String): WhisperResult {
         val file = try {
             withContext(Dispatchers.IO) { File.createTempFile("phrase-", ".wav").apply { writeBytes(wav) } }
         } catch (e: IOException) {
             log.error("Could not write the phrase for Whisper: ${e.message}", e)
-            return null
+            return WhisperResult.Failed
         }
-        return (recognize(file, language) as? WhisperResult.Heard)?.text
+        return recognize(file, language)
     }
 
     /** Runs the one-shot Whisper script on [wavFile] (deleted afterwards). */
@@ -78,6 +77,8 @@ class WhisperUtilImpl(
                 return@withContext WhisperResult.Failed
             }
 
+            // stdout and stderr stay apart: stdout carries only the phrase's text, stderr the script's own
+            // messages (a GPU attempt that failed before the CPU took over, a traceback), which are logged.
             val processBuilder = ProcessBuilder(
                 pythonExecutable.absolutePath,
                 "-Xutf8",
@@ -87,7 +88,6 @@ class WhisperUtilImpl(
                 language,
             ).apply {
                 directory(File(projectRoot))
-                redirectErrorStream(true)
             }
 
             val process: Process = try {
@@ -108,38 +108,52 @@ class WhisperUtilImpl(
             }
             evicted.forEach { killEntry(it, "limit reached") }
 
-            try {
-                val output = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
-                val result = StringBuilder()
-                var line: String?
-                while (output.readLine().also { line = it } != null) {
-                    result.appendLine(line)
+            // Drained alongside stdout (unread, a long traceback would fill its pipe and stall the script) and
+            // outside this job, so a run the concurrency limit evicts still gets its messages logged.
+            val messages = StringBuffer()
+            val messagesReader = backgroundThreadScope.launch {
+                try {
+                    process.errorStream.bufferedReader(Charsets.UTF_8).forEachLine { messages.appendLine(it) }
+                } catch (e: IOException) {
+                    messages.appendLine("(the rest could not be read: ${e.message})")
                 }
-                val exitCode = process.waitFor()
+            }
+            var exitCode: Int? = null
+            var output = ""
+            try {
+                output = process.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                exitCode = process.waitFor()
                 if (exitCode != 0) {
-                    val details = result.toString().trim()
-                    if (details.isNotBlank()) {
-                        log.warn("Whisper failed (exit $exitCode) for ${wavFile.name}:\n$details")
-                    } else {
-                        log.warn("Whisper failed (exit $exitCode) for ${wavFile.name} with no output")
-                    }
                     WhisperResult.Failed
                 } else {
-                    val text = result.toString()
+                    val text = output
                         .replace(Regex("""(\.\s*){2,}"""), "")
                         .normalizeAndRemoveEmptyLines()
                     log.debug("whisper text: $text")
-                    if (text.isBlank()) {
-                        log.warn("Whisper produced empty text for ${wavFile.name}")
-                        WhisperResult.Silence
-                    } else {
-                        WhisperResult.Heard(text)
+                    val speech = WhisperHallucinations.clean(text)
+                    when {
+                        text.isBlank() -> {
+                            log.warn("Whisper produced empty text for ${wavFile.name}")
+                            WhisperResult.Silence
+                        }
+                        speech == null -> {
+                            log.info("Whisper heard only \"$text\" in ${wavFile.name}, a phrase it makes up on silence and noise: dropped")
+                            WhisperResult.Silence
+                        }
+                        else -> {
+                            if (speech != text) log.info("Whisper in {}: subtitle lines or a loop dropped, \"{}\" became \"{}\"", wavFile.name, text, speech)
+                            WhisperResult.Heard(speech)
+                        }
                     }
                 }
             } finally {
+                // Off the list first: an eviction landing while the messages are awaited would cancel a
+                // finished run.
                 synchronized(activeProcessesLock) {
                     activeProcesses.remove(entry)
                 }
+                withContext(NonCancellable) { messagesReader.join() }
+                logRun(wavFile, exitCode, messages.toString().trim(), output.trim())
             }
         } catch (e: CancellationException) {
             log.warn("Whisper job cancelled for ${wavFile.name}")
@@ -151,6 +165,21 @@ class WhisperUtilImpl(
             if (!wavFile.delete()) {
                 log.warn("Failed to delete chunk ${wavFile.name}")
             }
+        }
+    }
+
+    /** What one run said about itself: its stderr, and stdout too when it failed ([exitCode] null: it never finished). */
+    private fun logRun(wavFile: File, exitCode: Int?, messages: String, output: String) {
+        if (exitCode == 0) {
+            if (messages.isNotEmpty()) log.info("Whisper messages for ${wavFile.name}:\n$messages")
+            return
+        }
+        val outcome = if (exitCode == null) "did not finish" else "failed (exit $exitCode)"
+        val details = listOf(messages, output).filter { it.isNotEmpty() }.joinToString("\n")
+        if (details.isEmpty()) {
+            log.warn("Whisper $outcome for ${wavFile.name} with no output")
+        } else {
+            log.warn("Whisper $outcome for ${wavFile.name}:\n$details")
         }
     }
 

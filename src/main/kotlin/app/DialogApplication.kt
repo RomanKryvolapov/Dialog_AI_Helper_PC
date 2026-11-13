@@ -1,8 +1,5 @@
 package app
 
-import OVERWRITE_PROMPTS_FROM_CODE
-import PROMPT_TRANSLATE_TEXT
-import defaultApplicationInfo
 import com.sun.management.OperatingSystemMXBean
 import di.allModules
 import javafx.animation.KeyFrame
@@ -12,6 +9,7 @@ import javafx.geometry.Insets
 import javafx.geometry.Pos
 import javafx.geometry.Rectangle2D
 import javafx.scene.Scene
+import javafx.scene.control.CheckBox
 import javafx.scene.control.Label
 import javafx.scene.control.ProgressBar
 import javafx.scene.control.ScrollPane
@@ -24,9 +22,9 @@ import javafx.scene.layout.StackPane
 import javafx.stage.Screen
 import javafx.stage.Stage
 import javafx.util.Duration as FxDuration
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import mainThreadScope
-import models.domain.PromptModel
 import models.domain.resolveLlmModel
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
@@ -34,9 +32,10 @@ import org.koin.core.context.startKoin
 import repository.PreferencesRepository
 import ui.ConsoleTab
 import ui.MessagesTab
-import ui.PromptTab
+import ui.QuestionsTab
 import ui.SettingsTab
 import utils.AudioChunker
+import utils.ActiveMethod
 import utils.TokenUsageTracker
 import java.lang.management.ManagementFactory
 
@@ -46,16 +45,19 @@ class DialogApplication : Application(), KoinComponent {
     private val audioChunker: AudioChunker by inject()
 
     private val messagesTab: MessagesTab by inject()
-    private val promptTab: PromptTab by inject()
+    private val questionsTab: QuestionsTab by inject()
     private val settingsTab: SettingsTab by inject()
     private val consoleTab: ConsoleTab by inject()
     private val tokenUsageTracker: TokenUsageTracker by inject()
+    private val activeMethod: ActiveMethod by inject()
 
     companion object {
         var ownerStage: Stage? = null
-        private const val MESSAGES_TAB_INDEX = 0
+        private const val QUESTIONS_TAB_INDEX = 1
         /** The tab header row's height, as styles.css sets it. */
         private const val TOP_BAR_HEIGHT = 64.0
+        /** The method label when the dialog has left method 1. */
+        private const val RESERVE_COLOUR = "#E0A030"
 
         /** 950, 12.3k, 1.2M — short enough for the top bar. */
         internal fun compactCount(count: Long): String = when {
@@ -65,7 +67,7 @@ class DialogApplication : Application(), KoinComponent {
         }
 
         internal fun tokensTooltip(totals: TokenUsageTracker.Totals): String = buildString {
-            appendLine("Tokens this dialog has used since Clear dialog, translations and conversation notes,")
+            appendLine("Tokens this dialog has used since Clear dialog, translations, conversation summaries and questions,")
             append("as the providers reported them: in ${totals.input}, out ${totals.output}, ${totals.answers} answers")
             totals.byModel.forEach { (id, usage) ->
                 val title = resolveLlmModel(id)?.title ?: id
@@ -87,34 +89,13 @@ class DialogApplication : Application(), KoinComponent {
         ownerStage = primaryStage
         primaryStage.isMaximized = true
 
-        if (OVERWRITE_PROMPTS_FROM_CODE) {
-            val current = preferencesRepository.getAppInfo()
-            val codePrompts = defaultApplicationInfo.promptsMap
-            preferencesRepository.saveAppInfo(
-                current.copy(
-                    promptsMap = codePrompts,
-                    prompt = codePrompts[current.prompt.name] ?: defaultApplicationInfo.prompt,
-                )
-            )
-        }
-
         val appInfo = preferencesRepository.getAppInfo()
-
-        if (appInfo.prompt.prompt.isBlank()) {
-            preferencesRepository.saveAppInfo(
-                preferencesRepository.getAppInfo().copy(
-                    prompt = PromptModel(
-                        name = "Translate text",
-                        prompt = PROMPT_TRANSLATE_TEXT,
-                    )
-                )
-            )
-        }
 
         val tabPane = TabPane().apply {
             tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
             tabs.addAll(
                 Tab("Messages", messagesTab.content),
+                Tab("Questions", questionsTab.content),
                 Tab("Settings", settingsTab.content),
             )
             selectionModel.select(appInfo.lastOpenedTab.coerceIn(0, tabs.size - 1))
@@ -151,14 +132,24 @@ class DialogApplication : Application(), KoinComponent {
             style = overlayLabelStyle
         }
 
+        // The Questions mode on or off (Settings → Questions holds the rest of it).
+        val questionsBox = CheckBox("Questions").apply {
+            style = overlayLabelStyle
+            isSelected = preferencesRepository.getAppInfo().questions.enabled
+            selectedProperty().addListener { _, _, on ->
+                val info = preferencesRepository.getAppInfo()
+                if (info.questions.enabled != on) preferencesRepository.saveAppInfo(info.copy(questions = info.questions.copy(enabled = on)))
+            }
+        }
+
         val meters = HBox(12.0, micLabel, micBar, ramLabel, ramBar, ramValueLabel).apply {
             alignment = Pos.CENTER_LEFT
             isMouseTransparent = true
         }
 
-        // The dialog's buttons act on the Messages tab only; on the other tabs they stay in view, disabled.
+        // The dialog's buttons act on its two screens, Messages and Questions; on Settings they stay in view, disabled.
         messagesTab.headerControls.disableProperty()
-            .bind(tabPane.selectionModel.selectedIndexProperty().isNotEqualTo(MESSAGES_TAB_INDEX))
+            .bind(tabPane.selectionModel.selectedIndexProperty().greaterThan(QUESTIONS_TAB_INDEX))
 
         // The top bar sits in the tab header row, right of the tab names: the dialog's buttons, then the
         // microphone and memory meters.
@@ -166,7 +157,10 @@ class DialogApplication : Application(), KoinComponent {
         // Not part of the mouse-transparent meters: its tooltip breaks the count down.
         val tokensLabel = Label().apply { style = overlayLabelStyle }
 
-        val topBar = HBox(24.0, messagesTab.headerControls, meters, tokensLabel).apply {
+        // The method the dialog uses now: method 1 until it fails, then the next one until the dialog restarts.
+        val methodLabel = Label().apply { style = overlayLabelStyle }
+
+        val topBar = HBox(24.0, messagesTab.headerControls, questionsBox, meters, tokensLabel, methodLabel).apply {
             alignment = Pos.CENTER_LEFT
             minHeight = TOP_BAR_HEIGHT
             prefHeight = TOP_BAR_HEIGHT
@@ -196,6 +190,32 @@ class DialogApplication : Application(), KoinComponent {
             tokenUsageTracker.totals.collect { totals ->
                 tokensLabel.text = "Tokens ${compactCount(totals.total)}"
                 tokensLabel.tooltip = Tooltip(tokensTooltip(totals))
+            }
+        }
+
+        mainThreadScope.launch {
+            combine(preferencesRepository.appInfoFlow, activeMethod.flow) { info, state -> info.translationMethods to state }
+                .collect { (chain, state) ->
+                    val index = state.index.coerceIn(0, chain.lastIndex)
+                    val method = chain[index]
+                    methodLabel.text = "Method ${index + 1}: ${method.shortTitle}"
+                    methodLabel.style = overlayLabelStyle + if (index > 0) " -fx-text-fill: $RESERVE_COLOUR;" else ""
+                    methodLabel.tooltip = Tooltip(
+                        buildString {
+                            appendLine("In use: ${method.title}")
+                            state.left.forEach { (key, why) ->
+                                appendLine("Left ${chain.firstOrNull { it.key == key }?.title ?: key}: $why")
+                            }
+                            append("Stop and start the dialog to begin with method 1 again.")
+                        }
+                    )
+                }
+        }
+
+        // Settings → Questions switches the same setting.
+        mainThreadScope.launch {
+            preferencesRepository.appInfoFlow.collect { info ->
+                if (questionsBox.isSelected != info.questions.enabled) questionsBox.isSelected = info.questions.enabled
             }
         }
 

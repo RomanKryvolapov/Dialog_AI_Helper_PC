@@ -8,7 +8,7 @@ package models.domain
  * or by a speech [recognizer]. The second level only exists for a recogniser: the [model] that translates
  * its text.
  *
- * Settings → General holds a chain of up to three, tried in order when the one before fails.
+ * Settings → General holds a chain of up to three; a dialog moves on to the next when the one in use fails.
  */
 data class TranslationMethod(val model: LlmModel, val recognizer: VoiceRecognitionEngine?) {
 
@@ -19,7 +19,7 @@ data class TranslationMethod(val model: LlmModel, val recognizer: VoiceRecogniti
 
     val title: String get() = if (recognizer == null) "${model.title} (hears the audio)" else "${recognizer.title} → ${model.title}"
 
-    val shortTitle: String get() = if (recognizer == null) "${model.shortTitle} voice" else "${model.shortTitle} text"
+    val shortTitle: String get() = "${model.shortTitle} (${recognizer?.shortTitle ?: "voice"})"
 
     companion object {
         const val VOICE_PREFIX = "voice"
@@ -56,23 +56,6 @@ fun allHearings(): List<Hearing> =
 fun textModels(): List<LlmModel> = allLlmModels().filter { it.readsText }
 
 /**
- * The first-level choices that can follow method 1 ([primary]) as a reserve. A phrase recorded at pauses —
- * by a voice method 1 or Whisper (batch) — can go to a voice model, or be transcribed by Whisper for a text
- * model. A streaming recogniser keeps no recording, so its reserves can only translate the same text with
- * another model.
- */
-fun reserveHearings(primary: TranslationMethod): List<Hearing> {
-    val recognizer = primary.recognizer
-    if (recognizer != null && !recognizer.recordsPhrases) return listOf(Hearing.Recognition(recognizer))
-    return allLlmModels().filter { it.hearsAudio }.map { Hearing.Voice(it) } +
-        Hearing.Recognition(VoiceRecognitionEngine.WHISPER_BATCH)
-}
-
-/** Whether [method] can follow [primary] in a chain (see [reserveHearings]). */
-fun fitsAfter(primary: TranslationMethod, method: TranslationMethod): Boolean =
-    method.hearing in reserveHearings(primary)
-
-/**
  * The method a saved [key] names, following a dropped model to its successor. A key of the first chains
  * ("text:<id>", or a bare model id) is a text method on [legacyRecognizer]; a recogniser not on offer
  * becomes Whisper (batch). Null when the model is unknown or cannot work that way.
@@ -99,12 +82,6 @@ fun onRecognizer(chain: List<TranslationMethod>, recognizer: VoiceRecognitionEng
     if (recognizer == null || !recognizer.offered) chain
     else chain.map { if (it.voice) it else it.copy(recognizer = recognizer) }
 
-/**
- * A saved chain as the app runs it: known methods only, each once, at most [TranslationMethod.MAX_CHAIN],
- * and only reserves that can follow method 1.
- */
-fun resolveMethodChain(keys: List<String>, legacyRecognizer: VoiceRecognitionEngine? = null): List<TranslationMethod> {
-    val methods = keys.mapNotNull { resolveTranslationMethod(it, legacyRecognizer) }.distinctBy { it.key }
-    val primary = methods.firstOrNull() ?: return emptyList()
-    return (listOf(primary) + methods.drop(1).filter { fitsAfter(primary, it) }).take(TranslationMethod.MAX_CHAIN)
-}
+/** A saved chain as the app runs it: known methods only, each once, at most [TranslationMethod.MAX_CHAIN]. */
+fun resolveMethodChain(keys: List<String>, legacyRecognizer: VoiceRecognitionEngine? = null): List<TranslationMethod> =
+    keys.mapNotNull { resolveTranslationMethod(it, legacyRecognizer) }.distinctBy { it.key }.take(TranslationMethod.MAX_CHAIN)

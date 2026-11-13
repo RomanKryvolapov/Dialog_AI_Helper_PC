@@ -20,10 +20,15 @@ import utils.DialogLogger
 import utils.DialogLoggerImpl
 import utils.EnvSettings
 import utils.EnvSettingsImpl
-import utils.MethodHealth
+import utils.LastRequests
+import utils.QuestionsAssistant
+import utils.RateLimiters
+import utils.ActiveMethod
 import utils.TokenUsageTracker
 import utils.SherpaOnnxRecognizer
 import utils.SherpaOnnxRecognizerImpl
+import utils.SpeechmaticsRecognizer
+import utils.SpeechmaticsRecognizerImpl
 import utils.WhisperStreamingUtil
 import utils.WhisperStreamingUtilImpl
 import utils.WhisperUtil
@@ -43,9 +48,13 @@ val utilsModule = module {
     singleOf(::WhisperUtilImpl) bind WhisperUtil::class
     singleOf(::WhisperStreamingUtilImpl) bind WhisperStreamingUtil::class
     singleOf(::SherpaOnnxRecognizerImpl) bind SherpaOnnxRecognizer::class
+    singleOf(::SpeechmaticsRecognizerImpl) bind SpeechmaticsRecognizer::class
     singleOf(::DialogLoggerImpl) bind DialogLogger::class
-    single { MethodHealth() }
+    singleOf(::ActiveMethod)
     singleOf(::TokenUsageTracker)
+    singleOf(::LastRequests)
+    singleOf(::RateLimiters)
+    singleOf(::QuestionsAssistant)
 
     single<Preferences> {
         Preferences.userRoot().node("PREFERENCES_DATABASE")

@@ -1,85 +1,46 @@
 package utils
 
-import RECENT_TURNS_MAX_CHARS
 import models.domain.ConversationTurn
+import org.slf4j.LoggerFactory
 
 /**
- * The conversation as the translation prompt sees it: the newest turns verbatim, with the
- * translations already given, plus a running summary of everything older.
+ * The conversation as the translation requests see it: a running summary of everything older, plus the last
+ * few phrases verbatim (the window), each with the translation already given for it.
  *
- * Only the turns not yet folded into the summary are kept, and a prompt sees all of them. Once they
- * render to more than [FOLD_AT_CHARS], everything except the newest turns that fit
- * [RECENT_TURNS_MAX_CHARS] is handed out as a [Fold] — one summary request, never for fewer than
- * [MIN_FOLD_TURNS] turns — and [foldDone] swaps those turns for the new summary. So a prompt carries
- * the summary plus one to two budgets of verbatim turns, and the summary is refreshed about once per
- * budget of new speech, or every few phrases when phrases are long. After a failed request folding
- * resumes [RETRY_AFTER_TURNS] phrases later, however much piled up while the request was out.
+ * The summary is written by a request of its own, never by a translation: as soon as a phrase leaves the
+ * window and there is no summary yet, and after that each time [Settings.summaryEvery] phrases have left it
+ * since the last one. Such a request ([Fold]) gets the summary so far and the phrases that left the window,
+ * and [foldDone] swaps those phrases for the new summary. So a request always sees the summary plus the
+ * window, and while the summary requests keep up, at most [Settings.summaryEvery] phrases between the two -
+ * the ones waiting for the next summary - are seen by neither. After a failed summary the next try waits
+ * [RETRY_AFTER_TURNS] phrases.
  *
  * Thread-safe: phrases arrive on the FX thread, translations and summaries on background threads.
  */
 class ConversationContext {
 
     companion object {
-        /** Unfolded turns rendering to more than this are folded into the summary. */
-        const val FOLD_AT_CHARS = 2 * RECENT_TURNS_MAX_CHARS
-
-        /** Unfolded turns are capped here; reached only while a summary stalls or after one failed. */
-        const val MAX_KEPT_CHARS = 4 * RECENT_TURNS_MAX_CHARS
-
-        /** A summary request folds at least this many turns, so long phrases do not cost one each. */
-        const val MIN_FOLD_TURNS = 3
-
-        /** After a failed summary, folding is tried again this many phrases later. */
+        /** After a failed summary, the next is tried this many phrases later. */
         const val RETRY_AFTER_TURNS = 5
 
-        // The previous-sentence prompts read up to five turns back, whatever their length.
-        private const val PREVIOUS_SENTENCE_TURNS = 5
+        /** Phrases waiting for a summary are capped at this many summaries' worth, reached only while they fail. */
+        private const val MAX_PENDING_SUMMARIES = 4
 
-        /**
-         * One turn in the shape the conversation prompts (PROMPT_TRANSLATE_CONVERSATION,
-         * PROMPT_TRANSLATE_VOICE, PROMPT_CONVERSATION_SUMMARY) describe: what was said and, once ready,
-         * its translation. A voice turn whose transcript has not arrived yet renders as nothing.
-         */
-        fun render(turn: ConversationTurn): String {
-            val source = turn.source
-            if (source.isEmpty()) return ""
-            val translation = turn.translation
-            return buildString {
-                append("<turn>\n<said>").append(source).append("</said>\n")
-                if (translation != null) append("<translated>").append(translation).append("</translated>\n")
-                append("</turn>")
-            }
-        }
-
-        /** [turns] as the conversation prompts take them — {{recent_turns}}, or the turns to summarize. */
-        fun renderTurns(turns: List<ConversationTurn>): String =
-            turns.map(::render).filter { it.isNotEmpty() }.joinToString("\n")
-
-        /**
-         * The text of the turn [n] before the phrase ({{previous_text_n}}, newest = 1), counting only turns that
-         * have text: one still waiting for its transcript, or later found to be silence, takes no slot.
-         */
-        fun previousText(turns: List<ConversationTurn>, n: Int): String {
-            val spoken = turns.filter { it.source.isNotEmpty() }
-            return spoken.getOrNull(spoken.size - n)?.source.orEmpty()
-        }
-
-        /** How many of the newest [turns] fit [maxChars] once rendered — at least [minTurns] of them. */
-        private fun newestCount(turns: List<ConversationTurn>, maxChars: Int, minTurns: Int): Int {
-            var count = 0
-            var used = 0
-            for (turn in turns.asReversed()) {
-                val length = render(turn).length
-                if (count >= minTurns && used + length > maxChars) break
-                count += 1
-                used += length
-            }
-            return count
-        }
+        private val log = LoggerFactory.getLogger("ConversationContext")
     }
 
-    /** What one prompt sees: the summary and the unfolded turns said before its phrase. */
-    class Snapshot(val summary: String, val turns: List<ConversationTurn>)
+    /** [window]: earlier phrases each request carries; [summaryEvery]: phrases per summary, when [summarize]. */
+    data class Settings(val window: Int, val summarize: Boolean, val summaryEvery: Int)
+
+    /** What one request sees: the summary, and the phrases said before its own. */
+    class Snapshot(val summary: String, private val turns: List<ConversationTurn>) {
+        /**
+         * The last [count] phrases that have text, oldest first. Read when the request is built, so a phrase
+         * whose transcript arrived since the snapshot was taken counts, and one still waiting takes no place.
+         */
+        fun previous(count: Int): List<ConversationTurn> =
+            if (count <= 0) emptyList() else turns.filter { it.source.isNotEmpty() }.takeLast(count)
+    }
 
     /** One summary request: fold [turns] into [summary]. */
     class Fold(internal val epoch: Long, val summary: String, val turns: List<ConversationTurn>)
@@ -95,40 +56,41 @@ class ConversationContext {
     // After a failed summary: how many more phrases to wait for before trying again.
     private var retryAfterTurns = 0
 
+    /** The summary as it stands. */
+    val currentSummary: String get() = synchronized(lock) { summary }
+
     /**
-     * Records a newly recognized phrase. [Added.before] is the context its own prompt gets; [Added.fold]
-     * is a summary request to run now, or null. With [summarize] false — the selected prompt uses no
-     * summary — nothing is folded and turns that no prompt would see are dropped.
+     * Records a newly recognized phrase ([source] empty while its text is not known yet). [Added.before] is
+     * the context its own request gets; [Added.fold] is a summary request to send now, or null.
      */
-    fun add(source: String, summarize: Boolean): Added = synchronized(lock) {
+    fun add(source: String, settings: Settings): Added = synchronized(lock) {
         val before = Snapshot(summary, turns.toList())
         val turn = ConversationTurn(source)
         turns.add(turn)
         var fold: Fold? = null
-        if (!summarize) {
-            keepNewest(FOLD_AT_CHARS, PREVIOUS_SENTENCE_TURNS)
+        if (!settings.summarize) {
+            turns.retainAll(inWindow(settings.window) + turns.filter { it.source.isEmpty() })
         } else {
             if (retryAfterTurns > 0) retryAfterTurns -= 1
-            if (!foldInFlight && retryAfterTurns == 0 && renderedChars() > FOLD_AT_CHARS) {
-                val keep = newestCount(turns, RECENT_TURNS_MAX_CHARS, minTurns = 1)
-                // A voice turn still waiting for its transcript ends the fold: folded empty, it would
-                // reach neither the summary nor any later prompt once its text arrived.
-                val older = turns.subList(0, turns.size - keep)
-                val pending = older.indexOfFirst { it.source.isEmpty() }
-                val foldable = if (pending < 0) older else older.subList(0, pending)
-                if (foldable.size >= MIN_FOLD_TURNS) {
-                    fold = Fold(epoch, summary, foldable.toList())
-                    foldInFlight = true
-                }
+            val waiting = waitingForSummary(settings.window)
+            val due = waiting.size >= settings.summaryEvery.coerceAtLeast(1) || (summary.isEmpty() && waiting.isNotEmpty())
+            if (!foldInFlight && retryAfterTurns == 0 && due) {
+                fold = Fold(epoch, summary, waiting)
+                foldInFlight = true
             }
-            keepNewest(MAX_KEPT_CHARS, MIN_FOLD_TURNS + 1)
+            val cap = MAX_PENDING_SUMMARIES * settings.summaryEvery.coerceAtLeast(1)
+            if (waiting.size > cap && fold == null) {
+                val dropped = waiting.take(waiting.size - cap)
+                log.warn("{} phrases dropped from the conversation context: no summary could take them in", dropped.size)
+                turns.removeAll(dropped.toSet())
+            }
         }
         Added(turn, before, fold)
     }
 
     /**
-     * Takes the result of [fold]'s summary request; [newSummary] null means it failed, and the turns
-     * stay verbatim until [RETRY_AFTER_TURNS] more phrases have been said, when folding is tried again.
+     * Takes the result of [fold]'s summary request; [newSummary] null means it failed, and its phrases wait
+     * for the next try, [RETRY_AFTER_TURNS] phrases later.
      */
     fun foldDone(fold: Fold, newSummary: String?): Unit = synchronized(lock) {
         if (fold.epoch != epoch) return
@@ -138,16 +100,15 @@ class ConversationContext {
             return
         }
         summary = newSummary
-        val folded = fold.turns.toHashSet()
-        turns.removeAll { it in folded }
+        turns.removeAll(fold.turns.toSet())
     }
 
-    /** Forgets [turn] — a voice phrase that turned out to hold no speech, or that was never transcribed. */
+    /** Forgets [turn] - a phrase that turned out to hold no speech, or that was never transcribed. */
     fun discard(turn: ConversationTurn): Unit = synchronized(lock) {
         turns.remove(turn)
     }
 
-    /** A new conversation: forgets every turn and the summary; a summary still in flight is ignored. */
+    /** A new conversation: forgets every phrase and the summary; a summary still in flight is ignored. */
     fun clear(): Unit = synchronized(lock) {
         turns.clear()
         summary = ""
@@ -156,10 +117,16 @@ class ConversationContext {
         retryAfterTurns = 0
     }
 
-    private fun renderedChars(): Int = turns.sumOf { render(it).length }
+    /** The newest [window] phrases that have text. */
+    private fun inWindow(window: Int): List<ConversationTurn> =
+        if (window <= 0) emptyList() else turns.filter { it.source.isNotEmpty() }.takeLast(window)
 
-    private fun keepNewest(maxChars: Int, minTurns: Int) {
-        val keep = newestCount(turns, maxChars, minTurns)
-        if (keep < turns.size) turns.subList(0, turns.size - keep).clear()
+    /**
+     * The phrases that left the window and no summary has taken in yet, oldest first. They stop at a phrase
+     * still waiting for its text: folded before it, a later one would reach the summary out of order.
+     */
+    private fun waitingForSummary(window: Int): List<ConversationTurn> {
+        val windowed = inWindow(window).toSet()
+        return turns.takeWhile { it.source.isNotEmpty() }.filter { it !in windowed }
     }
 }

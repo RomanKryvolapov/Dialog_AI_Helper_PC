@@ -1,7 +1,5 @@
 package ui
 
-import javafx.animation.KeyFrame
-import javafx.animation.Timeline
 import javafx.application.Platform
 import javafx.collections.FXCollections
 import javafx.geometry.Insets
@@ -13,9 +11,7 @@ import javafx.scene.control.Tooltip
 import javafx.scene.layout.HBox
 import javafx.scene.layout.Region
 import javafx.scene.layout.VBox
-import javafx.util.Duration
 import javafx.util.StringConverter
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -24,39 +20,38 @@ import models.domain.Hearing
 import models.domain.LlmModel
 import models.domain.TranslationMethod
 import models.domain.allHearings
-import models.domain.fitsAfter
 import models.domain.hearing
-import models.domain.reserveHearings
 import models.domain.textModels
 import repository.PreferencesRepository
 import ui.base.BaseTab
-import utils.MethodHealth
+import utils.ActiveMethod
 
 /**
  * The translation method chain on Settings → General: three numbered rows, method 1 first, then 2 and 3
  * when the one before fails. Each row has two levels: how the speech is heard — a model that hears audio
  * itself, or a speech recogniser — and, for a recogniser only, the model that translates its text.
  *
- * Rows 2 and 3 offer only what can follow method 1 (see [reserveHearings]). The row whose method
- * translated the latest phrase is outlined in green; a resting one in orange, its tooltip saying why.
+ * Any method can be a reserve: when the dialog switches to it, the audio input is rebuilt for it (see
+ * [ActiveMethod]). The method the dialog uses now is outlined in green; one it left after a failure in orange,
+ * its tooltip saying why.
  */
 class MethodChainSelector(
     preferencesRepository: PreferencesRepository,
-    private val methodHealth: MethodHealth,
+    private val activeMethod: ActiveMethod,
 ) : BaseTab(preferencesRepository) {
 
     companion object {
         private const val NONE = "— none —"
         private const val ACTIVE_COLOUR = "#4CAF50"
-        private const val RESTING_COLOUR = "#E0A030"
+        private const val LEFT_COLOUR = "#E0A030"
         private const val HEARING_WIDTH_SHARE = 0.34
         private const val TRANSLATOR_WIDTH_SHARE = 0.24
         private const val NUMBER_WIDTH = 24.0
         private const val ROW_SPACING = 10.0
         private val SLOT_HINTS = listOf(
             "Method 1: translates every phrase while it works",
-            "Method 2: takes over when method 1 fails or cannot keep up",
-            "Method 3: takes over when method 2 fails too",
+            "Method 2: takes over for the rest of the dialog when method 1 fails or cannot keep up",
+            "Method 3: takes over for the rest of the dialog when method 2 fails too",
         )
     }
 
@@ -70,7 +65,8 @@ class MethodChainSelector(
 
     private val hearingCombos: List<ComboBox<Hearing?>> = List(TranslationMethod.MAX_CHAIN) { slot ->
         ComboBox<Hearing?>().apply {
-            if (slot == 0) items.setAll(allHearings())
+            // Method 1 must hear somehow; a reserve may be left empty.
+            items.setAll(if (slot == 0) allHearings() else listOf<Hearing?>(null) + allHearings())
             converter = titles { it?.title ?: NONE }
             // An empty value shows the prompt, not the converter's text.
             promptText = NONE
@@ -111,15 +107,7 @@ class MethodChainSelector(
                 .distinctUntilChanged()
                 .collect { refresh(it) }
         }
-        mainThreadScope.launch {
-            methodHealth.rests.combine(methodHealth.lastUsed) { rests, lastUsed -> rests to lastUsed }
-                .collect { (rests, lastUsed) -> paint(rests, lastUsed) }
-        }
-        // A rest that is over leaves the map only when someone asks; ask regularly so the colour clears.
-        Timeline(KeyFrame(Duration.seconds(2.0), { methodHealth.pruneExpired() })).apply {
-            cycleCount = Timeline.INDEFINITE
-            play()
-        }
+        mainThreadScope.launch { activeMethod.flow.collect { paint(it) } }
     }
 
     private fun <T> titledCell(title: (T?) -> String) = object : ListCell<T?>() {
@@ -138,15 +126,10 @@ class MethodChainSelector(
     private fun refresh(chain: List<TranslationMethod>) {
         refreshing = true
         try {
-            val primary = chain.firstOrNull()
             for (slot in 0 until TranslationMethod.MAX_CHAIN) {
                 val method = chain.getOrNull(slot)
                 shown[slot] = method
                 val hearingCombo = hearingCombos[slot]
-                if (slot > 0) {
-                    val options = listOf<Hearing?>(null) + (primary?.let(::reserveHearings) ?: emptyList())
-                    if (hearingCombo.items != options) hearingCombo.items.setAll(options)
-                }
                 hearingCombo.visibleRowCount = hearingCombo.items.size
                 // Set as the value: selecting the "— none —" entry, a null item, does not change the value of
                 // a box that held a method the new list no longer has.
@@ -160,14 +143,14 @@ class MethodChainSelector(
         } finally {
             refreshing = false
         }
-        paint(methodHealth.rests.value, methodHealth.lastUsed.value)
+        paint(activeMethod.flow.value)
     }
 
     /**
      * A row was edited. Read once the lists have settled — picking an item can pass through a cleared
      * selection or report the same item twice — and rebuild the whole chain from what the rows show, so
-     * a repeated event changes nothing. Reserves that cannot follow method 1 are dropped, empty rows
-     * close up, and a recogniser picked without a translator gets the one its row had, or the first.
+     * a repeated event changes nothing. Empty rows close up, and a recogniser picked without a translator gets
+     * the one its row had, or the first.
      */
     private fun onEdited() {
         if (refreshing) return
@@ -190,7 +173,7 @@ class MethodChainSelector(
                 refresh(current.translationMethods)
                 return@runLater
             }
-            val chain = listOf(primary) + methods.drop(1).filter { fitsAfter(primary, it) }
+            val chain = methods.take(TranslationMethod.MAX_CHAIN)
             if (chain.map { it.key } != current.translationMethods.map { it.key }) {
                 saveAppInfo(current.copy(translationMethods = chain))
             }
@@ -198,13 +181,13 @@ class MethodChainSelector(
         }
     }
 
-    private fun paint(rests: Map<String, MethodHealth.Rest>, lastUsed: String?) {
+    private fun paint(state: ActiveMethod.State) {
         for (slot in 0 until TranslationMethod.MAX_CHAIN) {
             val key = shown[slot]?.key
-            val rest = key?.let { rests[it] }
+            val left = key?.let { state.left[it] }
             val colour = when {
-                rest != null -> RESTING_COLOUR
-                key != null && key == lastUsed -> ACTIVE_COLOUR
+                key != null && slot == state.index.coerceAtMost(shown.count { it != null } - 1) -> ACTIVE_COLOUR
+                left != null -> LEFT_COLOUR
                 else -> null
             }
             val style = colour?.let { "-fx-border-color: $it; -fx-border-width: 2; -fx-border-radius: 3;" } ?: ""
@@ -213,8 +196,8 @@ class MethodChainSelector(
             val hint = SLOT_HINTS[slot]
             val tooltip = Tooltip(
                 when {
-                    rest != null -> "$hint\nResting: ${rest.describe()}"
-                    colour == ACTIVE_COLOUR -> "$hint\nTranslated the latest phrase"
+                    colour == ACTIVE_COLOUR -> "$hint\nIn use now"
+                    left != null -> "$hint\nLeft in this dialog: $left"
                     else -> hint
                 }
             )

@@ -54,6 +54,9 @@
 
 /* Текст заголовка вкладки (обычной) */
 .tab-pane .tab-label {
+    -fx-pref-height: 42px;
+    -fx-min-height: 42px;
+    -fx-max-height: 42px;
     -fx-font-size: 18px;
     -fx-padding: 0 0 0 0;
     -fx-alignment: center;
@@ -122,29 +125,6 @@
 
 
 
-
-/* Радиокнопка — кружок */
-.radio-button .radio {
-    -fx-background-color: #646464;
-    -fx-border-color: transparent;
-}
-
-/* Радиокнопка — активная (выбранная) */
-.radio-button:selected .radio {
-    -fx-background-color: #FFFFFF;
-    -fx-border-color: transparent;
-}
-
-/* Текст рядом с радиокнопкой */
-.radio-button .text {
-    -fx-fill: #FFFFFF;
-}
-
-/* Общий стиль радиокнопки */
-.radio-button {
-    -fx-text-fill: #FFFFFF;
-    -fx-font-size: 16px;
-}
 
 /* Чекбоксы */
 .check-box {
@@ -265,11 +245,8 @@
 
 
 
-/* Многострочное текстовое поле (TextArea) */
+/* Многострочное текстовое поле (TextArea): высоту задаёт код (prefRowCount) */
 .text-area {
-    -fx-pref-height: 640px;
-    -fx-min-height: 640px;
-    -fx-max-height: 640px;
     -fx-background-color: #222222;
     -fx-control-inner-background: #222222;
     -fx-text-fill: #FFFFFF;
@@ -285,14 +262,11 @@
 
 
 
-/* Обычные Label */
+/* Обычные Label: высота по тексту (подпись с переносом растёт), текст слева. Кому нужна своя высота, задаёт её сам */
 .label {
-    -fx-pref-height: 42px;
-    -fx-min-height: 42px;
-    -fx-max-height: 42px;
     -fx-text-fill: #FFFFFF;
     -fx-font-size: 18px;
-    -fx-alignment: center;
+    -fx-alignment: center-left;
     -fx-max-width: Infinity;
 }
 
@@ -300,6 +274,7 @@
     -fx-text-fill: #999999;
     -fx-font-size: 18px;
     -fx-wrap-text: true;
+    -fx-min-height: 42px;
     -fx-pref-height: -1;
     -fx-max-height: Infinity;
     -fx-alignment: top-left;
@@ -310,22 +285,44 @@
     -fx-text-fill: #FFFFFF;
     -fx-font-size: 22px;
     -fx-wrap-text: true;
+    -fx-min-height: 42px;
     -fx-pref-height: -1;
     -fx-max-height: Infinity;
     -fx-alignment: top-left;
 }
 
 
-/* Заголовки с классом title-label */
+/* Settings: the title of a section or a setting */
 .label.title-label {
-    -fx-pref-height: 42px;
-    -fx-min-height: 42px;
-    -fx-max-height: 42px;
     -fx-text-fill: #FFFFFF;
     -fx-font-size: 24px;
     -fx-font-weight: bold;
-    -fx-alignment: center;
-    -fx-max-width: Infinity;
+    -fx-wrap-text: true;
+}
+
+/* Settings: a group of settings under one heading, set off from what is above it by a line */
+.settings-group {
+    -fx-border-color: #4A4A4A transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 24 0 0 0;
+    -fx-max-width: 1000px;
+}
+
+.label.title-label.group-title {
+    -fx-font-size: 28px;
+}
+
+/* Settings: the grey note under a title, and the line of status text beside a row of buttons.
+   One column: notes, wide fields and text areas stop at the same width, so a long line stays readable. */
+.label.note-label {
+    -fx-text-fill: #A0A0A0;
+    -fx-font-size: 16px;
+    -fx-wrap-text: true;
+    -fx-max-width: 1000px;
+}
+
+.label.error-label {
+    -fx-text-fill: #E08080;
 }
 
 
@@ -339,9 +336,9 @@
     -fx-max-height: 42px;
     -fx-text-fill: #FFFFFF;
     -fx-font-size: 20px;
-    -fx-padding: 0 0 0 0;
-    -fx-background-radius: 24;
-    -fx-border-radius: 24;
+    -fx-padding: 0 16 0 16;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
     -fx-border-color: transparent;
     -fx-cursor: hand;
 }
@@ -376,15 +373,49 @@
 
 /* Number before each translation method on Settings → General (1 first, then 2 and 3) */
 .label.chain-number {
+    -fx-pref-height: 42px;
+    -fx-min-height: 42px;
+    -fx-max-height: 42px;
     -fx-font-size: 18px;
     -fx-text-fill: #AAAAAA;
+    -fx-alignment: center;
     -fx-min-width: 24px;
     -fx-max-width: 24px;
 }
 
-/* «Старт диалога» и «Очистить» в строке вкладок: той же ширины, что и вкладки (-fx-tab-min-width выше) */
+/* «Старт диалога» и «Очистить» в строке вкладок: той же ширины и формы, что и вкладки (-fx-tab-min-width выше) */
 .button.header-button {
     -fx-pref-width: 150px;
     -fx-min-width: 150px;
     -fx-max-width: 150px;
+    -fx-padding: 0;
+    -fx-background-radius: 24;
+    -fx-border-radius: 24;
+}
+
+/* Settings: every button is this wide, so a row of them lines up under its field. The captions are short,
+   and the note above says the rest. The colour comes from code (Save green, Clear red, everything else blue). */
+.button.settings-button {
+    -fx-pref-width: 200px;
+    -fx-min-width: 200px;
+    -fx-max-width: 200px;
+    -fx-pref-height: 36px;
+    -fx-min-height: 36px;
+    -fx-max-height: 36px;
+    -fx-font-size: 16px;
+}
+
+/* Settings: text fields and combo boxes fill the column, up to the width of the notes; a short one holds a number */
+.settings-field {
+    -fx-max-width: 1000px;
+}
+
+.settings-field-short {
+    -fx-pref-width: 200px;
+    -fx-min-width: 200px;
+    -fx-max-width: 200px;
+}
+
+.text-area.settings-text-area {
+    -fx-max-width: 1000px;
 }
