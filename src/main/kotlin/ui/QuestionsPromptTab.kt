@@ -77,7 +77,7 @@ class QuestionsPromptTab(
             PromptPartEditor(
                 title = "Instructions (system message)",
                 description = "What counts as a question, when to wait for the rest of one, and the reply: a <status> line " +
-                    "(answer, wait, answered or none), then for an answer <question> and <answer>. The app reads these tags.",
+                    "(answer, update, wait, answered or none), then for an answer or an update <question> and <answer>. The app reads these tags.",
                 part = PromptPart.INSTRUCTIONS,
                 lines = 24,
                 builtIn = builtIn.system,

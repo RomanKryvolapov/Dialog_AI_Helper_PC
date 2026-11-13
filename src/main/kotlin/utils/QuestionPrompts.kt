@@ -9,6 +9,10 @@ import models.domain.QuestionsSettings
  * question on the phrase that finished it in emulated calls on GPT-6.1 Terra (2026-11-10): the
  * instructions first; then the conversation summary, the questions found so far with their answers, and the latest
  * phrases, newest last. The model starts its reply with a status line, so "no question" is an answer, not silence.
+ * The answer length, the plain-text rule and the "update" status come from scripted calls replayed through
+ * [QuestionsAssistant] on 2026-11-11: a question that goes on after its first half was answered (a recognizer
+ * without punctuation cuts at every pause) is answered again as a whole in the same row, not in a second one, while
+ * the request marks that answer replaceable (it was given moments ago); after that, what follows is a new question.
  */
 object QuestionPrompts {
 
@@ -28,9 +32,9 @@ The transcript is imperfect. Words can be misheard: when a word does not fit, pi
 
 Every call gives you these blocks:
 <summary> what the conversation has been about so far (may be empty or a little behind);
-<answered> the questions already found in this conversation, each with the answer given (may be empty);
+<answered> the questions already found in this conversation, oldest first, each with the answer suggested to the user, who may have said less (may be empty). The last one is marked <qa replaceable="yes"> while it was answered only a moment ago: the other side may still be finishing that question;
 <speech> the latest recognized phrases, oldest first. The LAST line is the newest phrase;
-<silence> (only sometimes present) how long the speaker has been silent after the newest phrase; then the newest phrase is final, not cut: answer any question that can be understood, even if the phrase lacks . ? or !.
+<silence> (only sometimes present) how long the speaker has been silent after the newest phrase; then the newest phrase is final, not cut: a question in it that can be understood is finished, even if the phrase lacks . ? or !.
 
 Speakers. Normally only the other side of the call is heard. Sometimes the user is heard as well, mixed in, with or without speaker labels (S1, S2: given in order of first speech, so a label does not tell who is who). Tell them apart by what they say: the other side asks about the user's knowledge and experience and reacts to the answers; the user answers in the first person and may ask the other side something back.
 
@@ -41,17 +45,19 @@ NOT a question to answer: greetings, audio or screen-sharing checks, scheduling 
 Decide about the NEWEST phrase, using the earlier phrases as context:
 IF <speech> holds no question to the user -> no output.
 IF a question is not finished (the newest phrase breaks off mid-sentence, or the other side is still setting the question up) -> no output; the next call will see the rest.
-IF every question in <speech> has the same meaning as one in <answered> -> no output. That covers a question asked again or reworded, a question still sitting in <speech> after it was answered, and a newest phrase that only finishes or refines a question already answered (a clause, a detail or a missing word added to it).
+IF the last entry of <answered> is replaceable and the other side's newest phrase goes on with its question, with nothing said in between: it finishes that sentence or adds a part, a condition or a detail to it -> update: answer that whole question again, even if your last answer already touched on the addition; your answer replaces the last one.
+IF every question in <speech> is a question from <answered> asked again (repeated or reworded), or one still sitting in <speech> after it was answered -> no output.
 ELSE -> answer. If several new finished questions are open, one answer covers all of them, in the order asked.
 
-Answer in English, in the first person, as the user would say it: correct and concrete, 2-4 short sentences or at most 4 short bullet points (about 60 words). For a question about the user's own experience, which you cannot know, give a short outline with [placeholders] for the personal facts instead of inventing them.
+Answer in English, in the first person, the way a seasoned professional would say it aloud in the conversation: the direct answer first, then the one or two points that matter most for this question. Plain words, no filler, no side notes or caveats nobody asked about. 2-3 short sentences, about 40 words; a little more only when one answer covers several questions. Plain text only: no Markdown, lists or code blocks; if a query or code helps, give it as one short inline line. For a question about the user's own experience, which you cannot know, give a short outline with [placeholders] for the personal facts instead of inventing them.
 
 Start the reply with a status line:
 <status>answer</status> a new finished question was found; then give
 <question>the question(s) as asked: complete and standalone, misheard words corrected, a follow-up restated in full; several questions numbered 1) 2)</question>
 <answer>the answer</answer>
+<status>update</status> the newest phrase goes on with the replaceable question; then give <question> and <answer> for that whole question, as above
 <status>wait</status> a question is still being asked; write nothing else
-<status>answered</status> the only questions are already in <answered>; write nothing else
+<status>answered</status> the only questions are ones from <answered> asked again or still sitting in <speech>; write nothing else
 <status>none</status> no question to the user; write nothing else
 Write nothing else.
 """.trimIndent()
@@ -73,16 +79,24 @@ Write nothing else.
     /** One question found earlier, with its answer (null: older ones keep only the question). */
     data class Answered(val question: String, val answer: String?)
 
-    fun request(settings: QuestionsSettings, summary: String, answered: List<Answered>, speech: List<ConversationTurn>, afterSilence: Boolean) =
+    fun request(
+        settings: QuestionsSettings,
+        summary: String,
+        answered: List<Answered>,
+        speech: List<ConversationTurn>,
+        afterSilence: Boolean,
+        lastReplaceable: Boolean,
+    ) =
         ModelPrompt(
             system = settings.system,
             user = fillTemplate(
                 settings.user,
                 mapOf(
                     PromptVariables.SUMMARY to summary.ifBlank { "(none yet)" },
-                    PromptVariables.ANSWERED to answered.joinToString("\n") { entry ->
+                    PromptVariables.ANSWERED to answered.withIndex().joinToString("\n") { (i, entry) ->
                         buildString {
-                            append("<qa>\n<question>").append(entry.question).append("</question>\n")
+                            append(if (lastReplaceable && i == answered.lastIndex) "<qa replaceable=\"yes\">" else "<qa>")
+                            append("\n<question>").append(entry.question).append("</question>\n")
                             entry.answer?.let { append("<answer>").append(it).append("</answer>\n") }
                             append("</qa>")
                         }
