@@ -13,11 +13,10 @@ data class ApplicationInfoNullable(
     val openAiToken: String? = null,
     val claudeToken: String? = null,
     val speechmaticsToken: String? = null,
-    val prompt: PromptModel? = null,
+    /** Only the parts the user changed; the rest are the built-in texts. */
+    val prompts: PromptSettingsNullable? = null,
+    val modelParameters: Map<String, ModelParameters>? = null,
     val lastOpenedTab: Int? = null,
-    val promptsMap: Map<String, PromptModel>? = null,
-    val sendTextEverySymbols: Int? = null,
-    val sendTextEveryMilliseconds: Long? = null,
     val whisperModelPath: String? = null,
     val whisperModelConfig: WhisperModelConfigNullable? = null,
     val questionLanguage: String? = null,
@@ -29,4 +28,7 @@ data class ApplicationInfoNullable(
     val useStreamingResponse: Boolean? = null,
     val sherpaModelPath: String? = null,
     val sherpaConfig: SherpaModelConfigNullable? = null,
+    val speechmaticsConfig: SpeechmaticsConfigNullable? = null,
+    /** Only the parts the user changed; the rest are the built-in ones. */
+    val questions: QuestionsSettingsNullable? = null,
 )

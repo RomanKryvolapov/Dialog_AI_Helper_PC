@@ -11,4 +11,8 @@ class ConversationTurn(source: String) {
 
     @Volatile
     var translation: String? = null
+
+    /** Who said it, when the recogniser tells speakers apart (Speechmatics: "S1", "S2"…); null otherwise. */
+    @Volatile
+    var speaker: String? = null
 }

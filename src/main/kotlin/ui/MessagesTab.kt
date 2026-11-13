@@ -3,18 +3,8 @@ package ui
 import COLOUR_BLUE
 import COLOUR_GREEN
 import COLOUR_RED
-import CONVERSATION_SUMMARY
-import CONVERSATION_SUMMARY_CLEAR
-import PROMPT_CONVERSATION_SUMMARY
-import PROMPT_TRANSLATE_VOICE
-import RECENT_TURNS
-import RECENT_TURNS_CLEAR
-import SOURCE_TEXT
-import SOURCE_TEXT_CLEAR
-import SUMMARY_TURNS_CLEAR
 import app.DialogApplication.Companion.ownerStage
 import backgroundThreadScope
-import dev.langchain4j.model.input.PromptTemplate
 import extensions.normalizeAndRemoveEmptyLines
 import extensions.showAlert
 import javafx.application.Platform
@@ -37,6 +27,7 @@ import javafx.scene.layout.Priority
 import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.flow.map
@@ -54,7 +45,6 @@ import utils.DialogLogger
 import utils.WhisperResult
 import utils.WhisperUtil
 
-import dev.langchain4j.model.input.Prompt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -72,15 +62,19 @@ import kotlinx.coroutines.flow.timeout
 import models.domain.ApplicationInfo
 import models.domain.ConversationTurn
 import models.domain.LlmModel
+import models.domain.ModelPrompt
+import models.domain.effectiveParameters
 import models.domain.TranslationMethod
 import utils.ConversationContext
+import utils.LastRequests
+import utils.QuestionsAssistant
+import utils.RateLimiters
+import utils.TranslationPrompts
 import utils.Failure
 import utils.FailureKind
-import utils.MethodChoice
-import utils.MethodHealth
+import utils.ActiveMethod
 import utils.TokenUsageTracker
 import utils.SHORT_WAIT_MILLIS
-import utils.chooseMethod
 import utils.classifyFailure
 import kotlin.time.Duration.Companion.milliseconds
 import utils.TranslationRateLimiter
@@ -92,6 +86,8 @@ import models.domain.VoiceRecognitionEngine
 import utils.WhisperStreamingUtil
 
 import utils.SherpaOnnxRecognizer
+import utils.SpeechmaticsRecognizer
+import models.domain.SpeechmaticsConfig
 
 import models.domain.SherpaModelConfig
 
@@ -100,12 +96,16 @@ class MessagesTab(
     private val whisperUtil: WhisperUtil,
     private val whisperStreamingUtil: WhisperStreamingUtil,
     private val sherpaRecognizer: SherpaOnnxRecognizer,
+    private val speechmaticsRecognizer: SpeechmaticsRecognizer,
     private val audioChunker: AudioChunker,
     private val cloudRepository: CloudRepository,
     private val dialogLogger: DialogLogger,
     private val preferencesRepository: PreferencesRepository,
-    private val methodHealth: MethodHealth,
+    private val activeMethod: ActiveMethod,
     private val tokenUsageTracker: TokenUsageTracker,
+    private val lastRequests: LastRequests,
+    private val rateLimiters: RateLimiters,
+    private val questionsAssistant: QuestionsAssistant,
 ) : BaseTab(
     preferencesRepository = preferencesRepository,
 ) {
@@ -119,7 +119,7 @@ class MessagesTab(
         const val HEADER_SPACING = 10.0
 
         private const val MAX_TRANSLATION_QUEUE = 8
-        /** Attempts per phrase in all: one per method of a full chain; a shorter chain starts over from the top. */
+        /** Attempts per phrase in all, across the methods the dialog moves through; on the last method, with pauses. */
         private const val MAX_TRANSLATION_ATTEMPTS = 3
         private const val TRANSLATION_TTL_MILLIS = 90_000L
         private const val SCHEDULER_WAIT_SLICE_MILLIS = 1_000L
@@ -140,7 +140,6 @@ class MessagesTab(
         private const val MAX_CONCURRENT_TRANSLATIONS = 8
         private const val DEFAULT_CONCURRENT_TRANSLATIONS = 6
         private const val ASSUMED_REQUEST_SECONDS = 6.0
-        private const val RATE_LIMIT_SAFETY_MARGIN = 0.8
     }
 
     val content: Pane
@@ -150,7 +149,6 @@ class MessagesTab(
     private var lastMessageFromAI = "..."
 
     /** One limiter per model id: Google counts quotas per model, so switching model gets its own allowance. */
-    private val rateLimiters = HashMap<String, TranslationRateLimiter>()
 
     /** Voice phrases go one at a time, in the order they were said: each prompt needs the transcript before it. */
     private val voiceSlot = Semaphore(1)
@@ -253,7 +251,7 @@ class MessagesTab(
                 }
         }
 
-        // A changed key or chain gives every method a fresh chance: a rejected key rests until then.
+        // A changed key or chain starts over from method 1.
         backgroundThreadScope.launch {
             preferencesRepository.appInfoFlow
                 .map { info ->
@@ -262,7 +260,7 @@ class MessagesTab(
                 }
                 .distinctUntilChanged()
                 .drop(1)
-                .collect { methodHealth.reset() }
+                .collect { activeMethod.reset() }
         }
     }
 
@@ -291,11 +289,20 @@ class MessagesTab(
             return
         }
         val appInfo = getAppInfo()
-        val primary = appInfo.primaryMethod
+        val chain = appInfo.translationMethods
+        // A new dialog starts on method 1; one that cannot work is a failure like any other: the next takes over.
+        activeMethod.reset()
+        val skipped = ArrayList<String>()
+        for (method in chain) {
+            val problem = startProblem(method, appInfo) ?: break
+            skipped += "${method.shortTitle}: $problem"
+            activeMethod.failed(chain, method, problem)
+        }
+        val primary = activeMethod.current(chain)
         startProblem(primary, appInfo)?.let { problem ->
             ownerStage?.showAlert(
                 alertTitle = "${primary.title} cannot start",
-                alertContent = "$problem. Fix it in the Settings tab, or choose another translation method in Settings → General.",
+                alertContent = "$problem. No method of the chain can work: fix it in the Settings tab, or choose other translation methods in Settings → General.",
             )
             return
         }
@@ -321,37 +328,24 @@ class MessagesTab(
             listeningButton.style = "-fx-background-color: $COLOUR_BLUE;"
         }
         labelMessagePartVoiceRecognition = "Listening — ${primary.title}"
-        // A reserve that cannot work is not a reason to refuse the dialog, but it is said up front.
-        labelMessagePartProcessMessage = appInfo.translationMethods.drop(1)
-            .mapNotNull { method -> startProblem(method, appInfo)?.let { "Reserve ${method.shortTitle} will be skipped: $it" } }
-            .joinToString("; ")
+        labelMessagePartProcessMessage = skipped.joinToString("; ") { "skipped $it" }
         updateLabelMessage()
     }
 
     /**
-     * Why [method] cannot work in the chain as configured, or null if it can: its provider's key is
-     * missing, or the input it needs cannot be produced — a recogniser model for a text method, a recording
-     * cut at pauses for a voice one.
+     * Why [method] cannot work, or null if it can: its provider's key is missing, or its recogniser has no model.
+     * Each method takes the audio in its own way once it is in use, so it needs nothing from the others.
      */
     private fun startProblem(method: TranslationMethod, appInfo: ApplicationInfo): String? {
         if (apiKey(method.model, appInfo).isBlank()) return "no ${method.model.engine.type} API key"
-        // Method 1 takes the audio in; the others work on what it produced.
-        val intake = appInfo.primaryMethod.recognizer
-        return when {
-            method.voice && intake != null && !intake.recordsPhrases ->
-                "a voice method hears phrases recorded at pauses, which ${intake.title} does not keep"
-            !method.voice && intake == null && appInfo.whisperModelPath.isBlank() ->
-                "after a voice method, Whisper transcribes the phrase for a text method, and no Whisper model is set"
-            !method.voice && intake != null -> recognizerProblem(intake, appInfo)
-            else -> null
-        }
+        return method.recognizer?.let { recognizerProblem(it, appInfo) }
     }
 
     private fun recognizerProblem(recognizer: VoiceRecognitionEngine, appInfo: ApplicationInfo): String? = when (recognizer) {
         VoiceRecognitionEngine.WHISPER_BATCH, VoiceRecognitionEngine.WHISPER_STREAMING ->
             "no Whisper model is set".takeIf { appInfo.whisperModelPath.isBlank() }
         VoiceRecognitionEngine.SHERPA_ONNX -> "no Sherpa-ONNX model is set".takeIf { appInfo.sherpaModelPath.isBlank() }
-        VoiceRecognitionEngine.SPEECHMATICS -> null
+        VoiceRecognitionEngine.SPEECHMATICS -> "no Speechmatics API key".takeIf { appInfo.speechmaticsToken.isBlank() }
     }
 
     private fun apiKey(model: LlmModel, appInfo: ApplicationInfo): String = when (model.engine) {
@@ -397,17 +391,26 @@ class MessagesTab(
             messageBox.children.add(createMessageEntry(DialogItem(originalMessage = "...", messageFromAi = "...")))
             if (wasAtBottom) scrollToBottom()
             val epoch = translationEpoch
+            val recordedFor = activeMethod.current(appInfo.translationMethods)
+            val dialog = activeMethod.flow.value.dialog
             val added = beginTurn("")
             backgroundThreadScope.launch {
                 val result = whisperUtil.recognize(wavFile, appInfo.questionLanguage)
                 // After Clear dialog the row and the turn belong to a screen and a conversation that are gone.
-                Platform.runLater { if (epoch == translationEpoch) onWhisperResult(index, added, result, audio) }
+                Platform.runLater { if (epoch == translationEpoch) onWhisperResult(index, added, result, audio, recordedFor, dialog) }
             }
         }
     }
 
     /** FX thread: settles the row and the turn of one phrase Whisper (batch) has finished with. */
-    private fun onWhisperResult(index: Int, added: ConversationContext.Added, result: WhisperResult, audio: PhraseAudio?) {
+    private fun onWhisperResult(
+        index: Int,
+        added: ConversationContext.Added,
+        result: WhisperResult,
+        audio: PhraseAudio?,
+        recordedFor: TranslationMethod,
+        dialog: Long,
+    ) {
         when (result) {
             is WhisperResult.Heard -> {
                 labelMessagePartVoiceRecognition = "Whisper result ready"
@@ -419,19 +422,19 @@ class MessagesTab(
                 }
                 if (wasAtBottom) scrollToBottom()
                 added.turn.source = result.text
+                phraseHeard(added.turn)
                 enqueueTranslation(index, added, audio)
             }
-            WhisperResult.Failed -> if (audio != null) {
-                // Method 1 could not hear it, but the recording is kept for a voice method further down the
-                // chain: the phrase goes on to it like after any other failure of method 1, and that method's
-                // transcript fills the turn.
-                log.warn("Whisper failed for a phrase, handing the recording to the next method")
-                setProcessStatus("Whisper failed — the phrase goes to the next method")
-                enqueueTranslation(index, added, audio, failedMethod = getAppInfo().primaryMethod)
-            } else {
-                log.warn("Whisper failed for a phrase, hiding its row")
-                conversationContext.discard(added.turn)
-                hideRow(index)
+            WhisperResult.Failed -> {
+                switchAfterFailure(getAppInfo().translationMethods, recordedFor, "Whisper could not transcribe a phrase", dialog)
+                if (audio != null) {
+                    // The recording is kept: the method now in use takes the phrase, a voice one hears it itself.
+                    enqueueTranslation(index, added, audio, failedMethod = recordedFor, dialog = dialog)
+                } else {
+                    log.warn("Whisper failed for a phrase, hiding its row")
+                    conversationContext.discard(added.turn)
+                    hideRow(index)
+                }
             }
             WhisperResult.Silence -> {
                 log.debug("Whisper heard nothing in a phrase, hiding its row")
@@ -453,12 +456,15 @@ class MessagesTab(
     }
 
     /** A phrase whose text (or recording, [audio]) is ready: it joins the conversation and the translation queue. */
-    private fun processMessage(index: Int, message: String, audio: PhraseAudio? = null) {
+    private fun processMessage(index: Int, message: String, audio: PhraseAudio? = null, speaker: String? = null) {
         if (audio == null && message.isBlank()) {
             log.error("Translate message is empty")
             return
         }
-        enqueueTranslation(index, beginTurn(message), audio)
+        val added = beginTurn(message)
+        added.turn.speaker = speaker
+        if (message.isNotBlank()) phraseHeard(added.turn)
+        enqueueTranslation(index, added, audio)
     }
 
     /**
@@ -468,12 +474,8 @@ class MessagesTab(
      */
     private fun beginTurn(source: String): ConversationContext.Added {
         val appInfo = getAppInfo()
-        val added = conversationContext.add(
-            source = source,
-            // The voice prompt always carries the running notes, so a chain with a voice method keeps them.
-            summarize = appInfo.translationMethods.any { it.voice } ||
-                appInfo.prompt.prompt.contains(CONVERSATION_SUMMARY),
-        )
+        val canSummarize = appInfo.translationMethods.any { it.model.readsText && apiKey(it.model, appInfo).isNotBlank() }
+        val added = conversationContext.add(source, TranslationPrompts.contextSettings(appInfo.prompts, canSummarize))
         added.fold?.let { foldConversation(it, appInfo) }
         return added
     }
@@ -484,6 +486,7 @@ class MessagesTab(
         added: ConversationContext.Added,
         audio: PhraseAudio?,
         failedMethod: TranslationMethod? = null,
+        dialog: Long? = null,
     ) {
         ensureSchedulerStarted()
         val task = TranslationTask(
@@ -495,9 +498,9 @@ class MessagesTab(
             bornAtMillis = System.currentTimeMillis(),
             epoch = translationEpoch,
             audio = audio,
+            dialog = dialog ?: activeMethod.flow.value.dialog,
         )
         if (failedMethod != null) {
-            task.tried += failedMethod.key
             task.attempts = 1
             task.failures += "${failedMethod.shortTitle}: ${FailureKind.TRANSCRIPTION.reason}"
         }
@@ -528,7 +531,7 @@ class MessagesTab(
         } finally {
             if (!wavFile.delete()) log.warn("Failed to delete chunk ${wavFile.name}")
         }
-        labelMessagePartVoiceRecognition = "${getAppInfo().primaryMethod.model.title} hears the phrase"
+        labelMessagePartVoiceRecognition = "${activeMethod.current(getAppInfo().translationMethods).model.title} hears the phrase"
         updateLabelMessage()
         Platform.runLater {
             val wasAtBottom = isScrolledToBottom()
@@ -552,8 +555,8 @@ class MessagesTab(
         val epoch: Long,
         /** The recorded phrase, when it was cut at pauses and a voice method may hear it. */
         val audio: PhraseAudio? = null,
-        /** Methods that failed this phrase in the current pass along the chain. */
-        val tried: MutableSet<String> = HashSet(),
+        /** The dialog (start) it belongs to: a failure from an ended dialog switches nothing in the next. */
+        val dialog: Long = 0,
         /** Why each method could not translate it, for the row if none can. */
         val failures: MutableList<String> = ArrayList(),
         /** A voice answer that arrived in the wrong shape, shown as it is if no other method does better. */
@@ -586,6 +589,8 @@ class MessagesTab(
         schedulerJob?.cancel()
         schedulerJob = null
         conversationContext.clear()
+        lastRequests.summaryIs("")
+        questionsAssistant.clear()
         backgroundThreadScope.launch {
             translationQueueMutex.withLock { translationQueue.clear() }
         }
@@ -593,8 +598,9 @@ class MessagesTab(
 
     /**
      * Dispatcher loop: picks the next queued phrase — the newest text phrase, or the oldest phrase waiting
-     * for a voice method's transcript (see [takeNextTask]) — and the method for it: the first in the chain
-     * that can take it now (see [chooseMethod]), whose rate limiter then counts the request. Up to
+     * for a voice method's transcript (see [takeNextTask]) — and sends it to the method in use (see
+     * [ActiveMethod]), whose rate limiter then counts the request; a wait over [SHORT_WAIT_MILLIS] is a failure
+     * of that method like any other. Up to
      * [maxConcurrency] text translations run in parallel, voice phrases one at a time. Each translation runs
      * in its own coroutine so a slow or hung request never blocks the others.
      */
@@ -608,7 +614,7 @@ class MessagesTab(
             }
             val appInfo = getAppInfo()
             val chain = appInfo.translationMethods
-            configureDispatchPool(appInfo.primaryMethod.model)
+            configureDispatchPool(activeMethod.current(chain).model)
 
             // Take the slot before choosing: a phrase heard by a voice method waits here for the one before
             // it, and its prompt then carries that phrase's transcript.
@@ -621,71 +627,57 @@ class MessagesTab(
                 requeueTask(task)
                 continue
             }
-            val choice = try {
-                chooseWithRetryPass(task, chain, appInfo)
-            } catch (e: CancellationException) {
+            val method = activeMethod.current(chain)
+            startProblem(method, appInfo)?.let { problem ->
+                if (switchAfterFailure(chain, method, problem, task.dialog)) {
+                    sem.release()
+                    requeueTask(task)
+                    continue
+                }
+            }
+            unusableReason(method, task, appInfo)?.let { reason ->
                 sem.release()
-                throw e
-            } catch (e: Exception) {
-                // Most likely a prompt edited into one the template engine refuses. This phrase cannot be
-                // prepared; the loop goes on, and without the slot it took.
-                sem.release()
-                log.error("A phrase could not be prepared: ${e.message}", e)
-                failTranslation(task, task.failures + "its request could not be prepared: ${e.message}")
+                failTranslation(task, task.failures + "${method.shortTitle}: $reason")
                 continue
             }
-            when (choice) {
-                is MethodChoice.Use -> backgroundThreadScope.launch {
-                    try {
-                        runTranslation(task, appInfo, choice.method)
-                    } finally {
-                        sem.release()
-                        schedulerWakeups.trySend(Unit)
-                    }
-                }
-                is MethodChoice.NoneLeft -> {
-                    sem.release()
-                    failTranslation(task, task.failures + choice.reasons)
-                }
-                is MethodChoice.Wait -> {
-                    sem.release()
-                    // Compared as a remainder: a rest "until the settings change" is Long.MAX_VALUE long.
-                    if (choice.millis > task.bornAtMillis + TRANSLATION_TTL_MILLIS - System.currentTimeMillis()) {
-                        // Nothing in the chain is free before the phrase would be too old to show.
-                        failTranslation(task, task.failures + choice.reasons)
-                        continue
-                    }
-                    if (choice.millis > SHORT_WAIT_MILLIS) setProcessStatus("Waiting: ${choice.reasons.joinToString("; ")}")
+            val wait = limiterFor(method.model).tryReserve(estimateTokens(method, task, appInfo))
+            if (wait > SHORT_WAIT_MILLIS) {
+                sem.release()
+                // Its own rate limit would hold the phrase back: for live speech that is a failure like any other.
+                val busy = "its rate limit would hold the phrase for ${wait / 1000} s"
+                if (switchAfterFailure(chain, method, busy, task.dialog)) {
                     requeueTask(task)
-                    withTimeoutOrNull(choice.millis.coerceAtMost(SCHEDULER_WAIT_SLICE_MILLIS)) {
-                        schedulerWakeups.receive()
-                    }
+                    continue
+                }
+                // The last method has nowhere to hand over: the phrase waits for it, if it is still worth showing.
+                if (wait > task.bornAtMillis + TRANSLATION_TTL_MILLIS - System.currentTimeMillis()) {
+                    failTranslation(task, task.failures + "${method.shortTitle}: $busy")
+                    continue
+                }
+                setProcessStatus("Waiting: ${method.shortTitle} — $busy")
+                requeueTask(task)
+                withTimeoutOrNull(wait.coerceAtMost(SCHEDULER_WAIT_SLICE_MILLIS)) { schedulerWakeups.receive() }
+                continue
+            }
+            if (wait > 0L) {
+                sem.release()
+                requeueTask(task)
+                withTimeoutOrNull(wait) { schedulerWakeups.receive() }
+                continue
+            }
+            backgroundThreadScope.launch {
+                try {
+                    runTranslation(task, appInfo, method)
+                } finally {
+                    sem.release()
+                    schedulerWakeups.trySend(Unit)
                 }
             }
         }
     }
 
-    /** [choose], and when every method has failed the phrase once, another pass from the top of the chain. */
-    private fun chooseWithRetryPass(task: TranslationTask, chain: List<TranslationMethod>, appInfo: ApplicationInfo): MethodChoice {
-        val choice = choose(task, chain, appInfo)
-        if (choice !is MethodChoice.NoneLeft || task.tried.isEmpty() || task.attempts >= MAX_TRANSLATION_ATTEMPTS) return choice
-        task.tried.clear()
-        return choose(task, chain, appInfo)
-    }
-
     private suspend fun olderPhraseAwaitsTranscript(task: TranslationTask): Boolean =
         translationQueueMutex.withLock { translationQueue.any { it.awaitsTranscript && it.seq < task.seq } }
-
-    /** The method for [task] now: see [chooseMethod]. Counts the request against that method's rate limit. */
-    private fun choose(task: TranslationTask, chain: List<TranslationMethod>, appInfo: ApplicationInfo): MethodChoice =
-        chooseMethod(
-            chain = chain,
-            skip = task.tried,
-            now = System.currentTimeMillis(),
-            unusableReason = { unusableReason(it, task, appInfo) },
-            rest = { methodHealth.restOf(it.key) },
-            reserve = { limiterFor(it.model).tryReserve(estimateTokens(it, task, appInfo)) },
-        )
 
     /** Why [method] cannot take this particular phrase, or null if it can. */
     private fun unusableReason(method: TranslationMethod, task: TranslationTask, appInfo: ApplicationInfo): String? =
@@ -697,50 +689,33 @@ class MessagesTab(
             else -> null
         }
 
-    private fun templateFor(method: TranslationMethod, appInfo: ApplicationInfo): String =
-        if (method.voice) PROMPT_TRANSLATE_VOICE else appInfo.prompt.prompt
+    /**
+     * The request [method] gets for [task]. Built when it is sent, not when the phrase arrived, so it carries
+     * the transcripts and translations of the earlier phrases that came in meanwhile.
+     */
+    private fun promptFor(method: TranslationMethod, task: TranslationTask, appInfo: ApplicationInfo): ModelPrompt =
+        if (method.voice) TranslationPrompts.voice(appInfo.prompts, task.context)
+        else TranslationPrompts.text(appInfo.prompts, task.context, task.text)
 
     private fun estimateTokens(method: TranslationMethod, task: TranslationTask, appInfo: ApplicationInfo): Int {
-        val template = templateFor(method, appInfo)
-        val prompt = PromptTemplate.from(template).apply(buildPromptVariables(template, task))
+        val prompt = promptFor(method, task, appInfo)
         // Gemini counts 32 tokens per second of audio (OpenAI 10), and a second of a chunk is 32,000 bytes.
         val audioTokens = if (method.voice) task.audio?.wav?.size?.div(1000) ?: 0 else 0
-        return prompt.text().length / 4 + 256 + audioTokens
+        return estimateTextTokens(prompt) + audioTokens
     }
 
-    /** Supplies only the placeholders the selected prompt actually contains (avoids missing/extra vars). */
-    private fun buildPromptVariables(promptText: String, task: TranslationTask): Map<String, Any> {
-        val variables = HashMap<String, Any>()
-        if (promptText.contains(SOURCE_TEXT)) {
-            variables[SOURCE_TEXT_CLEAR] = task.text
-        }
-        val earlier = task.context.turns
-        for (i in 1..5) {
-            if (promptText.contains("{{previous_text_$i}}")) {
-                variables["previous_text_$i"] = ConversationContext.previousText(earlier, i)
-            }
-        }
-        if (promptText.contains(CONVERSATION_SUMMARY)) {
-            variables[CONVERSATION_SUMMARY_CLEAR] = task.context.summary
-        }
-        if (promptText.contains(RECENT_TURNS)) {
-            variables[RECENT_TURNS_CLEAR] = ConversationContext.renderTurns(earlier)
-        }
-        return variables
-    }
-
-    private fun usesConversation(promptText: String): Boolean =
-        promptText.contains(RECENT_TURNS) || promptText.contains(CONVERSATION_SUMMARY)
+    private fun estimateTextTokens(prompt: ModelPrompt): Int = (prompt.system.length + prompt.user.length) / 4 + 256
 
     /**
-     * Folds the turns that left the recent window into the running summary: one background request
-     * through the summary model's rate limiter, like the translations. On failure the turns stay verbatim.
+     * Folds the phrases that left the window of previous phrases into the running summary: one background
+     * request through the summary model's rate limiter, like the translations. On failure they wait for the
+     * next try (see [ConversationContext.foldDone]).
      */
 
     private fun foldConversation(fold: ConversationContext.Fold, appInfo: ApplicationInfo) {
         val model = summaryModel(appInfo)
         if (model == null) {
-            log.warn("No method in the chain can write a summary now, keeping the turns verbatim")
+            log.warn("No method in the chain can write a summary now, the phrases wait for the next try")
             conversationContext.foldDone(fold, null)
             return
         }
@@ -748,13 +723,8 @@ class MessagesTab(
             var summary: String? = null
             val limiter = limiterFor(model)
             try {
-                val prompt = PromptTemplate.from(PROMPT_CONVERSATION_SUMMARY).apply(
-                    mapOf(
-                        CONVERSATION_SUMMARY_CLEAR to fold.summary,
-                        SUMMARY_TURNS_CLEAR to ConversationContext.renderTurns(fold.turns),
-                    )
-                )
-                val estimatedTokens = prompt.text().length / 4 + 256
+                val prompt = TranslationPrompts.summary(appInfo.prompts, fold)
+                val estimatedTokens = estimateTextTokens(prompt)
                 // Bounded, waiting for quota included: a request that never ends would block every
                 // later summary of this conversation.
                 summary = withTimeoutOrNull(SUMMARY_TIMEOUT_MILLIS) {
@@ -763,64 +733,82 @@ class MessagesTab(
                         if (wait == 0L) break
                         delay(wait.coerceAtMost(SCHEDULER_WAIT_SLICE_MILLIS))
                     }
+                    lastRequests.summarySent(LastRequests.Sent(model.title, prompt))
                     streamText(model, appInfo, prompt).lastOrNull()
                 }
                     ?.normalizeAndRemoveEmptyLines()
                     ?.takeIf { it.isNotBlank() }
                 if (summary == null) {
-                    log.warn("Conversation summary timed out or came back empty, keeping the turns verbatim")
+                    log.warn("Conversation summary timed out or came back empty, the phrases wait for the next try")
                 } else {
-                    log.info("Conversation summary updated by {}, {} turns folded:\n{}", model.id, fold.turns.size, summary)
+                    log.info("Conversation summary updated by {}, {} phrases folded in:\n{}", model.id, fold.turns.size, summary)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 val failure = classifyFailure(e)
                 limiter.note(failure)
-                log.warn("Conversation summary failed ({}), keeping the turns verbatim: {}", failure.kind, failure.detail)
+                log.warn("Conversation summary failed ({}), the phrases wait for the next try: {}", failure.kind, failure.detail)
             } finally {
                 conversationContext.foldDone(fold, summary)
+                lastRequests.summaryIs(conversationContext.currentSummary)
             }
         }
     }
 
     /**
-     * The model that writes the conversation notes: the first in the chain that answers text, has its key
-     * and is not resting — the primary's when it can, so the notes cost what the translations cost.
+     * The model that writes the conversation summary: the method in use's, when it reads text and has its key (so
+     * the summary costs what the translations cost), else the first method of the chain that does.
      */
-    private fun summaryModel(appInfo: ApplicationInfo): LlmModel? =
-        appInfo.translationMethods.firstOrNull { method ->
-            method.model.readsText && apiKey(method.model, appInfo).isNotBlank() && methodHealth.restOf(method.key) == null
-        }?.model
+    private fun summaryModel(appInfo: ApplicationInfo): LlmModel? {
+        val chain = appInfo.translationMethods
+        return (listOf(activeMethod.current(chain)) + chain)
+            .firstOrNull { it.model.readsText && apiKey(it.model, appInfo).isNotBlank() }?.model
+    }
 
-    private fun streamFor(method: TranslationMethod, appInfo: ApplicationInfo, prompt: Prompt, audio: PhraseAudio?): Flow<String> {
+    /**
+     * [method] failed for [reason]: when it is the method in use, the next of [chain] takes over until the dialog
+     * restarts, and the status says so. True when the method in use changed.
+     */
+    private fun switchAfterFailure(
+        chain: List<TranslationMethod>,
+        method: TranslationMethod,
+        reason: String,
+        dialog: Long = activeMethod.flow.value.dialog,
+    ): Boolean {
+        val switched = activeMethod.failed(chain, method, reason, dialog)
+        if (switched) {
+            val now = activeMethod.current(chain)
+            log.warn("{} failed ({}): {} takes over until the dialog is started again", method.title, reason, now.title)
+            setProcessStatus("${method.shortTitle}: $reason — switched to ${now.shortTitle} until the dialog is started again")
+        }
+        return switched
+    }
+
+    private fun streamFor(method: TranslationMethod, appInfo: ApplicationInfo, prompt: ModelPrompt, audio: PhraseAudio?): Flow<String> {
         if (!method.voice) return streamText(method.model, appInfo, prompt)
         val wav = checkNotNull(audio) { "a voice method needs the recorded phrase" }.wav
         val model = method.model
+        val parameters = parametersFor(model, appInfo)
         return when (model.engine) {
-            LlmModelEngine.GOOGLE -> cloudRepository.streamGoogleAIWithAudio(model.id, appInfo.googleCloudToken, prompt, wav)
-            LlmModelEngine.OPENAI -> cloudRepository.streamOpenAIWithAudio(model.id, appInfo.openAiToken, prompt, wav)
+            LlmModelEngine.GOOGLE -> cloudRepository.streamGoogleAIWithAudio(model.id, appInfo.googleCloudToken, prompt, parameters, wav)
+            LlmModelEngine.OPENAI -> cloudRepository.streamOpenAIWithAudio(model.id, appInfo.openAiToken, prompt, parameters, wav)
             LlmModelEngine.CLAUDE -> error("${model.id} does not hear audio")
         }
     }
 
-    private fun streamText(model: LlmModel, appInfo: ApplicationInfo, prompt: Prompt) = when (model.engine) {
-        LlmModelEngine.GOOGLE -> cloudRepository.streamGoogleAI(
-            model = model.id,
-            apiKey = appInfo.googleCloudToken,
-            prompt = prompt,
-        )
-        LlmModelEngine.OPENAI -> cloudRepository.streamOpenAI(
-            model = model.id,
-            apiKey = appInfo.openAiToken,
-            prompt = prompt,
-        )
-        LlmModelEngine.CLAUDE -> cloudRepository.streamClaude(
-            model = model.id,
-            apiKey = appInfo.claudeToken,
-            prompt = prompt,
-        )
+    private fun streamText(model: LlmModel, appInfo: ApplicationInfo, prompt: ModelPrompt): Flow<String> {
+        val parameters = parametersFor(model, appInfo)
+        return when (model.engine) {
+            LlmModelEngine.GOOGLE -> cloudRepository.streamGoogleAI(model.id, appInfo.googleCloudToken, prompt, parameters)
+            LlmModelEngine.OPENAI -> cloudRepository.streamOpenAI(model.id, appInfo.openAiToken, prompt, parameters)
+            LlmModelEngine.CLAUDE -> cloudRepository.streamClaude(model.id, appInfo.claudeToken, prompt, parameters)
+        }
     }
+
+    /** The user's settings for [model] (Settings → LLM), narrowed to what it accepts. */
+    private fun parametersFor(model: LlmModel, appInfo: ApplicationInfo) =
+        effectiveParameters(model.parameterSupport, appInfo.modelParameters[model.id])
 
     /**
      * The next phrase to translate. Text phrases go newest first, so a backlog never delays what is
@@ -856,18 +844,11 @@ class MessagesTab(
     private fun isStale(task: TranslationTask): Boolean =
         System.currentTimeMillis() - task.bornAtMillis > TRANSLATION_TTL_MILLIS
 
-    /** [model]'s own rate limiter, set to its limits: Google counts quotas per model, so each gets its own. */
+    /** [turn] has its text now: with the Questions mode on, it is checked for a question too. */
+    private fun phraseHeard(turn: ConversationTurn) = questionsAssistant.phraseHeard(turn, conversationContext.currentSummary)
 
-    private fun limiterFor(model: LlmModel): TranslationRateLimiter {
-        val limiter = synchronized(rateLimiters) { rateLimiters.getOrPut(model.id) { TranslationRateLimiter() } }
-        limiter.configure(
-            rpm = model.limitRequestsInMinute?.let { (it * RATE_LIMIT_SAFETY_MARGIN).toInt().coerceAtLeast(1) },
-            tpm = model.limitTokensInMinute?.let { (it * RATE_LIMIT_SAFETY_MARGIN).toInt().coerceAtLeast(1) },
-            rpd = model.limitRequestsInDay,
-            tpd = model.limitTokensInDay,
-        )
-        return limiter
-    }
+    /** [model]'s rate limiter, shared with every other request to it (see [RateLimiters]). */
+    private fun limiterFor(model: LlmModel): TranslationRateLimiter = rateLimiters.forModel(model)
 
     /** Sizes the text dispatch pool from the primary method's requests-per-minute. */
     private fun configureDispatchPool(primary: LlmModel) {
@@ -903,32 +884,37 @@ class MessagesTab(
         if (!method.voice && task.text.isBlank()) {
             // Recorded for a voice method that could not translate it: Whisper hears it for this text method.
             val heard = try {
-                task.audio?.wav?.let { whisperUtil.transcribe(it, appInfo.questionLanguage) }
+                task.audio?.wav?.let { whisperUtil.transcribe(it, appInfo.questionLanguage) } ?: WhisperResult.Failed
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 // Escaping here would cancel the whole background scope, the scheduler with it.
                 log.warn("Whisper could not transcribe a recorded phrase: ${e.message}", e)
-                null
+                WhisperResult.Failed
             }
             if (epoch != translationEpoch) return
-            if (heard.isNullOrBlank()) {
-                onMethodFailed(task, method, limiter, Failure(FailureKind.TRANSCRIPTION, "Whisper returned no text"))
-                return
+            when (heard) {
+                is WhisperResult.Heard -> {}
+                // Nothing was said: like a voice model's "no speech", an answer and not a failure of the method.
+                WhisperResult.Silence -> {
+                    conversationContext.discard(task.turn)
+                    updateMessageAt(index = task.index, newItem = DialogItem(originalMessage = "(no speech)", messageFromAi = "—"))
+                    return
+                }
+                WhisperResult.Failed -> {
+                    onMethodFailed(task, method, limiter, Failure(FailureKind.TRANSCRIPTION, "Whisper could not transcribe the phrase"))
+                    return
+                }
             }
-            task.turn.source = heard
-            dialogLogger.logQuestion(heard)
-            updateMessageAt(index = task.index, newItem = DialogItem(originalMessage = heard, messageFromAi = "..."))
+            val text = (heard as WhisperResult.Heard).text
+            task.turn.source = text
+            phraseHeard(task.turn)
+            dialogLogger.logQuestion(text)
+            updateMessageAt(index = task.index, newItem = DialogItem(originalMessage = text, messageFromAi = "..."))
         }
-        val template = templateFor(method, appInfo)
-        val prompt = try {
-            PromptTemplate.from(template).apply(buildPromptVariables(template, task))
-        } catch (e: Exception) {
-            // A prompt edited into one the template engine refuses: no method can be asked with it.
-            log.error("The prompt could not be built: ${e.message}", e)
-            failTranslation(task, task.failures + "its request could not be prepared: ${e.message}")
-            return
-        }
+        val prompt = promptFor(method, task, appInfo)
+        val sent = LastRequests.Sent(method.model.title, prompt)
+        if (method.voice) lastRequests.voiceSent(sent) else lastRequests.textSent(sent)
         var finalText = ""
         try {
             streamFor(method, appInfo, prompt, task.audio)
@@ -969,9 +955,7 @@ class MessagesTab(
         log.debug("Translate message result size: ${cleaned.length}")
         noteSuccess(method, appInfo)
         lastMessageFromAI = cleaned
-        // Only a conversation prompt's answer is a translation in that conversation; another prompt's
-        // (an answer to a question, say) would mislead later phrases if it were fed back as one.
-        if (usesConversation(appInfo.prompt.prompt)) task.turn.translation = cleaned
+        task.turn.translation = cleaned
         dialogLogger.logAnswer(cleaned)
         updateMessageAt(
             index = task.index,
@@ -979,9 +963,8 @@ class MessagesTab(
         )
     }
 
-    /** [method] translated a phrase: it is healthy again, and the status says when a reserve did it. */
+    /** [method] translated a phrase: the status says when a reserve did it. */
     private fun noteSuccess(method: TranslationMethod, appInfo: ApplicationInfo) {
-        methodHealth.recordSuccess(method.key)
         val position = appInfo.translationMethods.indexOfFirst { it.key == method.key }
         setProcessStatus(if (position > 0) "Reserve $position in use: ${method.title}" else "")
     }
@@ -1020,6 +1003,7 @@ class MessagesTab(
                 if (task.text.isBlank()) dialogLogger.logQuestion(said)
                 task.turn.source = said
                 task.turn.translation = translated
+                phraseHeard(task.turn)
                 lastMessageFromAI = translated
                 dialogLogger.logAnswer(translated)
                 updateMessageAt(index = task.index, newItem = DialogItem(originalMessage = said, messageFromAi = translated))
@@ -1039,10 +1023,10 @@ class MessagesTab(
     }
 
     /**
-     * [method] could not translate [task]: the method rests as [failure] calls for (see [MethodHealth]),
-     * and the phrase goes back to the queue for the next method in the chain — at once, or after a short
-     * pause when every method has failed it and the chain starts over. After [MAX_TRANSLATION_ATTEMPTS]
-     * attempts, or once it is too old to show, its row says why it was not translated.
+     * [method] could not translate [task]: the dialog moves on to the next method for good (see [ActiveMethod]), and
+     * the phrase goes back to the queue for it at once — or after a short pause when the method in use is still the
+     * same one, the last of the chain. After [MAX_TRANSLATION_ATTEMPTS] attempts, or once it is too old to show, its
+     * row says why it was not translated.
      *
      * Runs inside the failed translation, before it gives back its dispatch slot: a phrase waiting for a
      * voice transcript is back in the queue before the next phrase can take the slot, so the next one
@@ -1056,20 +1040,17 @@ class MessagesTab(
     ) {
         log.warn("{} failed a phrase ({}): {}", method.title, failure.kind, failure.detail)
         limiter.note(failure)
-        val rest = methodHealth.recordFailure(method.key, failure)
-        task.tried += method.key
         task.attempts += 1
-        task.failures += "${method.shortTitle}: ${rest?.describe() ?: failure.kind.reason}"
+        task.failures += "${method.shortTitle}: ${failure.kind.reason}"
+        val chain = getAppInfo().translationMethods
+        switchAfterFailure(chain, method, failure.kind.reason, task.dialog)
         if (task.epoch != translationEpoch) return
         if (task.attempts >= MAX_TRANSLATION_ATTEMPTS || isStale(task)) {
             failTranslation(task, task.failures)
             return
         }
-        setProcessStatus("${method.shortTitle}: ${failure.kind.reason} — trying the next method")
-        // A pause only when every method has failed the phrase and the chain starts over.
-        val pause = if (getAppInfo().translationMethods.all { it.key in task.tried }) {
-            (1000L shl task.attempts) + (System.nanoTime() and 0xFFL)
-        } else 0L
+        // Straight on to the method now in use; a pause only when it is the same one again (the last of the chain).
+        val pause = if (activeMethod.current(chain).key == method.key) (1000L shl task.attempts) + (System.nanoTime() and 0xFFL) else 0L
         if (pause == 0L || task.awaitsTranscript) {
             // A phrase waiting for a voice transcript keeps its slot through the pause, so the one after
             // it cannot go first.
@@ -1154,16 +1135,19 @@ class MessagesTab(
         val maxMillis: Long,
         val sherpaModelPath: String,
         val sherpaConfig: SherpaModelConfig,
+        val speechmaticsKey: String,
+        val speechmaticsConfig: SpeechmaticsConfig,
     )
 
     init {
         setupStreamingListeners()
         applyRecognitionEngine(getAppInfo())
         backgroundThreadScope.launch {
-            preferencesRepository.appInfoFlow
+            // The method in use changes on a failure as well as in the settings: either rewires the audio input.
+            combine(preferencesRepository.appInfoFlow, activeMethod.flow) { info, _ -> info }
                 .map {
                     RecognitionConfig(
-                        recognizer = it.primaryMethod.recognizer,
+                        recognizer = activeMethod.current(it.translationMethods).recognizer,
                         whisperModelPath = it.whisperModelPath,
                         language = it.questionLanguage,
                         stepMillis = it.whisperModelConfig.streamingStepMilliseconds,
@@ -1171,6 +1155,8 @@ class MessagesTab(
                         maxMillis = it.whisperModelConfig.maxChunkDurationMilliseconds,
                         sherpaModelPath = it.sherpaModelPath,
                         sherpaConfig = it.sherpaConfig,
+                        speechmaticsKey = it.speechmaticsToken,
+                        speechmaticsConfig = it.speechmaticsConfig,
                     )
                 }
                 .distinctUntilChanged()
@@ -1183,11 +1169,12 @@ class MessagesTab(
             when (currentRecognizer) {
                 VoiceRecognitionEngine.WHISPER_STREAMING -> whisperStreamingUtil.feedAudio(pcm)
                 VoiceRecognitionEngine.SHERPA_ONNX -> sherpaRecognizer.feedAudio(pcm)
-                VoiceRecognitionEngine.WHISPER_BATCH, VoiceRecognitionEngine.SPEECHMATICS, null -> {}
+                VoiceRecognitionEngine.SPEECHMATICS -> speechmaticsRecognizer.feedAudio(pcm)
+                VoiceRecognitionEngine.WHISPER_BATCH, null -> {}
             }
         }
         audioChunker.onUtteranceEnd = {
-            whisperStreamingUtil.flush()
+            if (currentRecognizer == VoiceRecognitionEngine.SPEECHMATICS) speechmaticsRecognizer.flush() else whisperStreamingUtil.flush()
         }
         val onPartial: (String) -> Unit = { text ->
             if (text.isNotBlank()) {
@@ -1201,7 +1188,7 @@ class MessagesTab(
                 }
             }
         }
-        val onFinal: (String) -> Unit = { text ->
+        val onFinal: (String, String?) -> Unit = { text, speaker ->
             if (text.isNotBlank()) {
                 dialogLogger.logQuestion(text)
                 Platform.runLater {
@@ -1212,14 +1199,34 @@ class MessagesTab(
                     )
                     currentStreamingRow = -1
                     if (wasAtBottom) scrollToBottom()
-                    processMessage(index = idx, message = text)
+                    processMessage(index = idx, message = text, speaker = speaker)
+                }
+            } else {
+                // Nothing was said after all (Whisper made the phrase up on silence): the row its partials opened goes.
+                Platform.runLater {
+                    if (currentStreamingRow in 0 until messageBox.children.size) hideRow(currentStreamingRow)
+                    currentStreamingRow = -1
                 }
             }
         }
         whisperStreamingUtil.onPartialListener = onPartial
-        whisperStreamingUtil.onFinalListener = onFinal
+        whisperStreamingUtil.onFinalListener = { onFinal(it, null) }
         sherpaRecognizer.onPartialListener = onPartial
-        sherpaRecognizer.onFinalListener = onFinal
+        sherpaRecognizer.onFinalListener = { onFinal(it, null) }
+        speechmaticsRecognizer.onPartialListener = onPartial
+        speechmaticsRecognizer.onFinalListener = onFinal
+        speechmaticsRecognizer.onFailureListener = { recognizerFailed(VoiceRecognitionEngine.SPEECHMATICS, it) }
+        whisperStreamingUtil.onFailureListener = { recognizerFailed(VoiceRecognitionEngine.WHISPER_STREAMING, it) }
+        sherpaRecognizer.onFailureListener = { recognizerFailed(VoiceRecognitionEngine.SHERPA_ONNX, it) }
+    }
+
+    /** The recogniser of the method in use stopped working during a dialog: a failure of that method like any other. */
+    private fun recognizerFailed(recognizer: VoiceRecognitionEngine, reason: String) {
+        Platform.runLater {
+            val chain = getAppInfo().translationMethods
+            val method = activeMethod.current(chain)
+            if (method.recognizer == recognizer && audioChunker.chunkProcessingEnabled) switchAfterFailure(chain, method, reason)
+        }
     }
 
     /** Must run on the FX thread. Returns the current streaming row, creating one if needed. */
@@ -1234,11 +1241,12 @@ class MessagesTab(
 
     private fun applyRecognitionEngine(appInfo: ApplicationInfo) {
         currentStreamingRow = -1
-        val recognizer = appInfo.primaryMethod.recognizer
+        val recognizer = activeMethod.current(appInfo.translationMethods).recognizer
         currentRecognizer = recognizer
         when (recognizer) {
             VoiceRecognitionEngine.WHISPER_STREAMING -> {
                 sherpaRecognizer.stop()
+                speechmaticsRecognizer.stop()
                 audioChunker.streamingFeedsContinuously = false
                 audioChunker.streamingModeEnabled = true
                 whisperStreamingUtil.start(
@@ -1251,6 +1259,7 @@ class MessagesTab(
             }
             VoiceRecognitionEngine.SHERPA_ONNX -> {
                 whisperStreamingUtil.stop()
+                speechmaticsRecognizer.stop()
                 audioChunker.streamingFeedsContinuously = true
                 audioChunker.streamingModeEnabled = true
                 sherpaRecognizer.start(
@@ -1262,17 +1271,20 @@ class MessagesTab(
                     maxHangMillis = appInfo.sherpaConfig.maxHangMillis,
                 )
             }
+            // Like Whisper streaming: audio goes out only while someone speaks (the service bills what it hears), and a
+            // pause settles the phrase (onUtteranceEnd → flush).
             VoiceRecognitionEngine.SPEECHMATICS -> {
                 whisperStreamingUtil.stop()
                 sherpaRecognizer.stop()
                 audioChunker.streamingFeedsContinuously = false
-                audioChunker.streamingModeEnabled = false
-                log.warn("Speechmatics engine selected, but the realtime client is not wired yet — no transcription will occur")
+                audioChunker.streamingModeEnabled = true
+                speechmaticsRecognizer.start(appInfo.speechmaticsToken, appInfo.questionLanguage, appInfo.speechmaticsConfig)
             }
             // A voice primary method cuts phrases exactly like Whisper batch does; only who hears them differs.
             VoiceRecognitionEngine.WHISPER_BATCH, null -> {
                 whisperStreamingUtil.stop()
                 sherpaRecognizer.stop()
+                speechmaticsRecognizer.stop()
                 audioChunker.streamingFeedsContinuously = false
                 audioChunker.streamingModeEnabled = false
             }

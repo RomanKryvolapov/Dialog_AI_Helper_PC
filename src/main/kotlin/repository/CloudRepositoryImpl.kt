@@ -2,7 +2,9 @@ package repository
 
 import VOICE_AUDIO_MARK
 import dev.langchain4j.data.message.AudioContent
+import dev.langchain4j.data.message.ChatMessage
 import dev.langchain4j.data.message.Content
+import dev.langchain4j.data.message.SystemMessage
 import dev.langchain4j.data.message.TextContent
 import dev.langchain4j.data.message.UserMessage
 import dev.langchain4j.http.client.jdk.JdkHttpClientBuilder
@@ -11,9 +13,9 @@ import dev.langchain4j.model.chat.response.ChatResponse
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler
 import dev.langchain4j.model.googleai.GeminiThinkingConfig
 import dev.langchain4j.model.googleai.GoogleAiGeminiStreamingChatModel
-import dev.langchain4j.model.input.Prompt
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel
-import models.domain.ClaudeModelsEnum
+import models.domain.ModelParameters
+import models.domain.ModelPrompt
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -88,18 +90,6 @@ class CloudRepositoryImpl(
             OPEN_THINKING_TAIL.forEach { out = it.replace(out, "") }
             return out.trim()
         }
-
-        /**
-         * Gemma 4 and Gemini 3.x take `thinkingLevel` instead of a budget and cannot switch thinking
-         * off, so they get the lightest level, MINIMAL, which both accept.
-         */
-        private fun lightestThinkingLevel(model: String): GeminiThinkingConfig.GeminiThinkingLevel? {
-            val m = model.lowercase()
-            return when {
-                m.startsWith("gemma-4-") || m.startsWith("gemini-3") -> GeminiThinkingConfig.GeminiThinkingLevel.MINIMAL
-                else -> null
-            }
-        }
     }
 
     /** Streams one answer of [model]; when it finishes, the tokens the provider reports are counted. */
@@ -134,37 +124,44 @@ class CloudRepositoryImpl(
         awaitClose { /* no-op; langchain4j handles HTTP cleanup on its side */ }
     }
 
-    override fun streamGoogleAI(model: String, apiKey: String, prompt: Prompt): Flow<String> {
-        val chatModel = googleModel(model, apiKey)
+    override fun streamGoogleAI(model: String, apiKey: String, prompt: ModelPrompt, parameters: ModelParameters): Flow<String> {
+        val chatModel = googleModel(model, apiKey, parameters)
         return streamingFlow("GoogleAI[$model]", model) { handler ->
-            chatModel.chat(prompt.text(), handler)
+            chatModel.chat(messages(prompt, UserMessage.from(prompt.user)), handler)
         }
     }
 
-    override fun streamGoogleAIWithAudio(model: String, apiKey: String, prompt: Prompt, wav: ByteArray): Flow<String> {
-        val chatModel = googleModel(model, apiKey)
-        val message = UserMessage.from(
-            audioMessageParts(prompt.text(), AudioContent(Base64.getEncoder().encodeToString(wav), "audio/wav")),
-        )
+    override fun streamGoogleAIWithAudio(
+        model: String,
+        apiKey: String,
+        prompt: ModelPrompt,
+        parameters: ModelParameters,
+        wav: ByteArray,
+    ): Flow<String> {
+        val chatModel = googleModel(model, apiKey, parameters)
+        val message = UserMessage.from(audioMessageParts(prompt.user, wavContent(wav)))
         return streamingFlow("GoogleAI-voice[$model]", model) { handler ->
-            chatModel.chat(listOf(message), handler)
+            chatModel.chat(messages(prompt, message), handler)
         }
     }
 
-    private fun googleModel(model: String, apiKey: String): GoogleAiGeminiStreamingChatModel {
+    private fun googleModel(model: String, apiKey: String, parameters: ModelParameters): GoogleAiGeminiStreamingChatModel {
         val builder = GoogleAiGeminiStreamingChatModel.builder()
             .httpClientBuilder(jdkClientBuilder)
             .baseUrl(GOOGLE_AI_BASE_URL_LANG_CHAIN)
             .apiKey(apiKey)
             .modelName(model)
-            .temperature(0.8)
+            .temperature(parameters.temperature)
+            .topP(parameters.topP)
+            .topK(parameters.topK)
+            .maxOutputTokens(parameters.maxOutputTokens)
             .logRequestsAndResponses(false)
             .timeout(REQUEST_TIMEOUT)
             .listeners(listOf(ChatLogger()))
-        lightestThinkingLevel(model)?.let { level ->
+        parameters.thinking?.let { level ->
             builder.thinkingConfig(
                 GeminiThinkingConfig.builder()
-                    .thinkingLevel(level)
+                    .thinkingLevel(GeminiThinkingConfig.GeminiThinkingLevel.valueOf(level.uppercase()))
                     .includeThoughts(false)
                     .build()
             ).returnThinking(false)
@@ -172,54 +169,64 @@ class CloudRepositoryImpl(
         return builder.build()
     }
 
-    override fun streamOpenAI(model: String, apiKey: String, prompt: Prompt): Flow<String> {
-        // GPT-6 models reason before answering unless told not to; "none" keeps the first token fast.
-        // Their documentation names no temperature support, so the default is left alone.
-        val chatModel = openAiModel(model, apiKey, reasoningEffort = "none")
+    override fun streamOpenAI(model: String, apiKey: String, prompt: ModelPrompt, parameters: ModelParameters): Flow<String> {
+        val chatModel = openAiModel(model, apiKey, parameters)
         return streamingFlow("OpenAI[$model]", model) { handler ->
-            chatModel.chat(prompt.text(), handler)
+            chatModel.chat(messages(prompt, UserMessage.from(prompt.user)), handler)
         }
     }
 
-    override fun streamOpenAIWithAudio(model: String, apiKey: String, prompt: Prompt, wav: ByteArray): Flow<String> {
-        // The audio models are not reasoning models and answer a request carrying reasoning effort with a 400.
-        val chatModel = openAiModel(model, apiKey, reasoningEffort = null)
-        val message = UserMessage.from(
-            audioMessageParts(prompt.text(), AudioContent(Base64.getEncoder().encodeToString(wav), "audio/wav")),
-        )
+    override fun streamOpenAIWithAudio(
+        model: String,
+        apiKey: String,
+        prompt: ModelPrompt,
+        parameters: ModelParameters,
+        wav: ByteArray,
+    ): Flow<String> {
+        val chatModel = openAiModel(model, apiKey, parameters)
+        val message = UserMessage.from(audioMessageParts(prompt.user, wavContent(wav)))
         return streamingFlow("OpenAI-voice[$model]", model) { handler ->
-            chatModel.chat(listOf(message), handler)
+            chatModel.chat(messages(prompt, message), handler)
         }
     }
 
-    private fun openAiModel(model: String, apiKey: String, reasoningEffort: String?): OpenAiStreamingChatModel {
+    private fun openAiModel(model: String, apiKey: String, parameters: ModelParameters): OpenAiStreamingChatModel {
         val builder = OpenAiStreamingChatModel.builder()
             .httpClientBuilder(jdkClientBuilder)
             .apiKey(apiKey)
             .modelName(model)
+            .temperature(parameters.temperature)
+            .topP(parameters.topP)
+            .maxCompletionTokens(parameters.maxOutputTokens)
             .logRequests(false)
             .logResponses(false)
             .timeout(REQUEST_TIMEOUT)
             .listeners(listOf(ChatLogger()))
-        reasoningEffort?.let { builder.reasoningEffort(it) }
+        parameters.thinking?.let { builder.reasoningEffort(it) }
+        parameters.verbosity?.let { builder.customParameters(mapOf("verbosity" to it)) }
         return builder.build()
     }
 
-    override fun streamClaude(model: String, apiKey: String, prompt: Prompt): Flow<String> {
+    override fun streamClaude(model: String, apiKey: String, prompt: ModelPrompt, parameters: ModelParameters): Flow<String> {
         val builder = AnthropicStreamingChatModel.builder()
             .apiKey(apiKey)
             .modelName(model)
+            .maxTokens(parameters.maxOutputTokens)
             .logRequests(false)
             .logResponses(false)
             .timeout(REQUEST_TIMEOUT)
             .listeners(listOf(ChatLogger()))
-        // No temperature: the current Claude models removed the sampling parameters and answer a
-        // request carrying one with a 400.
-        ClaudeModelsEnum.byType(model)?.let { builder.thinkingType(it.thinkingOffType) }
+        parameters.thinking?.let { builder.thinkingType(it) }
         val chatModel = builder.build()
         return streamingFlow("Claude[$model]", model) { handler ->
-            chatModel.chat(prompt.text(), handler)
+            chatModel.chat(messages(prompt, UserMessage.from(prompt.user)), handler)
         }
     }
+
+    /** The instructions as the system message (left out when blank), then the message itself. */
+    private fun messages(prompt: ModelPrompt, user: UserMessage): List<ChatMessage> =
+        listOfNotNull(prompt.system.takeIf { it.isNotBlank() }?.let(SystemMessage::from), user)
+
+    private fun wavContent(wav: ByteArray) = AudioContent(Base64.getEncoder().encodeToString(wav), "audio/wav")
 
 }

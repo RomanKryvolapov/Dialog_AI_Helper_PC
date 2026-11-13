@@ -8,13 +8,11 @@ import dev.langchain4j.exception.InvalidRequestException
 import dev.langchain4j.exception.ModelNotFoundException
 import dev.langchain4j.exception.RateLimitException
 import models.domain.TranslationMethod
-import models.domain.resolveTranslationMethod
 import java.net.ConnectException
 import java.net.UnknownHostException
 import java.net.http.HttpTimeoutException
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -72,112 +70,5 @@ class TranslationFailoverTest {
         assertEquals(FailureKind.TIMEOUT, classifyFailure(RuntimeException(HttpTimeoutException("request timed out"))).kind)
         assertEquals(FailureKind.TIMEOUT, classifyFailure(dev.langchain4j.exception.TimeoutException("timeout")).kind)
         assertEquals(FailureKind.UNKNOWN, classifyFailure(IllegalStateException("odd")).kind)
-    }
-
-    @Test
-    fun `a failed method rests as long as its failure calls for, and a success ends it`() {
-        var now = 1_000_000L
-        val health = MethodHealth { now }
-        val key = "voice:gemini-3.5-flash-lite"
-
-        assertNull(health.recordFailure(key, Failure(FailureKind.BAD_ANSWER, "")), "a bad answer moves only that phrase on")
-        assertNull(health.restOf(key))
-
-        val first = health.recordFailure(key, Failure(FailureKind.SERVER, ""))!!
-        assertEquals(now + 30_000, first.untilMillis)
-        assertTrue(first.soft)
-        assertEquals(now + 60_000, health.recordFailure(key, Failure(FailureKind.TIMEOUT, ""))!!.untilMillis, "doubles in a row")
-        repeat(6) { health.recordFailure(key, Failure(FailureKind.NETWORK, "")) }
-        assertEquals(now + MethodHealth.MAX_REST_MILLIS, health.restOf(key)!!.untilMillis, "capped")
-
-        health.recordSuccess(key)
-        assertNull(health.restOf(key))
-        assertEquals(key, health.lastUsed.value)
-        assertEquals(now + 30_000, health.recordFailure(key, Failure(FailureKind.SERVER, ""))!!.untilMillis, "a success restarts the count")
-
-        now += 30_001
-        assertNull(health.restOf(key), "the rest is over")
-
-        val limited = health.recordFailure(key, Failure(FailureKind.RATE_LIMIT, "", retryAfterMillis = 41_218))!!
-        assertEquals(now + 41_218, limited.untilMillis)
-        assertTrue(!limited.soft)
-        val daily = health.recordFailure(key, Failure(FailureKind.DAILY_QUOTA, ""))!!
-        assertEquals(TranslationRateLimiter.nextPacificMidnight(now), daily.untilMillis, "Google: until the daily reset")
-        val rolling = health.recordFailure("voice:gpt-audio-1.5", Failure(FailureKind.DAILY_QUOTA, "", retryAfterMillis = 8_640))!!
-        assertEquals(now + 8_640, rolling.untilMillis, "OpenAI: as long as it asked")
-
-        val auth = health.recordFailure("whisper-batch:gpt-6.1-terra", Failure(FailureKind.AUTH, ""))!!
-        assertTrue(auth.untilSettingsChange)
-        now += 24 * 3_600_000L
-        assertTrue(health.restOf("whisper-batch:gpt-6.1-terra") != null, "a rejected key rests until the settings change")
-        health.reset()
-        assertNull(health.restOf("whisper-batch:gpt-6.1-terra"))
-    }
-
-    private val geminiVoice = resolveTranslationMethod("voice:gemini-3.5-flash-lite")!!
-    private val openAiVoice = resolveTranslationMethod("voice:gpt-audio-1.5")!!
-    private val terra = resolveTranslationMethod("whisper-batch:gpt-6.1-terra")!!
-    private val chain = listOf(geminiVoice, openAiVoice, terra)
-
-    private fun choose(
-        skip: Set<String> = emptySet(),
-        unusable: Map<TranslationMethod, String> = emptyMap(),
-        rests: Map<TranslationMethod, MethodHealth.Rest> = emptyMap(),
-        waits: Map<TranslationMethod, Long> = emptyMap(),
-        reserved: MutableList<TranslationMethod> = ArrayList(),
-    ) = chooseMethod(
-        chain = chain,
-        skip = skip.toSet(),
-        now = 0L,
-        unusableReason = { unusable[it] },
-        rest = { rests[it] },
-        reserve = { method -> (waits[method] ?: 0L).also { if (it == 0L) reserved += method } },
-    )
-
-    @Test
-    fun `the primary takes the phrase while it can`() {
-        val reserved = ArrayList<TranslationMethod>()
-        assertEquals(MethodChoice.Use(geminiVoice), choose(reserved = reserved))
-        assertEquals(listOf(geminiVoice), reserved, "only the chosen method's limiter counts the request")
-    }
-
-    @Test
-    fun `an error on the primary moves the phrase to reserve 1, and one there to reserve 2`() {
-        assertEquals(MethodChoice.Use(openAiVoice), choose(skip = setOf(geminiVoice.key)))
-        assertEquals(MethodChoice.Use(terra), choose(skip = setOf(geminiVoice.key, openAiVoice.key)))
-        assertIs<MethodChoice.NoneLeft>(choose(skip = chain.map { it.key }.toSet()))
-    }
-
-    @Test
-    fun `a resting method is passed over, and a soft rest is used when nothing else can take the phrase`() {
-        val hard = MethodHealth.Rest(10_000, "daily quota used up", soft = false)
-        val soft = MethodHealth.Rest(10_000, "server error", soft = true)
-        assertEquals(MethodChoice.Use(openAiVoice), choose(rests = mapOf(geminiVoice to hard)))
-        assertEquals(MethodChoice.Use(terra), choose(rests = mapOf(geminiVoice to soft, openAiVoice to hard)))
-        assertEquals(
-            MethodChoice.Use(geminiVoice),
-            choose(rests = mapOf(geminiVoice to soft, openAiVoice to hard), unusable = mapOf(terra to "no key")),
-            "with no healthy method left, the softly resting primary is tried rather than waited out",
-        )
-        val allHard = choose(rests = chain.associateWith { hard })
-        assertIs<MethodChoice.Wait>(allHard)
-        assertEquals(10_000, allHard.millis)
-        assertEquals(3, allHard.reasons.size)
-    }
-
-    @Test
-    fun `a moment's rate limit is waited for, a long one hands the phrase on`() {
-        val short = choose(waits = mapOf(geminiVoice to 1_500L))
-        assertIs<MethodChoice.Wait>(short)
-        assertEquals(1_500, short.millis)
-        assertEquals(MethodChoice.Use(openAiVoice), choose(waits = mapOf(geminiVoice to 40_000L)))
-    }
-
-    @Test
-    fun `a method that cannot work is skipped and named`() {
-        assertEquals(MethodChoice.Use(openAiVoice), choose(unusable = mapOf(geminiVoice to "no Google API key")))
-        val none = choose(unusable = chain.associateWith { "no key" })
-        assertIs<MethodChoice.NoneLeft>(none)
-        assertEquals(3, none.reasons.size)
     }
 }

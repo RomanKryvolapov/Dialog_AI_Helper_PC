@@ -9,7 +9,6 @@ import models.domain.LlmModelEngine
 import models.domain.VoiceRecognitionEngine
 import models.domain.allHearings
 import models.domain.allLlmModels
-import models.domain.reserveHearings
 import models.domain.resolveLlmModel
 import models.domain.resolveMethodChain
 import models.domain.resolveTranslationMethod
@@ -79,40 +78,23 @@ class SavedModelCompatibilityTest {
         // Keys of the first chains: "text:" on the recogniser that was a separate setting then.
         assertEquals("whisper-streaming:gpt-6.1-terra", resolveTranslationMethod("text:gpt-5.6-terra", VoiceRecognitionEngine.WHISPER_STREAMING)?.key)
         assertEquals("whisper-batch:gpt-6.1-terra", resolveTranslationMethod("gpt-6.1-terra")?.key)
-        assertEquals("whisper-batch:gpt-6.1-terra", resolveTranslationMethod("speechmatics:gpt-6.1-terra")?.key, "a recogniser not on offer")
+        assertEquals("speechmatics:gpt-6.1-terra", resolveTranslationMethod("speechmatics:gpt-6.1-terra")?.key, "Speechmatics is a recogniser now")
     }
 
     @Test
-    fun `reserves can only be what follows method 1`() {
-        val voiceAndWhisper = setOf("Gemini 3.5 Flash-Lite", "GPT-Audio-1.5", VoiceRecognitionEngine.WHISPER_BATCH.title)
-        fun names(hearings: List<Hearing>) = hearings.map {
-            when (it) {
-                is Hearing.Voice -> it.model.title
-                is Hearing.Recognition -> it.recognizer.title
-            }
-        }.toSet()
-        assertEquals(voiceAndWhisper, names(reserveHearings(resolveTranslationMethod("voice:gemini-3.5-flash-lite")!!)))
-        assertEquals(voiceAndWhisper, names(reserveHearings(resolveTranslationMethod("whisper-batch:gpt-6.1-terra")!!)))
-        assertEquals(
-            setOf(VoiceRecognitionEngine.SHERPA_ONNX.title),
-            names(reserveHearings(resolveTranslationMethod("sherpa-onnx:gpt-6.1-terra")!!)),
-            "a streaming recogniser keeps no recording: only its own text, another model",
-        )
-
+    fun `a saved chain keeps known methods once each, in order, three at most`() {
         val chain = resolveMethodChain(
             listOf(
                 "whisper-streaming:gpt-6.1-terra",
                 "whisper-streaming:gpt-6.1-terra", // repeated
-                "voice:gpt-audio-1.5", // streaming keeps no recording to hear
-                "whisper-batch:claude-sonnet-5-5", // another recogniser cannot hear the same phrase
-                "whisper-streaming:claude-sonnet-5-5",
                 "voice:no-such-model",
-                "whisper-streaming:gemini-3.5-flash-lite",
+                "voice:gpt-audio-1.5", // any method can be a reserve: switching to it rebuilds the audio input
+                "sherpa-onnx:claude-sonnet-5-5",
                 "whisper-streaming:gemma-4-31b-it", // past the third
             )
         )
         assertEquals(
-            listOf("whisper-streaming:gpt-6.1-terra", "whisper-streaming:claude-sonnet-5-5", "whisper-streaming:gemini-3.5-flash-lite"),
+            listOf("whisper-streaming:gpt-6.1-terra", "voice:gpt-audio-1.5", "sherpa-onnx:claude-sonnet-5-5"),
             chain.map { it.key },
         )
     }
@@ -125,9 +107,9 @@ class SavedModelCompatibilityTest {
             hearings.filterIsInstance<Hearing.Voice>().map { it.model.id },
         )
         assertEquals(
-            listOf(VoiceRecognitionEngine.WHISPER_BATCH, VoiceRecognitionEngine.WHISPER_STREAMING, VoiceRecognitionEngine.SHERPA_ONNX),
+            VoiceRecognitionEngine.entries,
             hearings.filterIsInstance<Hearing.Recognition>().map { it.recognizer },
-            "Speechmatics transcribes nothing yet and is not offered",
+            "every recogniser is on offer, Speechmatics included",
         )
         assertTrue(textModels().none { it.id == "gpt-audio-1.5" })
         assertTrue(textModels().any { it.id == "gpt-6.1-terra" })
@@ -153,5 +135,13 @@ class SavedModelCompatibilityTest {
     fun `current models resolve to themselves and unknown ones to nothing`() {
         allLlmModels().forEach { assertEquals(it, resolveLlmModel(it.id)) }
         assertNull(resolveLlmModel("no-such-model"))
+    }
+
+    @Test
+    fun `settings saved before the unused send-text settings were removed still load`() {
+        val saved = """{"sendTextEverySymbols":100,"sendTextEveryMilliseconds":10000,"openAiToken":"sk-test","questionLanguage":"ru"}"""
+        val info = ApplicationInfoMapper().reverse(assertNotNull(adapter.fromJson(saved)))
+        assertEquals("sk-test", info.openAiToken)
+        assertEquals("ru", info.questionLanguage)
     }
 }

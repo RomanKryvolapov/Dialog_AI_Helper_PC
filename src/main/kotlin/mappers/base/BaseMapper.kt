@@ -172,8 +172,4 @@ abstract class BaseMapper<From, To> {
 
     abstract fun map(model: From): To
 
-    fun mapList(models: List<From>): List<To> {
-        return models.map(::map)
-    }
-
 }

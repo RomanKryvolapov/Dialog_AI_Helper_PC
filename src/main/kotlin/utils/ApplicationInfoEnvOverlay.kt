@@ -3,9 +3,15 @@ package utils
 import defaultApplicationInfo
 import models.domain.ApplicationInfoNullable
 import models.domain.LlmModel
-import models.domain.PromptModel
+import models.domain.ModelParameters
+import models.domain.PromptParts
+import models.domain.PromptPartsNullable
+import models.domain.PromptSettingsNullable
 import models.domain.SherpaModelConfig
 import models.domain.SherpaModelConfigNullable
+import models.domain.QuestionsSettingsNullable
+import models.domain.SpeechmaticsConfigNullable
+import models.domain.SummarySettingsNullable
 import models.domain.TranslationMethod
 import models.domain.VoiceRecognitionEngine
 import models.domain.WhisperModelConfigNullable
@@ -30,7 +36,8 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * The trade-off: typing a value that happens to equal the fallback is the same as not typing it.
  * The app behaves identically either way — until `.env` changes, which is the point of the feature.
- * The prompt library is the one field always written whole: it is the app's own data, not a setting.
+ * The prompts and the model parameters have no `.env` keys: what is stored of them is only what the user
+ * changed, so an untouched prompt part follows the built-in text as it improves.
  *
  * A saved value always beats `.env`, and there is no way to un-choose one from the Settings screen
  * except by clearing the field, so a `.env` key that loses that contest says so in the log.
@@ -53,10 +60,7 @@ class ApplicationInfoEnvOverlay(
         const val KEY_CLAUDE_API_KEY = "DIALOG_CLAUDE_API_KEY"
         const val KEY_SPEECHMATICS_API_KEY = "DIALOG_SPEECHMATICS_API_KEY"
 
-        const val KEY_PROMPT_NAME = "DIALOG_PROMPT_NAME"
         const val KEY_LAST_OPENED_TAB = "DIALOG_LAST_OPENED_TAB"
-        const val KEY_SEND_TEXT_EVERY_SYMBOLS = "DIALOG_SEND_TEXT_EVERY_SYMBOLS"
-        const val KEY_SEND_TEXT_EVERY_MILLISECONDS = "DIALOG_SEND_TEXT_EVERY_MILLISECONDS"
 
         const val KEY_WHISPER_MODEL_PATH = "DIALOG_WHISPER_MODEL_PATH"
         const val KEY_WHISPER_SILENCE_THRESHOLD_PERCENTS = "DIALOG_WHISPER_SILENCE_THRESHOLD_PERCENTS"
@@ -145,12 +149,7 @@ class ApplicationInfoEnvOverlay(
             claudeToken = stored.claudeToken.orEnv(KEY_CLAUDE_API_KEY, envClaudeToken()),
             speechmaticsToken = stored.speechmaticsToken.orEnv(KEY_SPEECHMATICS_API_KEY, envSpeechmaticsToken()),
 
-            prompt = stored.prompt.orEnvValue(KEY_PROMPT_NAME, envPrompt(stored.promptsMap)),
             lastOpenedTab = stored.lastOpenedTab.orEnvValue(KEY_LAST_OPENED_TAB, envLastOpenedTab()),
-            sendTextEverySymbols = stored.sendTextEverySymbols
-                .orEnvValue(KEY_SEND_TEXT_EVERY_SYMBOLS, envSendTextEverySymbols()),
-            sendTextEveryMilliseconds = stored.sendTextEveryMilliseconds
-                .orEnvValue(KEY_SEND_TEXT_EVERY_MILLISECONDS, envSendTextEveryMilliseconds()),
 
             whisperModelPath = stored.whisperModelPath.orEnv(KEY_WHISPER_MODEL_PATH, envWhisperModelPath()),
             whisperModelConfig = whisper.copy(
@@ -211,15 +210,31 @@ class ApplicationInfoEnvOverlay(
             speechmaticsToken = toSave.speechmaticsToken
                 .dropIfFallback(envSpeechmaticsToken() ?: defaultApplicationInfo.speechmaticsToken),
 
-            // Compared whole, not by name: an edited prompt keeps the name of the one it came from.
-            prompt = toSave.prompt
-                .dropIfFallback(envPrompt(toSave.promptsMap) ?: defaultApplicationInfo.prompt),
+            prompts = toSave.prompts?.let(::dropBuiltInPrompts),
+            questions = toSave.questions?.let { saved ->
+                val default = defaultApplicationInfo.questions
+                QuestionsSettingsNullable(
+                    enabled = saved.enabled.dropIfFallback(default.enabled),
+                    modelId = saved.modelId.dropIfFallback(default.modelId),
+                    phrases = saved.phrases.dropIfFallback(default.phrases),
+                    fullAnswers = saved.fullAnswers.dropIfFallback(default.fullAnswers),
+                    system = saved.system.dropIfFallback(default.system),
+                    user = saved.user.dropIfFallback(default.user),
+                ).takeUnless { it == QuestionsSettingsNullable() }
+            },
+            speechmaticsConfig = toSave.speechmaticsConfig?.let { config ->
+                val default = defaultApplicationInfo.speechmaticsConfig
+                SpeechmaticsConfigNullable(
+                    endpoint = config.endpoint.dropIfFallback(default.endpoint),
+                    model = config.model.dropIfFallback(default.model),
+                    speakerLabels = config.speakerLabels.dropIfFallback(default.speakerLabels),
+                ).takeUnless { it == SpeechmaticsConfigNullable() }
+            },
+            modelParameters = toSave.modelParameters
+                ?.filterValues { it != ModelParameters() }
+                ?.takeIf { it.isNotEmpty() },
             lastOpenedTab = toSave.lastOpenedTab
                 .dropIfFallback(envLastOpenedTab() ?: defaultApplicationInfo.lastOpenedTab),
-            sendTextEverySymbols = toSave.sendTextEverySymbols
-                .dropIfFallback(envSendTextEverySymbols() ?: defaultApplicationInfo.sendTextEverySymbols),
-            sendTextEveryMilliseconds = toSave.sendTextEveryMilliseconds
-                .dropIfFallback(envSendTextEveryMilliseconds() ?: defaultApplicationInfo.sendTextEveryMilliseconds),
 
             whisperModelPath = toSave.whisperModelPath
                 .dropIfFallback(envWhisperModelPath() ?: defaultApplicationInfo.whisperModelPath),
@@ -263,8 +278,6 @@ class ApplicationInfoEnvOverlay(
     private fun envClaudeToken() = envSettings.getString(KEY_CLAUDE_API_KEY)
     private fun envSpeechmaticsToken() = envSettings.getString(KEY_SPEECHMATICS_API_KEY)
     private fun envLastOpenedTab() = envSettings.getInt(KEY_LAST_OPENED_TAB, min = 0)
-    private fun envSendTextEverySymbols() = envSettings.getInt(KEY_SEND_TEXT_EVERY_SYMBOLS, min = 1)
-    private fun envSendTextEveryMilliseconds() = envSettings.getLong(KEY_SEND_TEXT_EVERY_MILLISECONDS, min = 1)
     private fun envWhisperModelPath() = envSettings.getString(KEY_WHISPER_MODEL_PATH)
     private fun envSherpaModelPath() = envSettings.getString(KEY_SHERPA_MODEL_PATH)
 
@@ -280,12 +293,32 @@ class ApplicationInfoEnvOverlay(
     private fun envSherpaSplitMaxWords() = envSettings.getInt(KEY_SHERPA_SPLIT_MAX_WORDS, min = 0)
     private fun envSherpaMaxHangMs() = envSettings.getLong(KEY_SHERPA_MAX_HANG_MS, min = 0)
 
-    private fun envPrompt(storedPrompts: Map<String, PromptModel>?): PromptModel? {
-        val name = envSettings.getString(KEY_PROMPT_NAME) ?: return null
-        val prompt = (storedPrompts ?: defaultApplicationInfo.promptsMap)[name]
-        if (prompt == null) warnOnce(KEY_PROMPT_NAME, "$KEY_PROMPT_NAME does not name a known prompt, ignored")
-        return prompt
+    /** Only the prompt parts the user changed; null when every part is the built-in one. */
+    private fun dropBuiltInPrompts(prompts: PromptSettingsNullable): PromptSettingsNullable? {
+        val default = defaultApplicationInfo.prompts
+        val summary = prompts.summary
+        val kept = PromptSettingsNullable(
+            previousPhrases = prompts.previousPhrases.dropIfFallback(default.previousPhrases),
+            text = prompts.text?.let { dropBuiltInParts(it, default.text) },
+            summary = summary?.let {
+                SummarySettingsNullable(
+                    enabled = it.enabled.dropIfFallback(default.summary.enabled),
+                    everyPhrases = it.everyPhrases.dropIfFallback(default.summary.everyPhrases),
+                    system = it.system.dropIfFallback(default.summary.system),
+                    user = it.user.dropIfFallback(default.summary.user),
+                ).takeUnless { kept -> kept == SummarySettingsNullable() }
+            },
+            voice = prompts.voice?.let { dropBuiltInParts(it, default.voice) },
+        )
+        return kept.takeUnless { it == PromptSettingsNullable() }
     }
+
+    private fun dropBuiltInParts(parts: PromptPartsNullable, default: PromptParts): PromptPartsNullable? =
+        PromptPartsNullable(
+            system = parts.system.dropIfFallback(default.system),
+            user = parts.user.dropIfFallback(default.user),
+            previousPhrase = parts.previousPhrase.dropIfFallback(default.previousPhrase),
+        ).takeUnless { it == PromptPartsNullable() }
 
     private fun warnOnce(key: String, message: String) {
         if (warnedKeys.add(key)) log.warn(message)

@@ -80,10 +80,6 @@ class PreferencesRepositoryImpl(
         writeJson(applicationInfoAdapter.toJson(applicationInfoEnvOverlay.dropFallbackValues(applicationInfoNullable)))
     }
 
-    override fun clear() {
-        writeJson(applicationInfoAdapter.toJson(ApplicationInfoNullable()))
-    }
-
     /** Reassembles the JSON from chunk keys; falls back to the legacy single-key value. */
     private fun readJson(): String? {
         val count = prefs.getInt(CHUNK_COUNT_KEY, -1)

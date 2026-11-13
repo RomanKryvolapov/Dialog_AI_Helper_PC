@@ -60,9 +60,11 @@ def main():
             print(f"Whisper: {dev} failed: {e}", file=sys.stderr)
     if text is None:
         print(f"Whisper: transcription failed on all devices: {last_error}", file=sys.stderr)
-        traceback.print_exc()
+        traceback.print_exception(last_error)
         sys.exit(1)
 
+    # stdout is the phrase's text and nothing else: the app reads all of it as the phrase. Every other
+    # message goes to stderr.
     print(text)
 
 if __name__ == "__main__":

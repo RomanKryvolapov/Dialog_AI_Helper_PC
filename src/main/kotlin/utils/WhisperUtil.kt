@@ -14,7 +14,7 @@ interface WhisperUtil {
      * Like [recognize] for a phrase held in memory — one a voice method could not translate that falls
      * through to a text method. The text, or null when Whisper failed or heard nothing.
      */
-    suspend fun transcribe(wav: ByteArray, language: String): String?
+    suspend fun transcribe(wav: ByteArray, language: String): WhisperResult
 
 }
 
