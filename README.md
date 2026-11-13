@@ -91,8 +91,11 @@ Paste the relevant API key into **Settings → API keys**; each model's request 
 
 ## Settings from a `.env` file
 
-Every field of the **Settings** screen can also be filled from a `.env` file in the project root —
-handy for keeping API tokens out of the app's saved settings and out of git.
+Most fields of the **Settings** screen — the API keys, the translation methods, the audio device and
+speech language, the phrase, Whisper and Sherpa-ONNX settings and the streaming toggle — can also be
+filled from a `.env` file in the project root, handy for keeping API tokens out of the app's saved
+settings and out of git. The prompts and the summary settings, each model's parameters, the Questions
+page and Speechmatics' region, model and speaker labels are set in the app only.
 
 Copy `.env.example` to `.env` and fill in what you need. Each setting is resolved in this order:
 
@@ -135,9 +138,10 @@ There are three top-level tabs (Questions is described above):
   * **API keys** — Google, OpenAI, Claude and Speechmatics keys
   * **Whisper** / **Sherpa-ONNX** / **Speechmatics** — per-recogniser model folder or endpoint & tuning
   * **Main prompt** / **Voice prompt** — everything the translation requests are made of (see [Prompts](#prompts-and-the-conversation-context))
+  * **Questions** — the [Questions](#questions) mode: its model, how many phrases and answers go with each request, its prompt and the last request as it was sent
   * **Console** — captures `stdout` / `stderr` from the running process for debugging
 
-Right of the tabs, the same size and spacing, are **Start dialog** and **Clear dialog** (shown always, active on Messages and Questions), then the microphone and memory meters and the tokens the current dialog has used.
+Right of the tabs, the same size and spacing, are **Start dialog** and **Clear dialog** (shown always, active on Messages and Questions), then the **Questions** box, the microphone and memory meters, the tokens the current dialog has used and the translation method in use.
 
 ## Use for conferences
 
