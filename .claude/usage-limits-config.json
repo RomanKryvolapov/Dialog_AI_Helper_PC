@@ -1,8 +1,55 @@
 {
   "fetch_ttl_sec": 60,
   "gate_enabled": true,
+  "limit_ahead_red_pct": 10,
+  "time_zone": "Europe/Sofia",
+  "working_week": {
+    "mon": {
+      "percent": 100,
+      "from": "12:00",
+      "to": "20:00"
+    },
+    "tue": {
+      "percent": 100,
+      "from": "12:00",
+      "to": "20:00"
+    },
+    "wed": {
+      "percent": 100,
+      "from": "12:00",
+      "to": "20:00"
+    },
+    "thu": {
+      "percent": 100,
+      "from": "12:00",
+      "to": "20:00"
+    },
+    "fri": {
+      "percent": 100,
+      "from": "12:00",
+      "to": "20:00"
+    },
+    "sat": {
+      "percent": 5,
+      "from": "12:00",
+      "to": "20:00"
+    },
+    "sun": {
+      "percent": 5,
+      "from": "12:00",
+      "to": "20:00"
+    }
+  },
   "zones": {
-    "session": { "YELLOW": 50, "ORANGE": 80, "RED": 90 },
-    "weekly": { "YELLOW": 80, "ORANGE": 90, "RED": 95 }
+    "session": {
+      "YELLOW": 70,
+      "ORANGE": 80,
+      "RED": 90
+    },
+    "weekly": {
+      "YELLOW": 80,
+      "ORANGE": 90,
+      "RED": 95
+    }
   }
 }

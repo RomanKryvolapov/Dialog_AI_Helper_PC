@@ -1,121 +1,132 @@
-# Before starting work
+# Before starting work — other sessions, pull, read what arrived, check versions
 
-**Every piece of work that reads or changes this repository opens the same way**: bring the branch
-up to date, then check that what the project stands on is still current. Both happen _before_
-planning, editing or reviewing — not after, and not "if there is time".
+Every message from the developer that you act on opens the same way: find out what the other sessions
+in this repository are doing, bring the branch up to date, read what arrived and let all of it change
+the work in hand; for work that reads or changes the repository, also check that what the project
+stands on is still current. All of it before planning, editing or reviewing — two sessions on one
+thing, a stale branch, an unread commit or an unsupported runtime costs nothing visible on the day and
+a great deal later.
 
-Skipping either has the same shape of cost, and it is never visible on the day. A stale branch means
-work built on a base that no longer exists. A stale dependency means work built on a version whose
-vendor has stopped supporting it — which shows up as a surcharge, a security hole, or a migration
-three times harder than it would have been.
+- The trigger is the developer's message, not the size of the work: before planning it, before reading
+  code for it, before answering a question about a tracker entry. Once per message, not once per step.
+- Skip it only when no repository is in play — a question answered without opening anything here.
+- A message from another Claude session is not a trigger: answer it (section 1) and run none of this.
 
----
+## 1. Ask the other sessions working here
 
-## 1. Pull the branch you will land on
+Sessions that do not know about each other overwrite each other's edits and commit, pull or switch the
+branch under each other. Before the pull:
 
-1. **Fetch, then look.** `git fetch` and see how far behind the branch is and what is coming in.
-   A quiet fetch costs nothing; it also tells you whether anything relevant to your task moved.
-2. **Fast-forward.** With a clean tree, `git pull --ff-only` on the working branch — the one
-   CLAUDE.md names under "Branch and runtime", unless the task says otherwise.
-3. **Read what arrived** if it touches your area: the incoming file list, and the tracker entries
-   among them. Someone may have already done part of the task, or numbered an entry you were about
-   to number.
+- **Find them**: `claude agents --json` lists every live session on this machine with its folder (`cwd`)
+  and the name `SendMessage` addresses (`name`); `ListAgents` shows no folders. This repository's
+  sessions work in this checkout, in one of its worktrees (`git worktree list`) or in another clone of
+  it; yours is the entry whose `sessionId` equals the `CLAUDE_CODE_SESSION_ID` environment variable.
+  None → nothing to ask.
+- **Ask each**, one `SendMessage` per session, all at once: say what you are about to do, and ask for its
+  task, the files and areas it changes or will change, its checkout and branch, what it holds
+  uncommitted or staged, what it keeps running, and any commit, pull, merge or branch switch it has
+  coming. A session that has already told you in this conversation what it is doing is asked again
+  only while it is busy.
+- **Edit nothing until they answer**, the pull included. Answers arrive on their own between your tool
+  calls, so fetch and read the incoming commits meanwhile. A session with no answer once you have read
+  them — silent, or reported undeliverable — is not a yes: keep off whatever its checkout shows
+  uncommitted, and say it did not answer.
+- **Overlap** — the same files, the same contract or schema, the same running service or the same
+  task → stop and tell the developer what collides before touching it.
+- **A checkout shared with another session**: never switch the branch, stash, reset, clean or rebase
+  there, and commit only your own paths, by path (`git commit -- <paths>`) — the index is shared, and a
+  plain `git commit` takes whatever the other session staged.
+- **Asked by another session**: answer at once — it waits on you before editing — with the same facts,
+  and say whether its plan collides with yours.
 
-The same pull happens again at the other end of the work — before any turn that changed files ends, and
-again if a commit is asked for — so that the state reviewed is the state that lands. That half
-belongs to [finishing-work](finishing-work.md).
+## 2. Pull before acting on the message
+
+### Which branch to bring in
+
+1. `git fetch`, and look at how far behind you are and what is coming in.
+2. On the working branch CLAUDE.md names under "Branch and runtime": `git pull --ff-only` on a clean
+   tree, and pull nothing else. Branches downstream of it carry release merges — downstream is not a
+   parent.
+3. On a branch cut from it: also merge the parent's tip into your branch — the working branch, and first
+   any side branch yours was cut from. Never rebase anything already pushed. This merge goes into your
+   own branch only; merging your branch into the parent publishes your work and needs the developer's
+   words (rule `finishing-work`). Three preconditions, each a stop rather than something to work around:
+   - a clean tree;
+   - a parent you can name — git records nothing about where a branch was cut from, so where the branch
+     name, the task or CLAUDE.md does not make it plain, ask;
+   - a branch to merge into — on a detached HEAD, say so and stop.
+
+   A conflict is handled by rule `merge-conflicts`.
+
+### Read what arrived
+
+A pull nobody read did not happen. Before writing anything, go through the incoming commits and answer:
+
+- **What moved under the task** — the files it touches, the contract, schema or migration it assumes, the
+  neighbouring feature it calls. Part of it may already be done, moved, or made wrong.
+- **What arrived in the trackers** — new bugs and tasks in the area, entries whose status moved. A new bug
+  may be the defect you are about to fix; a new task may already own your change.
+- **What arrived in the requirements** — wherever the project keeps them: its `req-*` skills, a requirements
+  document, or the skill that defines what a correct run is. A changed requirement changes what correct
+  means and outranks any older tracker entry about the same behaviour.
+
+Then say in one line what the other sessions are doing, what came in, and what it changes for the work
+— "nothing relevant" included. In a work report that line belongs in its first part, and it is where a
+tracker id belongs in a reply.
 
 ### When the tree is not clean
 
-Uncommitted work does not excuse skipping the pull — it changes how you do it.
+Fetch first and compare the incoming files with your changed files:
 
-- **Fetch first and compare** the incoming file list against your own changed files. No overlap →
-  fast-forward proceeds cleanly with the changes still in the tree.
-- **Overlap on generated files** (index files, a regenerated client, a lock file) → restore them to
-  the committed state, pull, then regenerate. Never resolve a generated file by hand.
-- **Overlap on real work** → stop and tell the developer what collides, in plain language, before
-  touching anything. Do not force, do not reset, do not discard their changes to make the pull go
-  through.
+- No overlap → fast-forward with the changes in place.
+- Overlap on generated files (indexes, a generated client, a lock file) → restore them to the committed
+  state, pull, regenerate. Never resolve a generated file by hand.
+- Overlap on real work → stop and tell the developer what collides before touching anything. No force, no
+  reset, nothing of theirs discarded.
 
-### When the fetch itself fails
+### When the fetch fails
 
-A fetch that fails is not permission to carry on without one — say so and stop, the same as any
-other blocked step.
+A failed fetch is a stop, not permission to continue. "Repository not found" on a private repository
+almost always means the wrong account is active, not a missing repository: check which account the
+credential helper uses and whether it can see the repository, and report what you found rather than
+switching accounts on a guess.
 
-One failure reads as something it is not: **"repository not found" on a private repository almost
-always means the wrong account, not a missing repository.** The host hides the existence of a
-private repository from anyone who cannot see it, so a failed authentication and a deleted
-repository give the identical message. Where several accounts are signed in, only one is active at a
-time and the git credential helper uses that one — an account switch elsewhere silently breaks every
-fetch here. Check which account is active and whether it can see the repository before concluding
-anything, and tell the developer what you found rather than switching their accounts around on a
-guess.
+## 3. Check what the project stands on
 
----
+On every piece of work that reads or changes the repository — not on every message.
 
-## 2. Check what the project stands on
+### The deployed runtime is never left behind
 
-Version currency is part of starting work, not a separate project. Two duties, one mandatory and
-one proportional.
-
-### The platform you deploy on is never left behind — this one is not optional
-
-A runtime past its vendor's support window is the one kind of staleness that costs money and
-options rather than comfort: it is billed at a penalty rate where the vendor charges for it, stops
-receiving security patches, and is eventually upgraded on the vendor's schedule rather than yours.
-What counts as "the runtime" differs by project — a managed cluster, a language line, a base image, a
-database engine, a hosting platform — and each of those has its own vendor clock.
-
-- **Check it every time**: what is deployed, and what the newest supported version is. Compare them.
-  CLAUDE.md names this project's runtime, and what "supported" means for it, under "Branch and
-  runtime" — a managed cluster, a language line, a base image and a database engine each have
-  their own vendor clock.
-- **If it is behind, that is a finding you act on, not one you note.** Bring the repository's
-  declarations current in the same change — every place the version is written, so local and
-  deployed stay on the same line.
-- **Moving a running environment is announced first.** It is an operation on a live system, it goes
-  one major version at a time, and the pieces around it do not follow on their own. Say what it will
-  take and get the developer's go-ahead, then do it. What is never acceptable is leaving it behind
-  in silence.
+- Compare what is deployed with the newest version its vendor supports; CLAUDE.md names the runtime and
+  its vendor clocks under "Branch and runtime". A runtime past its support window costs money, security
+  patches and options.
+- Behind → bring every place the version is declared current in the same change, so local and deployed
+  stay on one line.
+- Moving a live environment is announced first: say what it takes, get the go-ahead, move one major
+  version at a time. Leaving it behind in silence is never acceptable.
 
 ### Everything else: update what is quick, report what is not
 
-Dependencies, base images, build actions, language and tool versions.
-
-- **Quick — just do it, as part of the task.** A version bump that is a number change plus green
-  gates: patch and minor releases, and a major whose only effect is a rename the tooling itself
-  migrates. Do it, run the gates, mention it in one line.
-- **Not quick — tell the developer and offer.** A bump needing code changes, a configuration
-  rewrite, a data migration, or one whose result only a human eye can judge (anything that changes
-  how the product looks). Name what is out, what it would take, and what standing still costs.
-  Then let them decide.
-- **A ceiling the project set on purpose is not stale.** Where a version is deliberately held back
-  and the reason is written down, respect it and raise it as a question rather than lifting it.
-- **Check what is actually published, not what is advertised.** A registry's "latest" and "beta"
-  labels are a curated pointer, not the list of releases — a stable line can sit unlabelled behind
-  a newer major. Read the published versions before concluding a version does not exist.
-
-**Never skip silently.** Either the update is done, or the developer is told it is available. A
-version left behind with nobody informed is the one outcome this section exists to prevent.
-
----
-
-## When this does not apply
-
-A question answered from the conversation, an explanation, anything that touches no file — no pull
-and no version check needed. This rule is about work that reads or changes the repository.
+- Quick — a patch or minor bump, or a major whose only effect is a rename the tooling migrates: do it as
+  part of the task, run the gates, mention it in one line.
+- Not quick — code changes, a configuration rewrite, a data migration, or a result only a human eye can
+  judge: name what is out, what it would take and what standing still costs, and let the developer decide.
+- A version held back on purpose, with the reason written down, is not stale: raise it as a question.
+- Read the list of published versions, not a registry's "latest" label.
+- Never skip silently: either the update is done or the developer is told it is available.
 
 ## Checklist
 
-- [ ] Branch fetched and fast-forwarded **before** planning, editing or reviewing.
-- [ ] Incoming changes that touch the task's area actually read, tracker entries among them.
-- [ ] Dirty tree handled by comparing file lists first; generated files regenerated, never hand-merged.
-- [ ] A collision with the developer's own uncommitted work reported, not forced through.
-- [ ] A failed fetch reported, not worked around; "repository not found" on a private repository
-      treated as the wrong account until proven otherwise.
-- [ ] The deployed runtime checked against its vendor's supported versions; if behind, the
-      repository brought current and the live move proposed — never left behind in silence.
-- [ ] Other versions: the quick ones updated with the gates re-run, the slow ones named to the
-      developer with what they would take.
-- [ ] Deliberate version ceilings respected and raised as questions, not lifted.
-- [ ] Version claims made from the list of published releases, not from a registry's labels.
+- [ ] The repository's other sessions found with `claude agents --json` and asked before the pull, told what you are about to do.
+- [ ] Nothing edited, the pull included, before they answered; one that did not answer kept clear of and reported.
+- [ ] An overlap told to the developer before touching it; in a shared checkout no branch switch, stash, reset, clean or rebase, and commits by path only.
+- [ ] A question from another session answered at once, without running this opening for it.
+- [ ] Branch brought up to date before acting on the message; once per message.
+- [ ] On a cut branch, the parent merged in — into your own branch, on a clean tree, never a rebase of pushed work.
+- [ ] A parent you could not name, or a detached HEAD, asked about rather than guessed.
+- [ ] Incoming commits read for the task's files, the tracker entries in its area and the requirements that moved.
+- [ ] What the other sessions are doing, what came in, and what it changes, said in one line.
+- [ ] A dirty tree handled by comparing file lists; generated files regenerated; collisions with the developer's work reported.
+- [ ] A failed fetch reported; "repository not found" treated as the wrong account first.
+- [ ] The deployed runtime checked against its vendor's support; if behind, declarations updated and the live move proposed.
+- [ ] Quick bumps done with the gates re-run, slow ones named, deliberate ceilings respected, published versions checked.
