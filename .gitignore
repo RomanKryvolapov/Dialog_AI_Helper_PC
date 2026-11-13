@@ -53,3 +53,7 @@ bin/
 
 ### Python ###
 __pycache__/
+
+### App working files (phrase recordings, voice samples) ###
+cache/
+voice/

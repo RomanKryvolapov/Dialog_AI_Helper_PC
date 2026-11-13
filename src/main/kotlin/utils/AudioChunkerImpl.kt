@@ -171,6 +171,8 @@ class AudioChunkerImpl(
                         } else if (shouldStopDueToSilence || shouldStopDueToMaxDuration) {
                             if (recordingDuration >= MIN_CHUNK_DURATION_MILLISECONDS) {
                                 val chunkFile = File("cache/chunk_$chunkIndex.wav")
+                                // The folder is the app's own working space, not shipped with the sources.
+                                chunkFile.parentFile.mkdirs()
                                 chunkIndex++
                                 saveChunk(currentChunk, format, chunkFile)
                             }
