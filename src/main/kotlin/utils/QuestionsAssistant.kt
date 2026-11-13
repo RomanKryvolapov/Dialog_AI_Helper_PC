@@ -32,7 +32,8 @@ interface QuestionsDisplay {
  * questions answered so far to the chosen model, which answers a new finished question or says there is none
  * ([QuestionPrompts]). One request at a time: the phrases heard meanwhile are covered by the next one, sent as soon
  * as it returns. A question still being asked ("wait") is asked about once more after [QuestionPrompts.SILENCE_SECONDS]
- * without a new phrase, so a last phrase without punctuation is not left waiting for a sequel that never comes.
+ * without a new phrase, so a last phrase without punctuation is not left waiting for a sequel that never comes. A
+ * question that goes on after it was answered ("update") is answered again, as a whole, in the row it already has.
  */
 class QuestionsAssistant(
     private val cloud: CloudRepository,
@@ -49,6 +50,12 @@ class QuestionsAssistant(
         /** The tested request ran with room for a 450-token reply. */
         const val REPLY_TOKENS = 450
         const val REQUEST_TIMEOUT_MILLIS = 60_000L
+        /**
+         * A question goes on right after the phrase it was answered on, while the other side is still asking: only
+         * within this time is the last answer offered to the model as replaceable. A phrase heard later comes after the
+         * user had a chance to answer, so whatever the reply says, it gets a row of its own.
+         */
+        const val CONTINUATION_MILLIS = 6_000L
     }
 
     private val log = LoggerFactory.getLogger("Questions")
@@ -62,6 +69,11 @@ class QuestionsAssistant(
     private var epoch = 0L
     private var phrasesHeard = 0L
     private var silenceCheck: Job? = null
+    /** The row on the Questions screen that shows the last entry of [answered]: an "update" reply rewrites it. */
+    private var lastRow: Int? = null
+    /** When the newest phrase was heard, and when the newest phrase the last answer was given on was heard. */
+    private var lastHeardAt = 0L
+    private var lastAnsweredAt = 0L
 
     /** [turn] has its text now; [currentSummary] is the conversation summary as it stands. */
     fun phraseHeard(turn: ConversationTurn, currentSummary: String) {
@@ -73,6 +85,7 @@ class QuestionsAssistant(
             while (heard.size > KEPT_PHRASES) heard.removeFirst()
             summary = currentSummary
             phrasesHeard += 1
+            lastHeardAt = System.nanoTime() / 1_000_000
             silenceCheck?.cancel()
             silenceCheck = null
             if (inFlight) {
@@ -91,6 +104,7 @@ class QuestionsAssistant(
         synchronized(lock) {
             heard.clear()
             answered.clear()
+            lastRow = null
             summary = ""
             epoch += 1
             pending = false
@@ -155,7 +169,11 @@ class QuestionsAssistant(
             log.warn("Questions: no {} API key for {}", model.engine.type, model.title)
             return null
         }
+        var newestAt = 0L
+        var replaceable = false
         val (speech, history, summaryNow) = synchronized(lock) {
+            newestAt = lastHeardAt
+            replaceable = lastRow != null && answered.isNotEmpty() && newestAt - lastAnsweredAt <= CONTINUATION_MILLIS
             Triple(
                 heard.filter { it.source.isNotEmpty() }.takeLast(settings.phrases.coerceIn(1, KEPT_PHRASES)),
                 answered.mapIndexed { i, entry -> if (i >= answered.size - settings.fullAnswers) entry else entry.copy(answer = null) },
@@ -163,7 +181,7 @@ class QuestionsAssistant(
             )
         }
         if (speech.isEmpty()) return null
-        val prompt = QuestionPrompts.request(settings, summaryNow, history, speech, afterSilence)
+        val prompt = QuestionPrompts.request(settings, summaryNow, history, speech, afterSilence, replaceable)
         val limiter = rateLimiters.forModel(model)
         while (true) {
             val wait = limiter.tryReserve((prompt.system.length + prompt.user.length) / 4 + REPLY_TOKENS)
@@ -179,41 +197,80 @@ class QuestionsAssistant(
         var row: Int? = null
         var shown: String? = null
         var repeated = false
+        // An "update" rewrites the row of the question answered last; until it is complete, this is what that row said.
+        var replaced: QuestionPrompts.Answered? = null
         var last = ""
-        withTimeout(REQUEST_TIMEOUT_MILLIS) {
-            stream(model, key, prompt, appInfo.modelParameters[model.id]).collect { text ->
-                last = text
-                if (synchronized(lock) { epoch != mine }) return@collect
-                val reply = QuestionPrompts.parse(text)
-                if (reply.status != "answer" || !reply.questionComplete || repeated) return@collect
-                val question = reply.question.orEmpty()
-                val current = row
-                if (current == null) {
-                    if (isRepeat(question)) {
+        try {
+            withTimeout(REQUEST_TIMEOUT_MILLIS) {
+                stream(model, key, prompt, appInfo.modelParameters[model.id]).collect { text ->
+                    last = text
+                    if (synchronized(lock) { epoch != mine }) return@collect
+                    val reply = QuestionPrompts.parse(text)
+                    if ((reply.status != "answer" && reply.status != "update") || !reply.questionComplete || repeated) return@collect
+                    val question = reply.question.orEmpty()
+                    val answer = reply.answer.orEmpty().ifBlank { "..." }
+                    val current = row
+                    if (current != null) {
+                        display.update(current, question, answer)
+                        return@collect
+                    }
+                    val previous = if (reply.status == "update" && replaceable) {
+                        synchronized(lock) { lastRow?.takeIf { answered.isNotEmpty() }?.let { it to answered.last() } }
+                    } else {
+                        null
+                    }
+                    if (previous == null && isRepeat(question)) {
                         repeated = true
                         log.info("Questions: \"{}\" was answered already, not shown again", question)
                         return@collect
                     }
-                    row = display.add(question, reply.answer.orEmpty().ifBlank { "..." })
+                    if (previous != null) {
+                        replaced = previous.second
+                        row = previous.first
+                        display.update(previous.first, question, answer)
+                    } else {
+                        row = display.add(question, answer)
+                    }
                     shown = question
-                } else {
-                    display.update(current, question, reply.answer.orEmpty().ifBlank { "..." })
                 }
             }
+        } catch (e: Throwable) {
+            restore(row, replaced, mine)
+            throw e
         }
         val reply = QuestionPrompts.parse(last)
         log.debug("Questions reply: {}", reply.status)
         val question = shown
         val answer = reply.answer.orEmpty()
         val current = row
-        if (current != null && question != null && answer.isNotBlank() && synchronized(lock) { epoch == mine }) {
+        if (current != null && question != null && answer.isNotBlank() &&
+            remember(QuestionPrompts.Answered(question, answer), current, replaced != null, newestAt, mine)
+        ) {
             display.update(current, question, answer)
-            synchronized(lock) {
-                answered += QuestionPrompts.Answered(question, answer)
-                while (answered.size > MAX_HISTORY) answered.removeAt(0)
-            }
+        } else {
+            restore(current, replaced, mine)
         }
         return reply.status
+    }
+
+    /**
+     * Keeps [entry], shown in [row], as the last answer (in place of the last one when [replacing]), unless Clear dialog
+     * came since the request was sent: checked in the same lock as the writes, so a cleared history gets nothing old.
+     */
+    private fun remember(entry: QuestionPrompts.Answered, row: Int, replacing: Boolean, heardAt: Long, mine: Long): Boolean =
+        synchronized(lock) {
+            if (epoch != mine) return false
+            if (replacing && answered.isNotEmpty()) answered[answered.lastIndex] = entry else answered += entry
+            while (answered.size > MAX_HISTORY) answered.removeAt(0)
+            lastRow = row
+            lastAnsweredAt = heardAt
+            true
+        }
+
+    /** An update that did not finish leaves its row as it was before: the answer it was replacing. */
+    private fun restore(row: Int?, replaced: QuestionPrompts.Answered?, mine: Long) {
+        if (row == null || replaced == null || synchronized(lock) { epoch != mine }) return
+        display.update(row, replaced.question, replaced.answer.orEmpty())
     }
 
     private fun isRepeat(question: String): Boolean = synchronized(lock) {

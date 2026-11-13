@@ -31,13 +31,17 @@ class QuestionPromptsTest {
             ),
             speech = listOf(turn("So which index", "S1"), turn("would you add?", "S1")),
             afterSilence = false,
+            lastReplaceable = true,
         )
         assertEquals(QuestionPrompts.INSTRUCTIONS, prompt.system)
         assertTrue("<summary>\n(none yet)\n</summary>" in prompt.user)
         assertTrue("<qa>\n<question>What is a thread?</question>\n</qa>" in prompt.user, "an older entry keeps only its question")
-        assertTrue("<question>Why PostgreSQL?</question>\n<answer>Because of its indexes.</answer>" in prompt.user)
+        assertTrue(
+            "<qa replaceable=\"yes\">\n<question>Why PostgreSQL?</question>\n<answer>Because of its indexes.</answer>\n</qa>" in prompt.user,
+            "only the last entry is offered for replacing",
+        )
         assertTrue(prompt.user.endsWith("<speech>\nS1: So which index\nS1: would you add?\n</speech>"))
-        val again = QuestionPrompts.request(settings, "", emptyList(), listOf(turn("at least once")), afterSilence = true)
+        val again = QuestionPrompts.request(settings, "", emptyList(), listOf(turn("at least once")), afterSilence = true, lastReplaceable = false)
         assertTrue(again.user.endsWith("<speech>\nat least once\n</speech>\n\n<silence>3 s</silence>"), "no labels: bare lines")
         assertTrue("<answered>\n(none yet)\n</answered>" in again.user)
     }
