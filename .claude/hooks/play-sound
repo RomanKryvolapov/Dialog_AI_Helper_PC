@@ -22,15 +22,25 @@ esac
 # CLAUDE_PROJECT_DIR exported; the variable stays as the fallback.
 self=$(CDPATH= cd -- "$(dirname -- "$0")/../.." 2>/dev/null && pwd)
 
-for root in "$self" "${CLAUDE_PROJECT_DIR:-}"; do
+# A caller that set CLAUDE_PROJECT_DIR meant it: the binary reads that project, so the variable is
+# left exactly as given and only filled in when it was empty.
+given=${CLAUDE_PROJECT_DIR:-}
+
+# Projects keep the binaries in one of three places; look in all of them so one copy of this
+# launcher works wherever it is dropped, instead of a per-project variant that differs by one path.
+for root in "$given" "$self"; do
 	[ -n "$root" ] || continue
-	if [ -x "$root/scripts/$name" ]; then
-		# The binary resolves the project root from this variable; export it so a hand-run from
-		# another directory still writes and reads inside the project.
-		CLAUDE_PROJECT_DIR="$root"
-		export CLAUDE_PROJECT_DIR
-		exec "$root/scripts/$name" "$root/.claude/sounds/notify.wav"
-	fi
+	for dir in scripts scripts/claude-code .claude/bin; do
+		if [ -x "$root/$dir/$name" ]; then
+			# The binary resolves the project from this variable; fill it in so a hand-run from
+			# another directory still works inside the project it found.
+			if [ -z "$given" ]; then
+				CLAUDE_PROJECT_DIR="$root"
+				export CLAUDE_PROJECT_DIR
+			fi
+			exec "$root/$dir/$name" "$root/.claude/sounds/notify.wav"
+		fi
+	done
 done
 
 # Never take the session down: if no binary is found, exit cleanly.

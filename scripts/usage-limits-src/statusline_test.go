@@ -1,0 +1,1543 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+)
+
+// --- the injected block must not change ---------------------------------------
+
+// The status line's picture drawn plain — no colour, no known width — is the layout everything else
+// paints over, and it is pinned byte for byte.
+func TestPlainPicture(t *testing.T) {
+	rows := []statusRow{
+		{label: "5 HOURS", pct: 48, reset: "23:49", windowBar: usageBar(34), windowPct: 34, after: "3:17"},
+		{label: "7 DAYS", pct: 13, reset: "MON 17:59", windowBar: usageBar(5), windowPct: 5, windowCaption: "WORK", after: "6 days 21:27"},
+		{label: "FABLE", pct: 0, reset: "MON 18:00", windowBar: usageBar(5), windowPct: 5, windowCaption: "WORK", after: "6 days 21:27"},
+		{label: "OPUS", pct: 61},
+	}
+	// Every gauge is a hundred cells, one a percent, and the columns before them are one table: the
+	// labels as wide as the widest, CONTEXT's counter and the limits' percentages right-aligned in one
+	// column, CONTEXT's percentage and the captions in the next. So every gauge starts in one column,
+	// CONTEXT's too.
+	bar := func(filled int) string { return strings.Repeat("▓", filled) + strings.Repeat("░", 100-filled) }
+	sp := func(n int) string { return strings.Repeat(" ", n) }
+	tops := "5 HOURS     48 % LIMIT " + bar(48) + " RESET AT 23:49" + sp(6) +
+		"7 DAYS      13 % LIMIT " + bar(13) + " RESET AT MON 17:59" + sp(10) +
+		"FABLE        0 % LIMIT " + bar(0) + " RESET AT MON 18:00" + sp(10) +
+		"OPUS        61 % LIMIT " + bar(61)
+	week := "      5 %  WORK " + bar(5) + " RESET AFTER 6 days 21:27"
+	bottoms := "-           34 %  TIME " + bar(34) + " RESET AFTER 3:17" + sp(11) + week + sp(11) + week
+	want := "CONTEXT  168k/1m  17 % " + bar(17) + "\n" + tops + "\n" + bottoms
+	if got := renderLimits(rows, contextReading{tokens: 168000, window: 1e6, ok: true}, renderOpts{}); got != want {
+		t.Errorf("injected picture changed:\n got %q\nwant %q", got, want)
+	}
+	// Without a CONTEXT line the figures' column is a percentage's width.
+	week = "    5 %  WORK " + bar(5) + " RESET AFTER 6 days 21:27"
+	want = "5 HOURS   48 % LIMIT " + bar(48) + " RESET AT 23:49" + sp(6) + "7 DAYS    13 % LIMIT " + bar(13) + " RESET AT MON 17:59\n" +
+		"-         34 %  TIME " + bar(34) + " RESET AFTER 3:17" + sp(11) + week
+	if got := renderLimits(rows[:2], contextReading{}, renderOpts{}); got != want {
+		t.Errorf("injected picture without context changed:\n got %q\nwant %q", got, want)
+	}
+	want = "BURN    0.47 %/min (sampled) - ~110 MINUTES to cap, pace x1.4\nCONFIG  x\nZONE    GREEN"
+	if got := renderTextRows([]statusRow{{label: "BURN", text: "0.47 %/min (sampled) - ~110 MINUTES to cap, pace x1.4"}, {label: "CONFIG", text: "x"}, {label: "ZONE", text: "GREEN"}}); got != want {
+		t.Errorf("text rows changed:\n got %q\nwant %q", got, want)
+	}
+}
+
+// The model is handed the figures as data: semantic XML, one element per line, the format stated
+// once on the root, and no gauge — which would tell it nothing the number does not and cost its
+// context tokens on every prompt.
+func TestModelBlock(t *testing.T) {
+	now := time.Date(2026, 9, 28, 22, 20, 0, 0, time.Local)
+	st := &state{
+		hasSession: true, burnWindow: "session",
+		r5Local: now.Add(91 * time.Minute), minToReset5: 91, minToExhaust: math.Inf(1),
+		burn: 0.16, burnSource: "sampled", paceRatio: 0.8,
+		zone: "YELLOW", limiter: "session",
+		scoped:      []scopedBucket{{Model: "Fable", Percent: 0}, {Model: "Opus", Percent: 12}},
+		activeModel: "claude-opus-5-5", bucketPct: -1, minToBucketExhaust: math.Inf(1),
+	}
+	rows := []statusRow{
+		{label: "5 HOURS", limit: "5-hour", pct: 58, reset: "23:51", windowBar: usageBar(70), windowPct: 70, after: "1:31"},
+		{label: "7 DAYS", limit: "7-day", pct: 16, reset: "MON 18:00", windowBar: usageBar(5), windowPct: 5, windowCaption: captionWorking, after: "6 days 19:41"},
+		{label: "FABLE", limit: "Fable weekly bucket", pct: 0, reset: "MON 18:00", windowBar: usageBar(5), windowPct: 5, windowCaption: captionWorking, after: "6 days 19:41"},
+		{label: "OPUS", limit: "Opus weekly bucket", pct: 12}, // the API gave no reset for it
+	}
+	tokens := &tokenStats{session: tokenSums{Input: 2e6, Read: 164e6}, sessionWhole: true, account: true, fiveKnown: true,
+		fiveHour: tokenSums{Input: 19e6, Read: 1.1e9}, weekly: tokenSums{Input: 20e6, Read: 1.1e9}, accountWhole: true}
+	t.Setenv("CLAUDE_PROJECT_DIR", "")
+	withoutConfigProblems(t, func() {
+		got := modelBlock(st, rows, contextReading{tokens: 867000, window: 1e6, ok: true}, tokens, false, now)
+		want := strings.Join([]string{
+			`<usage_limits scope="account-global: every session on this subscription" format="tokens in k/m/b; clock times local; waits h:mm">`,
+			`<context used="867k of 1m (87%)"/>`,
+			`<limit name="5-hour" used="58%" gone="70% of the window" resets="23:51, in 1:31"/>`,
+			`<limit name="7-day" used="16%" gone="5% of the working week" resets="MON 18:00, in 6 days 19:41"/>`,
+			`<limit name="Fable weekly bucket" used="0%" gone="5% of the working week" resets="MON 18:00, in 6 days 19:41"/>`,
+			`<limit name="Opus weekly bucket" used="12%"/>`,
+			`<tokens session="fresh 2m, cached 164m" account_5h="fresh 19m, cached 1.1b" account_7d="fresh 20m, cached 1.1b"/>`,
+			`<burn window="5-hour" rate="0.16%/min, sampled" forecast="lasts to the reset at 23:51" pace="0.8"/>`,
+			`<zone level="YELLOW" limiter="session">be lean: avoid re-reads and work nobody asked for.</zone>`,
+			`</usage_limits>`,
+		}, "\n")
+		if got != want {
+			t.Errorf("block:\n%s\nwant:\n%s", got, want)
+		}
+		if strings.ContainsAny(got, "█░▓") {
+			t.Error("a gauge reached the model")
+		}
+
+		// Session start adds the model; a stale figure, a config problem and the burn running to
+		// the cap before the reset each say so — and text is escaped as XML.
+		st.stale, st.fetchedAt = true, now.Add(-54*time.Minute)
+		st.minToExhaust = 40
+		configProblems = []string{`config: "fetch_ttl_sec" & <more>`}
+		got = modelBlock(st, rows, contextReading{}, nil, true, now)
+		for _, want := range []string{
+			`format="tokens in k/m/b; clock times local; waits h:mm" at="session start">`,
+			`<stale since="21:26">the usage API has not answered since then; every figure here is as of then</stale>`,
+			`<burn window="5-hour" rate="0.16%/min, sampled" forecast="reaches the cap in 0:40" pace="0.8"/>`,
+			`<config_problem>config: "fetch_ttl_sec" &amp; &lt;more&gt;</config_problem>`,
+			`<model id="claude-opus-5-5" own_bucket="none; the 7-day limit applies"/>`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("session-start block lacks %q:\n%s", want, got)
+			}
+		}
+		if strings.Contains(got, "<context") || strings.Contains(got, "<tokens") {
+			t.Errorf("a context or tokens element without a reading:\n%s", got)
+		}
+		if got := unavailableBlock(); got != "<usage_limits unavailable=\"the usage API gave no figures\">\n"+
+			"<config_problem>config: \"fetch_ttl_sec\" &amp; &lt;more&gt;</config_problem>\n</usage_limits>" {
+			t.Errorf("unavailable block = %q", got)
+		}
+	})
+}
+
+// --- colour and width ------------------------------------------------------------
+
+func TestRuneWidthSkipsColourCodes(t *testing.T) {
+	on := painter{on: true}
+	for _, s := range []string{"5 HOURS", "▓▓░░"} {
+		if got, want := runeWidth(on.paint(s, "38;5;208")), runeWidth(s); got != want {
+			t.Errorf("width of painted %q = %d, want %d", s, got, want)
+		}
+	}
+}
+
+func TestPainter(t *testing.T) {
+	if got := (painter{}).paint("x", "32"); got != "x" {
+		t.Errorf("painter off painted: %q", got)
+	}
+	if got := (painter{on: true}).paint("x", "32"); got != "\x1b[32mx\x1b[0m" {
+		t.Errorf("painter on: %q", got)
+	}
+	t.Setenv("NO_COLOR", "1")
+	if statusPainter().on {
+		t.Error("NO_COLOR did not turn the paint off")
+	}
+	t.Setenv("NO_COLOR", "")
+	if !statusPainter().on {
+		t.Error("an empty NO_COLOR turned the paint off; the convention is that only a value does")
+	}
+}
+
+// The scale runs green at 0, yellow at a half, red at 1 — in 24-bit colour, and in eleven steps of
+// the 256-colour palette for a terminal without it.
+func TestGaugeColour(t *testing.T) {
+	rgb, palette := painter{on: true, rgb: true}, painter{on: true}
+	for _, c := range []struct {
+		p    painter
+		at   float64
+		want string
+	}{
+		{rgb, 0, "38;2;36;242;36"},
+		{rgb, 0.5, "38;2;242;242;36"},
+		{rgb, 1, "38;2;242;36;36"},
+		{rgb, -0.4, "38;2;36;242;36"},
+		{rgb, 1.8, "38;2;242;36;36"},
+		{palette, 0, "38;5;46"},
+		{palette, 0.14, "38;5;82"},
+		{palette, 0.5, "38;5;226"},
+		{palette, 1, "38;5;196"},
+	} {
+		if got := c.p.gaugeColour(c.at); got != c.want {
+			t.Errorf("gaugeColour(%v) rgb=%v = %q, want %q", c.at, c.p.rgb, got, c.want)
+		}
+	}
+	// In 24-bit colour it turns smoothly: no two of these share a colour.
+	seen := map[string]bool{}
+	for at := 0.0; at <= 1.0001; at += 0.05 {
+		seen[rgb.gaugeColour(at)] = true
+	}
+	if len(seen) != 21 {
+		t.Errorf("21 points share %d colours", len(seen))
+	}
+}
+
+func sampleRows() []statusRow {
+	return []statusRow{
+		{label: "5 HOURS", pct: 55, reset: "23:49", windowBar: usageBar(34), windowPct: 34, after: "3:17"},
+		{label: "7 DAYS", pct: 13, reset: "MON 17:59", windowBar: usageBar(5), windowPct: 5, windowCaption: "WORK", after: "6 days 21:27"},
+		{label: "FABLE", pct: 96, reset: "MON 18:00", windowBar: usageBar(5), windowPct: 5, windowCaption: "WORK", after: "6 days 21:27"},
+	}
+}
+
+// A gauge's filled cells are painted in the colour of its reading, and its empty ones show the colours of
+// its scale still ahead. A LIMIT gauge's filled part runs blue to red by how far its spend is ahead of
+// the time gauge under it, and its empty part is that whole scale, blue on its first cell to red on its
+// last, however many are left. The CONTEXT gauge's filled part — its figures with it — runs green to red
+// by how full it is, and each of its empty cells is in the colour the gauge will have once it fills to
+// there. The TIME/WORK gauges are white throughout, the limits' percentages a soft yellow, and every word
+// keeps the terminal's colour.
+func TestTheGaugesAreShaded(t *testing.T) {
+	p := painter{on: true, rgb: true}
+	ctx := contextReading{tokens: 150000, window: 200000, ok: true}
+	out := renderLimits(sampleRows(), ctx, renderOpts{p: p})
+	figure := func(s string) string { return "\x1b[38;2;255;180;0m" + s + "\x1b[0m" }
+	white := func(s string) string { return "\x1b[38;2;242;242;242m" + s + "\x1b[0m" }
+	gauge := func(at float64, s string) string { return "\x1b[" + p.gaugeColour(at) + "m" + s + "\x1b[0m" }
+	bar := func(filled int) string { return strings.Repeat("▓", filled) + strings.Repeat("░", 100-filled) }
+	// The figures' column is as wide as CONTEXT's counter, 150k/200k: four cells more than a percentage.
+	for _, want := range []string{
+		"CONTEXT  " + gauge(0.75, "150k/200k") + " " + gauge(0.75, " 75 %") + " \x1b[",
+		"5 HOURS      " + figure(" 55 %") + " LIMIT \x1b[",
+		"░\x1b[0m RESET AT " + figure("23:49"),
+		"7 DAYS       " + figure(" 13 %") + " LIMIT \x1b[",
+		"░\x1b[0m RESET AT " + figure("MON 17:59"),
+		"FABLE        " + figure(" 96 %") + " LIMIT \x1b[",
+		figure(" 34 %") + "  TIME " + white(bar(34)) + " RESET AFTER " + figure("3:17"),
+		// The figures of a longer wait painted, the word between them not.
+		" RESET AFTER " + figure("6") + " days " + figure("21:27"),
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("painted picture lacks %q:\n%q", want, out)
+		}
+	}
+	lines := strings.Split(out, "\n")
+	cells := func(line, gauge int) []string { return cellColours(lines[line])[gauge*100 : (gauge+1)*100] }
+	// CONTEXT at 75 %: the filled cells orange, the empty ones from the colour of 76 % to full red.
+	var want []string
+	for i := range 100 {
+		want = append(want, p.gaugeColour(max(0.75, float64(i+1)/100)))
+	}
+	sameCells(t, "CONTEXT at 75 %", cells(0, 0), want)
+	if c := cells(0, 0); c[75] == c[74] || c[99] != rgbCode([3]int{242, 36, 36}) {
+		t.Errorf("CONTEXT's empty part does not run from past its reading to red: %q … %q", c[75], c[99])
+	}
+	// The limits, side by side on the next line: 55 % spent with 34 % of the time gone is 21 points
+	// ahead, past the 10 that make it red; 13 % against 5 % is 8 points, 0.8 of the way from blue to red;
+	// 96 % against 5 % far past it.
+	limit := func(pace float64, filled int) []string {
+		var want []string
+		for i := range 100 {
+			switch {
+			case i < filled:
+				want = append(want, p.limitColour(pace))
+			case filled == 99:
+				want = append(want, p.limitColour(0))
+			default:
+				want = append(want, p.limitColour(float64(i-filled)/float64(99-filled)))
+			}
+		}
+		return want
+	}
+	sameCells(t, "5 HOURS", cells(1, 0), limit(1, 55))
+	sameCells(t, "7 DAYS", cells(1, 1), limit(0.8, 13))
+	sameCells(t, "FABLE", cells(1, 2), limit(1, 96))
+	if c := cells(1, 1); c[13] != rgbCode(limitStartRGB) || c[99] != rgbCode([3]int{242, 36, 36}) {
+		t.Errorf("a LIMIT's empty part does not run from blue to red: %q … %q", c[13], c[99])
+	}
+	if plain := renderLimits(sampleRows(), ctx, renderOpts{}); stripColour(out) != plain {
+		t.Errorf("painting changed the text:\n%q\n%q", stripColour(out), plain)
+	}
+	// Neighbouring empty cells of one colour are one run: on the 256-colour palette, eleven steps at most.
+	palette := renderLimits(sampleRows(), ctx, renderOpts{p: painter{on: true}})
+	if strings.Contains(palette, "38;2;") {
+		t.Error("a terminal without 24-bit colour got 24-bit codes")
+	}
+	for _, line := range strings.Split(palette, "\n")[:2] {
+		runs := regexp.MustCompile("\x1b\\[([0-9;]+)m(░+)\x1b\\[0m").FindAllStringSubmatchIndex(line, -1)
+		if len(runs) < 3 {
+			t.Errorf("an empty part in fewer than two colours:\n%q", line)
+		}
+		for k := 1; k < len(runs); k++ {
+			if runs[k][0] == runs[k-1][1] && line[runs[k][2]:runs[k][3]] == line[runs[k-1][2]:runs[k-1][3]] {
+				t.Errorf("two neighbouring runs in one colour:\n%q", line)
+			}
+		}
+	}
+	// Spend behind the clock is blue however full the gauge; a limit with no time gauge is measured as
+	// if no time had passed.
+	behind := []statusRow{{label: "5 HOURS", pct: 80, reset: "23:49", windowBar: usageBar(90), windowPct: 90, after: "0:30"},
+		{label: "OPUS", pct: 6}}
+	lines = strings.Split(renderLimits(behind, contextReading{}, renderOpts{p: p}), "\n")
+	sameCells(t, "spend behind the clock", cells(0, 0), limit(0, 80))
+	if !strings.Contains(lines[0], "OPUS     "+figure("  6 %")+" LIMIT ") {
+		t.Errorf("OPUS's percentage is not painted:\n%q", lines[0])
+	}
+	sameCells(t, "a limit without a time gauge", cells(0, 1), limit(0.6, 6))
+}
+
+// sameCells reports the first cell of a gauge painted in a colour other than the one wanted.
+func sameCells(t *testing.T, gauge string, got, want []string) {
+	t.Helper()
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("%s: cell %d is %q, want %q", gauge, i+1, got[i], want[i])
+			return
+		}
+	}
+}
+
+// A LIMIT gauge is blue while its spend is not ahead of the time gauge under it, behind included, fully
+// red once it is ten points ahead, and in between turns evenly from one to the other the long way round,
+// through violet and magenta — never the green or yellow of a CONTEXT gauge — its filled cells all in
+// that one colour.
+func TestLimitColourRunsFromBlueToRed(t *testing.T) {
+	if blue, red := limitRGB(0), limitRGB(1); blue != limitStartRGB || blue != [3]int{36, 88, 242} || red != [3]int{242, 36, 36} {
+		t.Fatalf("blue %v, red %v", blue, red)
+	}
+	for _, c := range []struct {
+		name        string
+		spent, gone float64
+		at          float64
+	}{
+		{"behind the clock", 7, 9, 0},
+		{"level with it", 9, 9, 0},
+		{"five points ahead", 12, 7, 0.5},
+		{"ten points ahead", 17, 7, 1},
+		{"far ahead", 60, 7, 1},
+		// As the row prints them: "7 %" over "7 %" is level, "17 %" over "7 %" ten points ahead.
+		{"level as printed", 7.4, 7.2, 0},
+		{"ten points ahead as printed", 16.6, 7.4, 1},
+	} {
+		r := statusRow{pct: c.spent, windowPct: c.gone}
+		if got, want := limitRGB(r.paceAt()), limitRGB(c.at); got != want {
+			t.Errorf("%s: %v, want %v", c.name, got, want)
+		}
+	}
+	prevHue, prev := 0.0, limitRGB(0)
+	for i := 0; i <= 100; i++ {
+		rgb := limitRGB(float64(i) / 100)
+		h, _, _ := rgbToHSV(rgb)
+		if i == 100 && h < 1 {
+			h = 360
+		}
+		jump := max(abs(rgb[0]-prev[0]), abs(rgb[1]-prev[1]), abs(rgb[2]-prev[2]))
+		if h < prevHue || h < 220 || jump > 30 {
+			t.Fatalf("at %d%% the scale turns back or jumps: %v (hue %.0f) after %v (hue %.0f)", i, rgb, h, prev, prevHue)
+		}
+		prevHue, prev = h, rgb
+	}
+	// The scale moves evenly: three points of ten ahead are violet already, not blue, and five are
+	// halfway round from blue to red.
+	if h, _, _ := rgbToHSV(limitRGB(0.3)); h < 260 {
+		t.Errorf("three points ahead are still blue: hue %.0f, %v", h, limitRGB(0.3))
+	}
+	if h, _, _ := rgbToHSV(limitRGB(0.5)); math.Abs(h-(225+360)/2) > 2 {
+		t.Errorf("five points ahead are not halfway round: hue %.0f, %v", h, limitRGB(0.5))
+	}
+	// Each of the 256-colour palette's eleven steps is the palette's colour nearest the scale.
+	for i, code := range limitPalette256 {
+		if want := nearest256(limitRGB(float64(i) / 10)); code != want {
+			t.Errorf("step %d is %d, the nearest is %d", i, code, want)
+		}
+	}
+}
+
+func abs(n int) int { return max(n, -n) }
+
+// nearest256 is the colour of the 256-colour palette's cube and grey ramp nearest an RGB colour.
+func nearest256(rgb [3]int) int {
+	levels := [6]int{0, 95, 135, 175, 215, 255}
+	best, bestCode := -1, 0
+	for code := 16; code < 256; code++ {
+		var c [3]int
+		if code < 232 {
+			n := code - 16
+			c = [3]int{levels[n/36], levels[n/6%6], levels[n%6]}
+		} else {
+			g := 8 + (code-232)*10
+			c = [3]int{g, g, g}
+		}
+		d := (rgb[0]-c[0])*(rgb[0]-c[0]) + (rgb[1]-c[1])*(rgb[1]-c[1]) + (rgb[2]-c[2])*(rgb[2]-c[2])
+		if best < 0 || d < best {
+			best, bestCode = d, code
+		}
+	}
+	return bestCode
+}
+
+// The lead that turns a LIMIT gauge red is the config's: the 7-day gauge 8 points ahead is 0.8 of the
+// way at the shipped 10, and fully red once the setting is 8.
+func TestTheRedLeadIsConfigurable(t *testing.T) {
+	prev := limitAheadRed
+	defer func() { limitAheadRed = prev }()
+	limitAheadRed = 8
+	p := painter{on: true, rgb: true}
+	out := renderLimits(sampleRows(), contextReading{}, renderOpts{p: p})
+	want := "7 DAYS   \x1b[38;2;255;180;0m 13 %\x1b[0m LIMIT \x1b[" + p.limitColour(1) + "m" + strings.Repeat("▓", 13) + "\x1b[0m" +
+		"\x1b[" + p.limitColour(0) + "m░\x1b[0m"
+	if !strings.Contains(out, want) {
+		t.Errorf("a gauge as far ahead as the setting is not red:\n%q", out)
+	}
+}
+
+// The token counts stand on the CONTEXT line, two spaces after the cache's time left, where the
+// terminal has room for them beside a gauge as long as the limits'; where it has not, they take a line
+// of their own under the limits rather than shorten a gauge or push it out of line.
+func TestTheTokensStandBesideTheCacheWhereTheyFit(t *testing.T) {
+	ctx := contextReading{tokens: 150000, window: 200000, ok: true}
+	tokens := "SESSION: FRESH 2m CACHED 187m, ACCOUNT 5H: FRESH 20m CACHED 1.2b, 7D: FRESH 21m CACHED 1.2b"
+	rows := sampleRows()[:2]
+	for _, width := range []int{0, 250} {
+		lines := strings.Split(renderLimits(rows, ctx, renderOpts{width: width, contextTail: "CACHE 0:59", tokens: tokens}), "\n")
+		if !strings.HasSuffix(lines[0], "░ CACHE 0:59  "+tokens) || lines[len(lines)-1] == tokens {
+			t.Errorf("width %d: the tokens are not beside the cache:\n%s", width, strings.Join(lines, "\n"))
+		}
+	}
+	lines := strings.Split(renderLimits(rows, ctx, renderOpts{width: 150, contextTail: "CACHE 0:59", tokens: tokens}), "\n")
+	if len(lines) != 6 || !strings.HasSuffix(lines[0], "░ CACHE 0:59") || lines[5] != tokens {
+		t.Fatalf("width 150: the tokens did not take a line of their own under the limits:\n%s", strings.Join(lines, "\n"))
+	}
+	for _, l := range lines[:5] {
+		if cells := strings.Count(l, "▓") + strings.Count(l, "░"); cells != 100 || strings.Index(l, "▓")+strings.Index(l, "░") < 0 {
+			t.Errorf("width 150: a gauge lost cells for the tokens: %d in %q", cells, l)
+		}
+	}
+	// Without a context reading there is no gauge to keep: the cache and the tokens head the lines.
+	if top := strings.Split(renderLimits(rows, contextReading{}, renderOpts{width: 150, contextTail: "CACHE 0:59", tokens: tokens}), "\n")[0]; top != "CACHE 0:59  "+tokens {
+		t.Errorf("top line without a context reading = %q", top)
+	}
+}
+
+func TestRenderLimitsFitsTheWidth(t *testing.T) {
+	tail := "CACHE 0:59"
+	ctx := contextReading{tokens: 150000, window: 200000, ok: true}
+	for _, width := range []int{400, 200, 130, 70, 60} {
+		out := renderLimits(sampleRows(), ctx, renderOpts{p: painter{on: true}, width: width, contextTail: tail})
+		lines := strings.Split(out, "\n")
+		for _, l := range lines[1:] {
+			if w := runeWidth(l); w > width {
+				t.Errorf("width %d: a line is %d wide: %q", width, w, l)
+			}
+		}
+		if !strings.HasSuffix(stripColour(lines[0]), "░ "+tail) {
+			t.Errorf("width %d: the cache is not on the CONTEXT line: %q", width, lines[0])
+		}
+		// The CONTEXT line shrinks its gauge to fit until the gauge is as short as it gets.
+		if w := runeWidth(lines[0]); w > width && strings.Count(lines[0], "▓")+strings.Count(lines[0], "░") > minContextCells {
+			t.Errorf("width %d: the CONTEXT line is %d wide with room to shrink", width, w)
+		}
+		// The limit lines come in pairs after CONTEXT, and every pair's bottom line opens with the
+		// marker that stops Claude Code trimming it out of line.
+		if (len(lines)-1)%2 != 0 {
+			t.Fatalf("width %d: %d limit lines, not pairs", width, len(lines)-1)
+		}
+		for i := 2; i < len(lines); i += 2 {
+			if !strings.HasPrefix(stripColour(lines[i]), "-") {
+				t.Errorf("width %d: bottom line %d does not open with the marker: %q", width, i, lines[i])
+			}
+		}
+	}
+	// Wide enough for all three: one pair; for two: two pairs. Narrow: one block per pair, the gauges
+	// one cell a percent while they fit, then just short enough to.
+	if n := strings.Count(renderLimits(sampleRows(), contextReading{}, renderOpts{width: 440}), "\n"); n != 1 {
+		t.Errorf("at 440 columns the blocks took %d lines, want 2", n+1)
+	}
+	if n := strings.Count(renderLimits(sampleRows(), contextReading{}, renderOpts{width: 400}), "\n"); n != 3 {
+		t.Errorf("at 400 columns the blocks took %d lines, want 4", n+1)
+	}
+	if out := renderLimits(sampleRows(), contextReading{}, renderOpts{width: 146}); !strings.Contains(out, strings.Repeat("░", 87)) ||
+		strings.Count(out, "\n") != 5 {
+		t.Errorf("at 146 columns, room for a block at one cell a percent, the gauges were shortened:\n%s", out)
+	}
+	if out := renderLimits(sampleRows(), contextReading{}, renderOpts{width: 70}); strings.Count(out, "\n") != 5 ||
+		!strings.Contains(out, "LIMIT ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░ RESET AT 23:49") {
+		t.Errorf("at 70 columns the blocks did not take a pair each, their gauges 24 cells:\n%s", out)
+	}
+	narrow := renderLimits(sampleRows(), contextReading{}, renderOpts{width: 50})
+	if strings.Contains(narrow, strings.Repeat("░", 11)) || !strings.Contains(narrow, "LIMIT ▓▓▓▓▓▓░░░░") {
+		t.Errorf("a narrow terminal did not get ten-cell gauges:\n%s", narrow)
+	}
+	// Unknown width: everything on one row, as before.
+	if n := strings.Count(renderLimits(sampleRows(), contextReading{}, renderOpts{}), "\n"); n != 1 {
+		t.Errorf("without a width the blocks took %d lines, want 2", n+1)
+	}
+	// No context reading yet: the tokens stand on the top line alone.
+	if top := strings.Split(renderLimits(sampleRows(), contextReading{}, renderOpts{contextTail: tail}), "\n")[0]; top != tail {
+		t.Errorf("top line without a context reading = %q", top)
+	}
+}
+
+func stripColour(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\x1b' {
+			for i < len(s) && s[i] != 'm' {
+				i++
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+// cellColours reads a painted line back as the colour code each gauge cell in it is painted in, in
+// order, and an empty string for a cell left unpainted.
+func cellColours(s string) []string {
+	var cells []string
+	code := ""
+	for i, part := range strings.Split(s, "\x1b[") {
+		// Every part but the first starts with the code it was split at.
+		if end := strings.IndexByte(part, 'm'); i > 0 && end >= 0 {
+			if code = part[:end]; code == "0" {
+				code = ""
+			}
+			part = part[end+1:]
+		}
+		for _, r := range part {
+			if r == barFilled || r == barEmpty {
+				cells = append(cells, code)
+			}
+		}
+	}
+	return cells
+}
+
+// --- what Claude Code hands the status line ----------------------------------------
+
+func TestStatusContextUsesClaudeCodesWindow(t *testing.T) {
+	in := decodeStatusInput(`{"context_window":{"total_input_tokens":150000,"context_window_size":200000,"current_usage":{"input_tokens":1}}}`)
+	if r := in.statusContext(); !r.ok || r.tokens != 150000 || r.window != 200000 {
+		t.Errorf("context = %+v, want 150000 of 200000", r)
+	}
+	// No reading yet: the window still comes from Claude Code, the tokens from the transcript.
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "s.jsonl")
+	writeLines(t, tp, `{"type":"assistant","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":20,"cache_read_input_tokens":30}}}`)
+	in = decodeStatusInput(fmt.Sprintf(`{"transcript_path":%q,"context_window":{"total_input_tokens":0,"context_window_size":200000,"current_usage":null}}`, tp))
+	if r := in.statusContext(); !r.ok || r.tokens != 60 || r.window != 200000 {
+		t.Errorf("fallback context = %+v, want 60 of 200000", r)
+	}
+	// An older Claude Code that sends no window: the configured size, as before.
+	in = decodeStatusInput(fmt.Sprintf(`{"transcript_path":%q}`, tp))
+	if r := in.statusContext(); r.window != contextWindowTokens {
+		t.Errorf("window without Claude Code's figure = %v, want the configured %v", r.window, contextWindowTokens)
+	}
+}
+
+func TestLiveLimits(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	in := decodeStatusInput(fmt.Sprintf(`{"rate_limits":{"five_hour":{"used_percentage":23.5,"resets_at":%d},"seven_day":{"used_percentage":41.2,"resets_at":%d}}}`,
+		now.Unix()+3600, now.Unix()-1))
+	live := in.liveLimits(now)
+	if live == nil || live.FiveHour == nil || live.FiveHour.Utilization != 23.5 {
+		t.Fatalf("five_hour not taken: %+v", live)
+	}
+	if r, _ := parseTime(live.FiveHour.ResetsAt); !r.Equal(now.Add(time.Hour)) {
+		t.Errorf("reset = %v", live.FiveHour.ResetsAt)
+	}
+	if live.SevenDay != nil {
+		t.Error("a window whose reset has passed was taken")
+	}
+	if decodeStatusInput(`{}`).liveLimits(now) != nil || decodeStatusInput(`not json`).liveLimits(now) != nil {
+		t.Error("no limits should give nil")
+	}
+}
+
+// --- stale figures -------------------------------------------------------------------
+
+// withCache points the hook at a temporary config dir holding no login, so nothing here can reach
+// the network, and writes the usage cache with the given age.
+func withCache(t *testing.T, age time.Duration, raw string) {
+	t.Helper()
+	dir := t.TempDir()
+	saved := []string{claudeDir, cachePath, credPath, tokenCachePath}
+	savedTTL := fetchTTLSec
+	t.Cleanup(func() {
+		claudeDir, cachePath, credPath, tokenCachePath = saved[0], saved[1], saved[2], saved[3]
+		fetchTTLSec = savedTTL
+	})
+	claudeDir = dir
+	cachePath = filepath.Join(dir, "usage-limits-cache.json")
+	credPath = filepath.Join(dir, "no-login.json")
+	tokenCachePath = filepath.Join(dir, "tokens.json")
+	fetchTTLSec = 60
+	if raw == "" {
+		return
+	}
+	b, _ := json.Marshal(cacheFile{FetchedAt: time.Now().Add(-age).Format(time.RFC3339Nano), Raw: json.RawMessage(raw)})
+	if err := os.WriteFile(cachePath, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func usageDoc(s5, s7 float64, now time.Time) string {
+	return fmt.Sprintf(`{"five_hour":{"utilization":%v,"resets_at":%q},"seven_day":{"utilization":%v,"resets_at":%q},`+
+		`"limits":[{"kind":"weekly_scoped","percent":12,"resets_at":%q,"scope":{"model":{"display_name":"Fable"}}}]}`,
+		s5, now.Add(2*time.Hour).UTC().Format(time.RFC3339), s7, now.Add(100*time.Hour).UTC().Format(time.RFC3339),
+		now.Add(100*time.Hour).UTC().Format(time.RFC3339))
+}
+
+func runtimeIsDarwin() bool { return runtime.GOOS == "darwin" }
+
+func TestStaleFiguresAreMarkedAndClaudeCodesStandIn(t *testing.T) {
+	if runtimeIsDarwin() {
+		t.Skip("reads the login Keychain on macOS")
+	}
+	now := time.Now()
+	withCache(t, time.Hour, usageDoc(40, 10, now))
+	before := getCacheObject()
+
+	live := &usageRaw{FiveHour: &usageWindow{Utilization: 71, ResetsAt: now.Add(time.Hour).UTC().Format(time.RFC3339)}}
+	st := getState(argSet{}, "claude-fable-5-1", live)
+	if st == nil || !st.stale {
+		t.Fatalf("state = %+v", st)
+	}
+	if st.s5 != 71 || st.s7 != 10 || st.zone5 != "YELLOW" {
+		t.Errorf("s5 %v s7 %v zone5 %v: want Claude Code's 71 and the cached 10", st.s5, st.s7, st.zone5)
+	}
+	if st.activeBucket == nil || st.activeBucket.Percent != 12 {
+		t.Error("the per-model bucket from the cache was lost")
+	}
+	after := getCacheObject()
+	if after == nil || after.FetchedAt != before.FetchedAt || !bytes.Equal(after.Raw, before.Raw) || len(after.Samples) != 0 {
+		t.Errorf("a figure from Claude Code reached the cache the injected block reads: %+v", after)
+	}
+	if after.TriedAt == "" {
+		t.Error("the failed attempt was not written down")
+	}
+
+	// Without Claude Code's figures — the injected block, the JSON — the cached ones are used, and
+	// the model is told they are stale and since when.
+	st = getState(argSet{}, "", nil)
+	if st == nil || !st.stale || st.s5 != 40 {
+		t.Fatalf("state without live figures = %+v", st)
+	}
+	since := fmtHHmm(st.fetchedAt)
+	if st.fetchedAt.Local().Day() != now.Local().Day() {
+		since = strings.ToUpper(fmtDddHHmm(st.fetchedAt))
+	}
+	want := `<stale since="` + since + `">the usage API has not answered since then; every figure here is as of then</stale>`
+	if got := staleElement(st, now); got != want {
+		t.Errorf("stale element = %q, want %q", got, want)
+	}
+}
+
+// The API is asked at most once per fetch period, answered or not: a rate-limited endpoint is not
+// asked again by every refresh of every open status line.
+func TestAFailedAttemptIsNotRepeatedWithinTheFetchPeriod(t *testing.T) {
+	if runtimeIsDarwin() {
+		t.Skip("reads the login Keychain on macOS")
+	}
+	withCache(t, time.Hour, usageDoc(40, 10, time.Now()))
+	getState(argSet{}, "", nil)
+	first := getCacheObject().TriedAt
+	if first == "" {
+		t.Fatal("the attempt was not written down")
+	}
+	getState(argSet{}, "", nil)
+	if again := getCacheObject().TriedAt; again != first {
+		t.Errorf("asked again within the fetch period: %s then %s", first, again)
+	}
+	// Once the period has passed, it is asked again.
+	c := getCacheObject()
+	c.TriedAt = time.Now().Add(-2 * time.Minute).Format(time.RFC3339Nano)
+	saveCache(*c)
+	getState(argSet{}, "", nil)
+	if again := getCacheObject().TriedAt; again == c.TriedAt {
+		t.Error("not asked again after the fetch period")
+	}
+}
+
+func TestFreshFiguresAreNotOverridden(t *testing.T) {
+	if runtimeIsDarwin() {
+		t.Skip("reads the login Keychain on macOS")
+	}
+	now := time.Now()
+	withCache(t, 10*time.Second, usageDoc(40, 10, now))
+	live := &usageRaw{FiveHour: &usageWindow{Utilization: 71, ResetsAt: now.Add(time.Hour).UTC().Format(time.RFC3339)}}
+	st := getState(argSet{}, "", live)
+	if st == nil || st.stale || st.s5 != 40 {
+		t.Fatalf("fresh state = %+v", st)
+	}
+	// One failed refresh is not an outage: a minute and a half old is not stale at a one-minute TTL.
+	withCache(t, 90*time.Second, usageDoc(40, 10, now))
+	if st := getState(argSet{}, "", nil); st == nil || st.stale {
+		t.Error("a single missed refresh was called stale")
+	}
+}
+
+func TestNoCacheAndNoAPIFallsBackToClaudeCode(t *testing.T) {
+	if runtimeIsDarwin() {
+		t.Skip("reads the login Keychain on macOS")
+	}
+	now := time.Now()
+	withCache(t, 0, "")
+	if getState(argSet{}, "", nil) != nil {
+		t.Fatal("no data at all should give no state")
+	}
+	live := &usageRaw{FiveHour: &usageWindow{Utilization: 20, ResetsAt: now.Add(time.Hour).UTC().Format(time.RFC3339)}}
+	st := getState(argSet{}, "", live)
+	if st == nil || st.s5 != 20 || !st.fetchedAt.IsZero() {
+		t.Fatalf("state = %+v", st)
+	}
+	if c := getCacheObject(); c != nil && (isJSONValue(c.Raw) || c.FetchedAt != "" || len(c.Samples) != 0) {
+		t.Errorf("Claude Code's figures reached the cache: %+v", c)
+	}
+}
+
+// --- tokens ------------------------------------------------------------------------
+
+func writeLines(t *testing.T, path string, lines ...string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	for _, l := range lines {
+		if _, err := f.WriteString(l + "\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func replyLine(id string, in, out, write, read int) string {
+	return fmt.Sprintf(`{"type":"assistant","requestId":"req_%s","message":{"id":"msg_%s","usage":{"input_tokens":%d,"output_tokens":%d,"cache_creation_input_tokens":%d,"cache_read_input_tokens":%d}}}`,
+		id, id, in, out, write, read)
+}
+
+// replyAt is a reply line written at a given moment.
+func replyAt(id string, at time.Time, in, out, write, read int) string {
+	return fmt.Sprintf(`{"type":"assistant","timestamp":%q,"requestId":"req_%s","message":{"id":"msg_%s","usage":{"input_tokens":%d,"output_tokens":%d,"cache_creation_input_tokens":%d,"cache_read_input_tokens":%d}}}`,
+		at.UTC().Format(time.RFC3339Nano), id, id, in, out, write, read)
+}
+
+func TestTranscriptReplyCountsItsLastLine(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	// One reply written as three lines whose output count grows, a user line, and the next reply.
+	writeLines(t, p,
+		replyLine("a", 2, 7, 100, 1000),
+		replyLine("a", 2, 7, 100, 1000),
+		replyLine("a", 2, 145, 100, 1000),
+		`{"type":"user","message":{"content":"ok"}}`,
+		replyLine("b", 1, 50, 0, 1100))
+	f := &fileTokens{}
+	info, _ := os.Stat(p)
+	if !f.read(p, info.Size(), time.Now().Add(time.Minute)) {
+		t.Fatal("did not reach the end")
+	}
+	got := f.total()
+	if got.Output != 195 || got.Input != 3 || got.Write != 100 || got.Read != 2100 {
+		t.Errorf("sums = %+v, want output 145+50", got)
+	}
+	// The second reply is still open — its count may yet grow — and is counted from there.
+	if f.OpenKey == "" || f.Sum.Output != 145 {
+		t.Errorf("open reply not held apart: %+v", f)
+	}
+	// It grows, and a half-written line is left for later.
+	writeLines(t, p, replyLine("b", 1, 400, 0, 1100))
+	raw, _ := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o600)
+	_, _ = raw.WriteString(`{"type":"assistant","message":{"id":"msg_c",`)
+	raw.Close()
+	info, _ = os.Stat(p)
+	f.read(p, info.Size(), time.Now().Add(time.Minute))
+	if got := f.total(); got.Output != 545 {
+		t.Errorf("after growth output = %v, want 145+400", got.Output)
+	}
+	if f.Offset == info.Size() {
+		t.Error("a half-written line was consumed")
+	}
+	// A file rewritten shorter than what was read is read again from the start.
+	if err := os.WriteFile(p, []byte(replyLine("z", 1, 1, 1, 1)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, _ = os.Stat(p)
+	f.read(p, info.Size(), time.Now().Add(time.Minute))
+	if got := f.total().total(); got != 4 {
+		t.Errorf("rewritten file total = %v, want 4", got)
+	}
+	// Out of time: nothing is read, and it says so.
+	if (&fileTokens{}).read(p, info.Size(), time.Now().Add(-time.Second)) {
+		t.Error("a read past its deadline claimed to have finished")
+	}
+}
+
+// The session is its own transcript and its subagents'; the account is every transcript written to
+// this week, counted in the five-hour window and in the week.
+func TestReadTokens(t *testing.T) {
+	withCache(t, 0, "")
+	now := time.Now()
+	fiveStart, weekFrom := now.Add(-3*time.Hour), now.Add(-3*24*time.Hour)
+	project := filepath.Join(claudeDir, "projects", "p")
+	session := filepath.Join(project, "s1.jsonl")
+	sub := filepath.Join(project, "s1", "subagents", "agent-x.jsonl")
+	other := filepath.Join(project, "s0.jsonl")
+	lastWeek := filepath.Join(project, "s9.jsonl")
+	if err := os.MkdirAll(filepath.Dir(sub), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeLines(t, session, replyAt("a", now.Add(-time.Hour), 1, 2, 3, 4))
+	writeLines(t, sub, replyAt("b", now.Add(-time.Hour), 10, 20, 30, 40))
+	// Another session of the account: one reply inside the five hours, one earlier in the week, and
+	// one from before the week began, which counts nowhere.
+	writeLines(t, other,
+		replyAt("c", now.Add(-4*24*time.Hour), 5000, 0, 0, 0),
+		replyAt("d", now.Add(-2*24*time.Hour), 100, 200, 300, 400),
+		replyAt("e", now.Add(-time.Hour), 1000, 0, 0, 2000))
+	// A session last written before the week began, left in the cache by an earlier run.
+	writeLines(t, lastWeek, replyAt("f", now.Add(-10*24*time.Hour), 7, 7, 7, 7))
+	old := now.Add(-10 * 24 * time.Hour)
+	if err := os.Chtimes(lastWeek, old, old); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(tokenCache{Files: map[string]*fileTokens{lastWeek: {Size: 1}}})
+	if err := os.WriteFile(tokenCachePath, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	st := readTokens(session, fiveStart, weekFrom, now)
+	if !st.sessionWhole || st.session.total() != 110 {
+		t.Errorf("session = %+v, want 110 with its subagent", st.session)
+	}
+	// Five hours: the session's 110 and the other session's latest reply, 3000.
+	if st.fiveHour.total() != 3110 || st.fiveHour.fresh() != 1066 || st.fiveHour.Read != 2044 {
+		t.Errorf("five hours = %+v, want 3110", st.fiveHour)
+	}
+	// The week adds the reply from two days ago, 1000; the one from four days ago is before it.
+	if st.weekly.total() != 4110 || !st.accountWhole {
+		t.Errorf("week = %+v (whole %v), want 4110", st.weekly, st.accountWhole)
+	}
+	// The session named by a path that differs from the walk's only in its spelling — a redundant
+	// "./", and on Windows forward slashes — is the same file, counted once.
+	sep := string(filepath.Separator)
+	alias := strings.ReplaceAll(project+sep+"."+sep+"s1.jsonl", `\`, "/")
+	if runtime.GOOS != "windows" {
+		alias = project + sep + "." + sep + "s1.jsonl"
+	}
+	if again := readTokens(alias, fiveStart, weekFrom, now); again.session.total() != 110 || again.fiveHour.total() != 3110 || again.weekly.total() != 4110 {
+		t.Errorf("a differently spelled path counted the session twice: session %v, five hours %v, week %v",
+			again.session.total(), again.fiveHour.total(), again.weekly.total())
+	}
+	var c tokenCache
+	b, _ = os.ReadFile(tokenCachePath)
+	if json.Unmarshal(b, &c) != nil || c.Files[fileKey(lastWeek)] != nil || c.Files[fileKey(other)] == nil {
+		t.Errorf("cache after the run = %s", b)
+	}
+	for bucket := range c.Files[fileKey(other)].Buckets {
+		if bucket+tokenBucketSec <= weekFrom.Unix() {
+			t.Errorf("a bucket from before the week was kept: %d", bucket)
+		}
+	}
+
+	want := "SESSION: FRESH 66 CACHED 44, ACCOUNT 5H: FRESH 1k CACHED 2k, 7D: FRESH 2k CACHED 2k"
+	if got := tokensText(session, fiveStart, weekFrom, now); got != want {
+		t.Errorf("tokens text = %q, want %q", got, want)
+	}
+	// No windows known: the session alone.
+	if got := tokensText(session, time.Time{}, time.Time{}, now); got != "SESSION: FRESH 66 CACHED 44" {
+		t.Errorf("tokens text without windows = %q", got)
+	}
+	// The same counts as the model is handed them.
+	if got := tokensElement(st); got != `<tokens session="fresh 66, cached 44" account_5h="fresh 1k, cached 2k" account_7d="fresh 2k, cached 2k"/>` {
+		t.Errorf("tokens element = %q", got)
+	}
+	if _, ok := sessionTokenStats("", fiveStart, weekFrom, now); ok || tokensText("", fiveStart, weekFrom, now) != "" {
+		t.Error("tokens without a session")
+	}
+}
+
+// --- the whole status line ----------------------------------------------------------
+
+func TestRenderStatusline(t *testing.T) {
+	if runtimeIsDarwin() {
+		t.Skip("reads the login Keychain on macOS")
+	}
+	now := time.Now()
+	withCache(t, 5*time.Second, usageDoc(55, 10, now))
+	tp := filepath.Join(claudeDir, "projects", "p", "s.jsonl")
+	if err := os.MkdirAll(filepath.Dir(tp), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeLines(t, tp, replyAt("a", now.Add(-time.Minute), 5, 1000, 20000, 130000))
+	input := fmt.Sprintf(`{"transcript_path":%q,"model":{"id":"claude-fable-5-1","display_name":"Fable"},`+
+		`"context_window":{"total_input_tokens":150005,"context_window_size":200000,"current_usage":{}},`+
+		`"prompt_cache":{"warm":true,"caching_observed":true,"ttl":"1h","expires_at":%d}}`, tp, now.Unix()+3600)
+
+	t.Setenv("COLUMNS", "")
+	t.Setenv("NO_COLOR", "1")
+	out := renderStatusline(argSet{}, input, nil, now)
+	lines := strings.Split(out, "\n")
+	// CONTEXT with a hundred-cell gauge, the cache's time left and, two spaces on, the token counts.
+	if want := "CONTEXT  150k/200k  75 % " + strings.Repeat("▓", 75) + strings.Repeat("░", 25) + " CACHE 1:00  " +
+		"SESSION: FRESH 21k CACHED 130k, ACCOUNT 5H: FRESH 21k CACHED 130k, 7D: FRESH 21k CACHED 130k"; lines[0] != want {
+		t.Errorf("top line = %q, want %q", lines[0], want)
+	}
+	// The account's two windows on one pair of lines; the model's own weekly bucket, which the usage
+	// document carries, is the model's block's alone.
+	if len(lines) != 3 || !strings.HasPrefix(lines[1], "5 HOURS") || !strings.Contains(lines[1], "7 DAYS        10 % LIMIT") ||
+		strings.Contains(out, "FABLE") {
+		t.Errorf("want CONTEXT and one pair of lines for the two windows, nothing else:\n%s", out)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("NO_COLOR not honoured:\n%s", out)
+	}
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("TERM_PROGRAM", "")
+	if !strings.Contains(renderStatusline(argSet{}, input, nil, now), "\x1b[38;2;") {
+		t.Error("the status line is not painted in 24-bit colour")
+	}
+	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+	if out := renderStatusline(argSet{}, input, nil, now); !strings.Contains(out, "\x1b[38;5;") || strings.Contains(out, "38;2;") {
+		t.Error("Apple's Terminal did not get the 256-colour palette")
+	}
+
+	// A silent API: Claude Code's own 5-hour figure stands in, without a word on screen about it.
+	t.Setenv("NO_COLOR", "1")
+	stale, _ := json.Marshal(cacheFile{FetchedAt: now.Add(-time.Hour).Format(time.RFC3339Nano), Raw: json.RawMessage(usageDoc(55, 10, now))})
+	if err := os.WriteFile(cachePath, stale, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withLive := strings.TrimSuffix(input, "}") + fmt.Sprintf(`,"rate_limits":{"five_hour":{"used_percentage":71,"resets_at":%d}}}`, now.Unix()+3600)
+	out = renderStatusline(argSet{}, withLive, nil, now)
+	if !strings.Contains(out, "5 HOURS       71 % LIMIT") || strings.Contains(out, "DATA") || len(strings.Split(out, "\n")) != 3 {
+		t.Errorf("stale figures not replaced quietly:\n%s", out)
+	}
+}
+
+// --- the panel -----------------------------------------------------------------------
+
+// replyCachedAt is a reply line written at a given moment that says, as the API does, which lifetime
+// its cache write was made with: "5m", "1h", or "" for a line that does not say at all.
+func replyCachedAt(id string, at time.Time, write, read int, lifetime string) string {
+	split := ""
+	switch lifetime {
+	case "5m":
+		split = fmt.Sprintf(`,"cache_creation":{"ephemeral_5m_input_tokens":%d,"ephemeral_1h_input_tokens":0}`, write)
+	case "1h":
+		split = fmt.Sprintf(`,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":%d}`, write)
+	}
+	return fmt.Sprintf(`{"type":"assistant","timestamp":%q,"requestId":"req_%s","message":{"id":"msg_%s","usage":{"input_tokens":5,"output_tokens":1000,"cache_creation_input_tokens":%d,"cache_read_input_tokens":%d%s}}}`,
+		at.UTC().Format(time.RFC3339Nano), id, id, write, read, split)
+}
+
+// sgrHex is the colour a 24-bit SGR code paints, as the panel names it.
+func sgrHex(t *testing.T, code string) string {
+	t.Helper()
+	var r, g, b int
+	if _, err := fmt.Sscanf(code, "38;2;%d;%d;%d", &r, &g, &b); err != nil {
+		t.Fatalf("not a 24-bit colour: %q", code)
+	}
+	return hexColour([3]int{r, g, b})
+}
+
+// emptyOf reads the empty part of a gauge the status line painted back as the panel's runs: the colour
+// codes of its cells after the filled ones, each in hex, neighbours of one colour together.
+func emptyOf(t *testing.T, codes []string, filled int) []colourRun {
+	t.Helper()
+	runs := []colourRun{}
+	for _, code := range codes[filled:] {
+		c := sgrHex(t, code)
+		if n := len(runs); n > 0 && runs[n-1].Colour == c {
+			runs[n-1].Cells++
+			continue
+		}
+		runs = append(runs, colourRun{Colour: c, Cells: 1})
+	}
+	return runs
+}
+
+// The panel says what the status line says, as data — the same figures, words and colours, in the
+// same order — and reads the prompt cache off the transcript, since the input the plugin builds holds
+// no reading of it.
+func TestRenderPanel(t *testing.T) {
+	if runtimeIsDarwin() {
+		t.Skip("reads the login Keychain on macOS")
+	}
+	now := time.Now()
+	withCache(t, 5*time.Second, usageDoc(55, 10, now))
+	tp := filepath.Join(claudeDir, "projects", "p", "s.jsonl")
+	if err := os.MkdirAll(filepath.Dir(tp), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cachedAt := now.Add(-time.Minute)
+	writeLines(t, tp, replyCachedAt("a", cachedAt, 20000, 130000, "1h"))
+	input := fmt.Sprintf(`{"transcript_path":%q,"model":{"id":"claude-fable-5-1"},"context_window":{"context_window_size":200000}}`, tp)
+
+	out := renderPanel(argSet{}, input, nil, now)
+	var pic panelPicture
+	if err := json.Unmarshal([]byte(out), &pic); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+
+	// The status line for the same input, painted in 24-bit colour on one row, with the reading of
+	// the prompt cache the transcript gives.
+	t.Setenv("COLUMNS", "")
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("TERM_PROGRAM", "")
+	withReading := strings.TrimSuffix(input, "}") + fmt.Sprintf(`,"prompt_cache":{"warm":true,"caching_observed":true,"ttl":"1h","expires_at":%d}}`,
+		cachedAt.Add(time.Hour).Unix())
+	status := renderStatusline(argSet{}, withReading, nil, now)
+	lines := strings.Split(status, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("want the status line on three lines:\n%s", stripColour(status))
+	}
+
+	top := regexp.MustCompile("^CONTEXT +\x1b\\[([0-9;]+)m([^\x1b]+)\x1b\\[0m +\x1b\\[[0-9;]+m *([0-9]+) %.* CACHE \x1b\\[([0-9;]+)m([^\x1b]+)\x1b\\[0m  (.+)$").
+		FindStringSubmatch(lines[0])
+	if top == nil {
+		t.Fatalf("top line not understood: %q", lines[0])
+	}
+	if c := pic.Context; c == nil || c.Tokens != top[2] || num(c.Pct, 0) != top[3] || c.Colour != sgrHex(t, top[1]) {
+		t.Errorf("context = %+v, the status line's = %q %s %%, %s", pic.Context, top[2], top[3], sgrHex(t, top[1]))
+	}
+	// Every gauge's empty part is the status line's cells, colour for colour.
+	if c := pic.Context; c != nil {
+		if want := emptyOf(t, cellColours(lines[0]), int(c.Pct)); !reflect.DeepEqual(c.Empty, want) {
+			t.Errorf("context's empty part = %v, the status line's = %v", c.Empty, want)
+		}
+	}
+	if c := pic.Cache; c == nil || c.Text != top[5] || c.Text != "0:59" || c.Colour != sgrHex(t, top[4]) {
+		t.Errorf("cache = %+v, the status line's = %q %s", pic.Cache, top[5], sgrHex(t, top[4]))
+	}
+	if pic.Tokens != top[6] || !strings.HasPrefix(pic.Tokens, "SESSION: FRESH 21k CACHED 130k") {
+		t.Errorf("tokens = %q, the status line's = %q", pic.Tokens, top[6])
+	}
+
+	limitTops := regexp.MustCompile("([0-9A-Z][0-9A-Z ]*?) +\x1b\\[([0-9;]+)m *([0-9]+) %\x1b\\[0m LIMIT \x1b\\[([0-9;]+)m▓+\x1b\\[0m(?:\x1b\\[[0-9;]+m░+\x1b\\[0m)* RESET AT \x1b\\[[0-9;]+m([^\x1b]+)\x1b\\[0m").
+		FindAllStringSubmatch(lines[1], -1)
+	bottoms := regexp.MustCompile(`([0-9]+) %  ?(TIME|WORK) [▓░]+ RESET AFTER ([0-9a-z: ]+?)(?: {2,}|$)`).
+		FindAllStringSubmatch(stripColour(lines[2]), -1)
+	if len(pic.Limits) != 2 || len(limitTops) != 2 || len(bottoms) != 2 {
+		t.Fatalf("want the two windows on both sides; panel %d, status line %d and %d:\n%s", len(pic.Limits), len(limitTops), len(bottoms), stripColour(status))
+	}
+	for i, l := range pic.Limits {
+		st, sb := limitTops[i], bottoms[i]
+		if l.Label != st[1] || num(l.Pct, 0) != st[3] || l.Colour != sgrHex(t, st[4]) || l.Reset != st[5] {
+			t.Errorf("limit %d = %+v, the status line's = %q %s %% %s %q", i, l, st[1], st[3], sgrHex(t, st[4]), st[5])
+		}
+		if pic.FiguresColour != sgrHex(t, st[2]) {
+			t.Errorf("figures colour = %s, the status line's = %s", pic.FiguresColour, sgrHex(t, st[2]))
+		}
+		if w := l.Window; w == nil || num(w.Pct, 0) != sb[1] || w.Caption != sb[2] || w.After != sb[3] || w.Colour != hexColour(timeRGB) {
+			t.Errorf("limit %d's window = %+v, the status line's = %s %% %s %q", i, l.Window, sb[1], sb[2], sb[3])
+		}
+		// The LIMIT gauges stand side by side on the status line's second line, the time gauges on its
+		// third.
+		if want := emptyOf(t, cellColours(lines[1])[i*100:(i+1)*100], int(l.Pct)); !reflect.DeepEqual(l.Empty, want) {
+			t.Errorf("limit %d's empty part = %v, the status line's = %v", i, l.Empty, want)
+		}
+		if w := l.Window; w != nil {
+			if want := emptyOf(t, cellColours(lines[2])[i*100:(i+1)*100], int(w.Pct)); !reflect.DeepEqual(w.Empty, want) {
+				t.Errorf("limit %d's window's empty part = %v, the status line's = %v", i, w.Empty, want)
+			}
+		}
+	}
+	// The usage document has a Fable bucket too, which neither draws.
+	if pic.Limits[0].Label != "5 HOURS" || pic.Limits[1].Label != "7 DAYS" {
+		t.Errorf("want the 5-hour window, then the 7-day one: %+v", pic.Limits)
+	}
+
+	// A prompt-cache reading in the input is taken over the transcript's.
+	withShortReading := strings.TrimSuffix(input, "}") +
+		fmt.Sprintf(`,"prompt_cache":{"warm":true,"caching_observed":true,"ttl":"1h","expires_at":%d}}`, now.Unix()+600)
+	if err := json.Unmarshal([]byte(renderPanel(argSet{}, withShortReading, nil, now)), &pic); err != nil || pic.Cache == nil || pic.Cache.Text != "0:10" {
+		t.Errorf("the input's own cache reading was not used: %+v", pic.Cache)
+	}
+
+	// Before the first reply nothing has measured the context: the plugin's estimate stands in, said to
+	// be one, and a measured reading is taken over it.
+	estimate := `{"model":{"id":"claude-fable-5-1"},"context_window":{"context_window_size":1000000},"context_estimate":48000}`
+	want := panelContext{Tokens: "48k/1m", Pct: 5, Colour: hexColour(gaugeRGB(0.048)), Estimated: true}
+	err := json.Unmarshal([]byte(renderPanel(argSet{}, estimate, nil, now)), &pic)
+	// Its empty part runs on from the sixth cell, at the colour of 6 %, to the hundredth.
+	cells := 0
+	if c := pic.Context; c != nil {
+		for _, r := range c.Empty {
+			cells += r.Cells
+		}
+	}
+	if c := pic.Context; err != nil || c == nil || c.Tokens != want.Tokens || c.Pct != want.Pct || c.Colour != want.Colour || !c.Estimated ||
+		cells != 95 || c.Empty[0].Colour != hexColour(gaugeRGB(0.06)) {
+		t.Errorf("estimated context = %+v, want %+v and 95 empty cells from the colour of 6 %%", pic.Context, want)
+	}
+	measured := strings.TrimSuffix(input, "}") + `,"context_estimate":48000}`
+	if err := json.Unmarshal([]byte(renderPanel(argSet{}, measured, nil, now)), &pic); err != nil || pic.Context == nil ||
+		pic.Context.Estimated || pic.Context.Tokens != "150k/200k" {
+		t.Errorf("the estimate was taken over a measured context: %+v", pic.Context)
+	}
+	if status := stripColour(renderStatusline(argSet{}, estimate, nil, now)); strings.Contains(status, "CONTEXT") {
+		t.Errorf("the status line drew an estimate it is never handed: %q", status)
+	}
+
+	// No figures at all, and no transcript: what the status line writes as LIMITS -> N/A, and nothing
+	// on the CONTEXT line.
+	withCache(t, 0, "")
+	empty := renderPanel(argSet{}, `{}`, nil, now)
+	if !strings.Contains(empty, `"limits":null`) || !strings.Contains(empty, `"context":null`) || !strings.Contains(empty, `"cache":null`) {
+		t.Errorf("panel without figures = %s", empty)
+	}
+	if status := stripColour(renderStatusline(argSet{}, `{}`, nil, now)); status != "LIMITS -> N/A" {
+		t.Errorf("status line without figures = %q", status)
+	}
+}
+
+// The cache's time left is read from the newest main-thread reply that used it, on the lifetime the
+// newest reply that wrote to it was written with.
+func TestTranscriptPromptCache(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	ago := func(d time.Duration) time.Time { return now.Add(-d) }
+	sidechain := func(line string) string {
+		return strings.Replace(line, `{"type":"assistant",`, `{"type":"assistant","isSidechain":true,`, 1)
+	}
+	dir := t.TempDir()
+	for i, c := range []struct {
+		name  string
+		lines []string
+		want  string // the cache part as the picture writes it, unpainted
+		ttl   string
+	}{
+		{"no reply yet", []string{`{"type":"user","message":{"content":"hi"}}`}, "", ""},
+		{"written for an hour ten minutes ago",
+			[]string{replyCachedAt("a", ago(10*time.Minute), 900, 0, "1h")}, "CACHE 0:50", "1h"},
+		{"read since, on the lifetime it was written with",
+			[]string{replyCachedAt("a", ago(4*time.Minute), 900, 0, "5m"), replyCachedAt("b", ago(2*time.Minute), 0, 900, "")},
+			"CACHE 0:03", "5m"},
+		{"gone cold", []string{replyCachedAt("a", ago(2*time.Hour), 900, 0, "1h")}, "CACHE COLD", "1h"},
+		{"a subagent's reply is not this thread's cache",
+			[]string{replyCachedAt("a", ago(30*time.Minute), 900, 0, "1h"), sidechain(replyCachedAt("b", ago(time.Minute), 900, 0, "1h"))},
+			"CACHE 0:30", "1h"},
+		{"a newer reply that used no cache leaves the last use standing",
+			[]string{replyCachedAt("a", ago(20*time.Minute), 900, 0, "1h"), replyCachedAt("b", ago(time.Minute), 0, 0, "")},
+			"CACHE 0:40", "1h"},
+		{"an hour where no reply says", []string{replyCachedAt("a", ago(15*time.Minute), 900, 300, "")}, "CACHE 0:45", ""},
+	} {
+		p := filepath.Join(dir, fmt.Sprintf("%d.jsonl", i))
+		writeLines(t, p, c.lines...)
+		pc := transcriptPromptCache(p, now)
+		got := (&statusInput{PromptCache: pc}).cacheText(now, painter{})
+		if got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+		if pc != nil && pc.TTL != c.ttl {
+			t.Errorf("%s: lifetime %q, want %q", c.name, pc.TTL, c.ttl)
+		}
+	}
+	if transcriptPromptCache("", now) != nil || transcriptPromptCache(filepath.Join(dir, "missing.jsonl"), now) != nil {
+		t.Error("a reading without a transcript")
+	}
+}
+
+// A write leaves no temporary file behind, and sweeps up what an interrupted one left — but not a
+// write another run may still have in progress.
+func TestWriteFileAtomicSweepsLeftovers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cache.json")
+	stale, fresh := path+".111.tmp", path+".222.tmp"
+	for _, p := range []string{stale, fresh} {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-5 * time.Minute)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(path, []byte(`{"a":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != `{"a":1}` {
+		t.Errorf("written %q", b)
+	}
+	if _, err := os.Stat(stale); err == nil {
+		t.Error("an interrupted write's leftover was kept")
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Error("a write that may still be in progress was swept away")
+	}
+	if left, _ := filepath.Glob(path + ".*.tmp"); len(left) != 1 {
+		t.Errorf("temporary files left: %v", left)
+	}
+}
+
+// The cache part says how long the prompt cache stays warm, or that it has gone cold, and is left
+// out when Claude Code reports no cache at all.
+func TestCacheText(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	cache := func(ttl string, left int64) string {
+		return fmt.Sprintf(`{"prompt_cache":{"warm":true,"caching_observed":true,"ttl":%q,"expires_at":%d}}`, ttl, now.Unix()+left)
+	}
+	for raw, want := range map[string]string{
+		cache("1h", 52*60): "CACHE 0:52",
+		cache("1h", -60):   "CACHE COLD",
+		`{"prompt_cache":{"warm":false,"caching_observed":true,"expires_at":null}}`: "CACHE COLD",
+		`{"prompt_cache":{"warm":true,"caching_observed":true}}`:                    "CACHE WARM",
+		`{"prompt_cache":{"warm":false,"caching_observed":false}}`:                  "",
+		`{}`: "",
+	} {
+		if got := decodeStatusInput(raw).cacheText(now, painter{}); got != want {
+			t.Errorf("%s: %q, want %q", raw, got, want)
+		}
+	}
+	// The time left is green with the whole lifetime ahead and turns red as it runs out, on the
+	// lifetime the cache was written with; a cold cache is red.
+	p := painter{on: true, rgb: true}
+	paint := func(at float64, s string) string { return "CACHE \x1b[" + p.gaugeColour(at) + "m" + s + "\x1b[0m" }
+	for _, c := range []struct {
+		raw, want string
+	}{
+		{cache("1h", 60*60), paint(0, "1:00")},
+		{cache("1h", 30*60), paint(0.5, "0:30")},
+		{cache("5m", 5*60), paint(0, "0:05")},
+		{cache("", 15*60), paint(0.75, "0:15")}, // an hour where Claude Code does not say
+		{cache("1h", -60), paint(1, "COLD")},
+	} {
+		if got := decodeStatusInput(c.raw).cacheText(now, p); got != c.want {
+			t.Errorf("%s: %q, want %q", c.raw, got, c.want)
+		}
+	}
+	// Unpainted it reads as the status line writes it; with no reading, nothing.
+	if got := decodeStatusInput(cache("1h", 600)).cacheText(now, painter{}); got != "CACHE 0:10" {
+		t.Errorf("cache = %q", got)
+	}
+	if got := decodeStatusInput(`{}`).cacheText(now, painter{}); got != "" {
+		t.Errorf("cache with nothing to say = %q", got)
+	}
+}
+
+func TestShortTokens(t *testing.T) {
+	for n, want := range map[float64]string{510_000: "510k", 1e6: "1m", 1.4e6: "1m", 1.6e6: "2m", 12e6: "12m", 24.1e6: "24m",
+		647.97e6: "648m", 1e9: "1b", 1.24e9: "1.2b", 29.94e9: "29.9b", 950: "950", 5_600: "6k"} {
+		if got := shortTokens(n); got != want {
+			t.Errorf("shortTokens(%v) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+// A 5-hour window that has not started carries no reset time. The state was given up before the
+// cache was written, so the attempt went unrecorded and every refresh of every open session asked
+// the API again (review of PR 697).
+func TestAnUnstartedWindowStillWritesTheAttemptDown(t *testing.T) {
+	if runtimeIsDarwin() {
+		t.Skip("reads the login Keychain on macOS")
+	}
+	withCache(t, time.Hour, `{"five_hour":{"utilization":0,"resets_at":null},"seven_day":{"utilization":10,"resets_at":null}}`)
+
+	getState(argSet{}, "", nil)
+
+	if c := getCacheObject(); c == nil || c.TriedAt == "" {
+		t.Fatal("the attempt was not written down")
+	}
+}
+
+// On Windows a file another session holds open for reading refuses the rename that replaces it, so a
+// session writing the cache while another read it lost the write — the fetch throttle, the burn
+// samples, the token offsets (review of PR 697). The update still lands.
+func TestTheCacheIsWrittenWhileAnotherSessionReadsIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage-limits-cache.json")
+	if err := writeFileAtomic(path, []byte(`{"a":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	reading, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = writeFileAtomic(path, []byte(`{"a":2}`))
+	_ = reading.Close()
+
+	if err != nil {
+		t.Fatalf("written while read: %v", err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != `{"a":2}` {
+		t.Fatalf("read back %q", b)
+	}
+	if left, _ := filepath.Glob(path + ".*.tmp"); len(left) != 0 {
+		t.Fatalf("temp files left behind: %v", left)
+	}
+}
+
+// usageFromServer answers every request the hook makes with body and counts them, standing in for
+// the usage endpoint behind a login that has not expired.
+func usageFromServer(t *testing.T, body string) *int {
+	t.Helper()
+	login := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"t","expiresAt":%d}}`, time.Now().Add(time.Hour).UnixMilli())
+	if err := os.WriteFile(credPath, []byte(login), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	asked := 0
+	saved := http.DefaultClient.Transport
+	t.Cleanup(func() { http.DefaultClient.Transport = saved })
+	http.DefaultClient.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+		asked++
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})
+	return &asked
+}
+
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// The window that went RED has reset and the next one has not started. The API says so, and the
+// answer has to be what the cache holds from then on: kept behind the new attempt, the spent window's
+// figures were drawn until the next fetch — RED over a reset already past.
+func TestAnUnstartedWindowReplacesTheSpentOne(t *testing.T) {
+	if runtimeIsDarwin() {
+		t.Skip("reads the login Keychain on macOS")
+	}
+	now := time.Now()
+	spent := fmt.Sprintf(`{"five_hour":{"utilization":95,"resets_at":%q},"seven_day":{"utilization":10,"resets_at":%q}}`,
+		now.Add(-time.Hour).UTC().Format(time.RFC3339), now.Add(100*time.Hour).UTC().Format(time.RFC3339))
+	withCache(t, 3*time.Hour, spent)
+	asked := usageFromServer(t, `{"five_hour":{"utilization":0,"resets_at":null},"seven_day":{"utilization":10,"resets_at":null}}`)
+
+	// The window the API reports is drawn — at its 0%, with no reset to show — and the spent one
+	// never comes back, neither on this call nor from the cache on the next.
+	for _, call := range []string{"fetched", "cached"} {
+		st := getState(argSet{}, "", nil)
+		if st == nil || !st.hasSession || st.s5 != 0 || !st.r5Local.IsZero() || st.zone != "GREEN" {
+			t.Fatalf("%s: want the unstarted window at 0%%, got %+v", call, st)
+		}
+	}
+	if *asked != 1 {
+		t.Fatalf("the API was asked %d times, want 1", *asked)
+	}
+}
+
+// The usage API refuses, with a 429, any client that does not introduce itself as Claude Code; Go's
+// default User-Agent was refused and the whole display went dark.
+func TestTheUsageAPIIsAskedAsClaudeCode(t *testing.T) {
+	if runtimeIsDarwin() {
+		t.Skip("reads the login Keychain on macOS")
+	}
+	withCache(t, 0, "")
+	usageFromServer(t, `{}`)
+	inner := http.DefaultClient.Transport
+	var ua string
+	http.DefaultClient.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+		ua = r.Header.Get("User-Agent")
+		return inner.RoundTrip(r)
+	})
+	fetchUsage()
+	if !strings.HasPrefix(ua, "claude-code/") {
+		t.Fatalf("asked with User-Agent %q; the API answers 429 to anything not starting with claude-code/", ua)
+	}
+}
+
+// A verified Ultra account: the API reports no 5-hour window at all — five_hour is null and limits[]
+// holds only weekly entries (reply captured 2026-11-02). Every output still draws the weekly limits,
+// and none of them invents a 5-hour figure.
+func TestNoFiveHourWindowDrawsTheWeekOnly(t *testing.T) {
+	now := time.Now()
+	reset7 := now.Add(30 * time.Hour).UTC().Format(time.RFC3339)
+	withCache(t, 0, fmt.Sprintf(`{"five_hour":null,"seven_day":{"utilization":25.0,"resets_at":%q},`+
+		`"limits":[{"kind":"weekly_all","group":"weekly","percent":25,"resets_at":%q,"scope":null,"is_active":true},`+
+		`{"kind":"weekly_scoped","group":"weekly","percent":0,"resets_at":%q,"scope":{"model":{"id":null,"display_name":"Fable"}},"is_active":false}]}`,
+		reset7, reset7, reset7))
+
+	st := getState(argSet{}, "claude-opus-5-5", nil)
+	if st == nil {
+		t.Fatal("a reply without a 5-hour window was taken for no figures at all")
+	}
+	if st.hasSession || st.burnWindow != "weekly" || st.limiter != "weekly" || st.zone5 != "" {
+		t.Errorf("session %v, burn in %q, limiter %q, session zone %q", st.hasSession, st.burnWindow, st.limiter, st.zone5)
+	}
+	if st.burn <= 0 || math.IsInf(st.horizonMin, 1) {
+		t.Errorf("no weekly burn or horizon: burn %v horizon %v", st.burn, st.horizonMin)
+	}
+
+	rows := limitRows(st)
+	if len(rows) != 2 || rows[0].label != "7 DAYS" || rows[1].label != "FABLE" {
+		t.Fatalf("rows: %+v", rows)
+	}
+	block := modelBlock(st, rows, contextReading{}, nil, false, now)
+	for _, want := range []string{`<limit name="7-day" used="25%"`, `<limit name="Fable weekly bucket" used="0%"`,
+		`<burn window="7-day" rate="`, `limiter="weekly"`} {
+		if !strings.Contains(block, want) {
+			t.Errorf("block lacks %q:\n%s", want, block)
+		}
+	}
+	if strings.Contains(block, "5-hour") {
+		t.Errorf("a 5-hour figure reached the model:\n%s", block)
+	}
+
+	fiveStart, weekFrom := limitWindows(st)
+	if !fiveStart.IsZero() || weekFrom.IsZero() {
+		t.Errorf("token windows: five %v, week %v", fiveStart, weekFrom)
+	}
+}
+
+// The JSON document says "no 5-hour window" with nulls, never with a zero that reads as measured.
+func TestNoFiveHourWindowIsNullInTheJSON(t *testing.T) {
+	reset7 := time.Now().Add(30 * time.Hour).UTC().Format(time.RFC3339)
+	withCache(t, 0, fmt.Sprintf(`{"five_hour":null,"seven_day":{"utilization":25.0,"resets_at":%q}}`, reset7))
+	out := captureStdout(t, func() {
+		os.Args = []string{"usage-limits", "--mode", "json"}
+		run()
+	})
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	for _, k := range []string{"session_pct", "session_resets_at", "min_to_session_reset", "zone_session"} {
+		if v, ok := doc[k]; !ok || v != nil {
+			t.Errorf("%s = %v (present %v), want null", k, v, ok)
+		}
+	}
+	if doc["burn_window"] != "weekly" || doc["weekly_pct"] != 25.0 || doc["horizon_min"] == nil {
+		t.Errorf("weekly figures: %v", doc)
+	}
+}
+
+// A plan with a 5-hour window keeps it in every output, and burn stays measured in it.
+func TestAFiveHourWindowIsStillDrawn(t *testing.T) {
+	now := time.Now()
+	withCache(t, 0, fmt.Sprintf(`{"five_hour":{"utilization":40,"resets_at":%q},"seven_day":{"utilization":10,"resets_at":%q}}`,
+		now.Add(2*time.Hour).UTC().Format(time.RFC3339), now.Add(80*time.Hour).UTC().Format(time.RFC3339)))
+	st := getState(argSet{}, "", nil)
+	if st == nil || !st.hasSession || st.burnWindow != "session" || st.limiter != "weekly" {
+		t.Fatalf("state: %+v", st)
+	}
+	if rows := limitRows(st); rows[0].label != "5 HOURS" || rows[0].reset == "" {
+		t.Errorf("first row: %+v", rows[0])
+	}
+}
+
+// captureStdout runs fn and returns what it printed, with os.Args restored afterwards.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	savedOut, savedArgs := os.Stdout, os.Args
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout, os.Args = savedOut, savedArgs }()
+	fn()
+	w.Close()
+	b, _ := io.ReadAll(r)
+	return string(b)
+}
+
+// On the weekly window the API's whole percents are too coarse for a rate taken between samples
+// minutes apart: a 24 -> 25 step five minutes apart read as a week emptied in six hours while the
+// spend was well behind the clock. The pace stands there.
+func TestTheWeeklyBurnIsThePace(t *testing.T) {
+	now := time.Now()
+	reset7 := now.Add(60 * time.Hour).UTC().Format(time.RFC3339)
+	withCache(t, 0, fmt.Sprintf(`{"five_hour":null,"seven_day":{"utilization":25,"resets_at":%q}}`, reset7))
+	c := getCacheObject()
+	for i, v := range []float64{24, 25} {
+		c.Samples = append(c.Samples, sample{T: now.Add(time.Duration(i*5-6) * time.Minute).Format(time.RFC3339Nano),
+			S7: v, R7: reset7})
+	}
+	saveCache(*c)
+
+	st := getState(argSet{}, "", nil)
+	if st == nil || st.burnWindow != "weekly" || st.burnSource != "pace" {
+		t.Fatalf("burn in %q from %q", st.burnWindow, st.burnSource)
+	}
+	if !math.IsInf(st.minToExhaust, 1) && st.minToExhaust < st.minToReset7 {
+		t.Errorf("the week is forecast to run out in %.0f min, before its reset in %.0f", st.minToExhaust, st.minToReset7)
+	}
+}
+
+// A 429 carries the time to come back. Asked every fetch period through it, the API only kept
+// refusing; until that time it is not asked at all, and the last figures stand in, marked stale.
+func TestARefusalsRetryAfterIsKept(t *testing.T) {
+	if runtimeIsDarwin() {
+		t.Skip("reads the login Keychain on macOS")
+	}
+	withCache(t, 3*time.Hour, `{"five_hour":null,"seven_day":{"utilization":25,"resets_at":null}}`)
+	usageFromServer(t, `{}`)
+	asked := 0
+	http.DefaultClient.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+		asked++
+		h := http.Header{}
+		h.Set("Retry-After", "300")
+		return &http.Response{StatusCode: 429, Header: h, Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
+	})
+	fetchTTLSec = 0 // every call would ask, but for the pause
+
+	for i := 0; i < 3; i++ {
+		if st := getState(argSet{}, "", nil); st == nil || !st.stale || st.s7 != 25 {
+			t.Fatalf("call %d: want the cached figures, stale: %+v", i, st)
+		}
+	}
+	if asked != 1 {
+		t.Errorf("the API was asked %d times through its pause, want 1", asked)
+	}
+	nb, ok := parseTime(getCacheObject().NotBefore)
+	if !ok || nb.Sub(time.Now()) < 290*time.Second {
+		t.Errorf("not_before = %v", getCacheObject().NotBefore)
+	}
+}
+
+func TestRetryAfter(t *testing.T) {
+	now := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+	for h, want := range map[string]time.Duration{
+		"":                              0,
+		"0":                             0,
+		"177":                           177 * time.Second,
+		"soon":                          0,
+		"-5":                            0,
+		"999999":                        maxRetryAfter,
+		"Mon, 02 Nov 2026 10:02:00 GMT": 2 * time.Minute,
+		"Mon, 02 Nov 2026 09:00:00 GMT": 0,
+	} {
+		if got := retryAfter(h, now); got != want {
+			t.Errorf("Retry-After %q = %v, want %v", h, got, want)
+		}
+	}
+}
+
+// The model's own bucket is weekly and in whole percents too: its burn is its own pace, so a 24%
+// Fable bucket 108 hours into its week does not read as a cap reached before the reset.
+func TestTheBucketBurnIsItsOwnPace(t *testing.T) {
+	reset := time.Now().Add(60 * time.Hour).UTC().Format(time.RFC3339)
+	withCache(t, 0, fmt.Sprintf(`{"five_hour":null,"seven_day":{"utilization":25,"resets_at":%q},`+
+		`"limits":[{"kind":"weekly_scoped","percent":24,"resets_at":%q,"scope":{"model":{"display_name":"Fable"}}}]}`, reset, reset))
+	st := getState(argSet{}, "claude-fable-5-1", nil)
+	if st == nil || st.activeBucket == nil || st.bucketBurnSource != "pace" {
+		t.Fatalf("bucket burn from %q: %+v", st.bucketBurnSource, st)
+	}
+	if want := 24 / (108 * 60.0); math.Abs(st.bucketBurn-want) > 1e-5 {
+		t.Errorf("bucket burn %v, want %v", st.bucketBurn, want)
+	}
+	if !math.IsInf(st.minToBucketExhaust, 1) {
+		t.Errorf("the bucket is forecast to run out in %.0f min, before its reset", st.minToBucketExhaust)
+	}
+}
+
+// A stored pause longer than any the hook writes — a clock that moved back — is not honoured.
+func TestAnImplausiblePauseIsIgnored(t *testing.T) {
+	if runtimeIsDarwin() {
+		t.Skip("reads the login Keychain on macOS")
+	}
+	withCache(t, 3*time.Hour, `{"five_hour":null,"seven_day":{"utilization":25,"resets_at":null}}`)
+	c := getCacheObject()
+	c.NotBefore = time.Now().Add(48 * time.Hour).Format(time.RFC3339Nano)
+	saveCache(*c)
+	asked := usageFromServer(t, `{"five_hour":null,"seven_day":{"utilization":26,"resets_at":null}}`)
+	if st := getState(argSet{}, "", nil); st == nil || st.s7 != 26 || *asked != 1 {
+		t.Fatalf("asked %d times, s7 %v", *asked, st)
+	}
+}
