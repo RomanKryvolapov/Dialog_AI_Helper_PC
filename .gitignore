@@ -50,3 +50,6 @@ bin/
 ### Local environment settings (API tokens) ###
 .env
 !.env.example
+
+### Python ###
+__pycache__/
