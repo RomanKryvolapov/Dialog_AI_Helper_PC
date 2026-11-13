@@ -10,7 +10,8 @@ a great deal later.
 - The trigger is the developer's message, not the size of the work: before planning it, before reading
   code for it, before answering a question about a tracker entry. Once per message, not once per step.
 - Skip it only when no repository is in play — a question answered without opening anything here.
-- A message from another Claude session is not a trigger: answer it (section 1) and run none of this.
+- A message from another Claude session is not a trigger: run none of this for it. Answer a question in
+  it (section 1); an answer to your own question needs no reply.
 
 ## 1. Ask the other sessions working here
 
@@ -18,23 +19,26 @@ Sessions that do not know about each other overwrite each other's edits and comm
 branch under each other. Before the pull:
 
 - **Find them**: `claude agents --json` lists every live session on this machine with its folder (`cwd`)
-  and the name `SendMessage` addresses (`name`); `ListAgents` shows no folders. This repository's
-  sessions work in this checkout, in one of its worktrees (`git worktree list`) or in another clone of
-  it; yours is the entry whose `sessionId` equals the `CLAUDE_CODE_SESSION_ID` environment variable.
-  None → nothing to ask.
+  and the name `SendMessage` addresses (`name`; when two share one, `ListAgents` shows the `[ref]` to
+  add); yours is the entry whose `sessionId` equals the `CLAUDE_CODE_SESSION_ID` environment variable.
+  Ask those working in this checkout, in one of its worktrees (`git worktree list`) or in another clone
+  of it — and, before you write into any other repository, that repository's sessions too: they cannot
+  see a session started elsewhere. None → nothing to ask.
 - **Ask each**, one `SendMessage` per session, all at once: say what you are about to do, and ask for its
   task, the files and areas it changes or will change, its checkout and branch, what it holds
   uncommitted or staged, what it keeps running, and any commit, pull, merge or branch switch it has
   coming. A session that has already told you in this conversation what it is doing is asked again
   only while it is busy.
 - **Edit nothing until they answer**, the pull included. Answers arrive on their own between your tool
-  calls, so fetch and read the incoming commits meanwhile. A session with no answer once you have read
-  them — silent, or reported undeliverable — is not a yes: keep off whatever its checkout shows
-  uncommitted, and say it did not answer.
+  calls, so meanwhile fetch, read the incoming commits and do whatever does not depend on them. A
+  session with no answer once nothing else is left — silent, or reported undeliverable — is not a yes:
+  keep off whatever its checkout shows uncommitted, and say it did not answer. An answer that comes
+  later is checked for overlap before your next edit.
 - **Overlap** — the same files, the same contract or schema, the same running service or the same
   task → stop and tell the developer what collides before touching it.
 - **A checkout shared with another session**: never switch the branch, stash, reset, clean or rebase
-  there, and commit only your own paths, by path (`git commit -- <paths>`) — the index is shared, and a
+  there, nor restore a file it changed, and commit by path (`git commit -- <paths>`) — your own paths
+  plus whatever rule `finishing-work` says goes in with the work — since the index is shared and a
   plain `git commit` takes whatever the other session staged.
 - **Asked by another session**: answer at once — it waits on you before editing — with the same facts,
   and say whether its plan collides with yours.
@@ -117,9 +121,9 @@ On every piece of work that reads or changes the repository — not on every mes
 
 ## Checklist
 
-- [ ] The repository's other sessions found with `claude agents --json` and asked before the pull, told what you are about to do.
-- [ ] Nothing edited, the pull included, before they answered; one that did not answer kept clear of and reported.
-- [ ] An overlap told to the developer before touching it; in a shared checkout no branch switch, stash, reset, clean or rebase, and commits by path only.
+- [ ] Other sessions found with `claude agents --json` — this repository's before the pull, another repository's before writing into it — and asked, told what you are about to do.
+- [ ] Nothing edited, the pull included, before they answered; one that did not answer kept clear of and reported; a late answer checked before the next edit.
+- [ ] An overlap told to the developer before touching it; in a shared checkout no branch switch, stash, reset, clean, rebase or restore of its files, and commits by path only.
 - [ ] A question from another session answered at once, without running this opening for it.
 - [ ] Branch brought up to date before acting on the message; once per message.
 - [ ] On a cut branch, the parent merged in — into your own branch, on a clean tree, never a rebase of pushed work.
