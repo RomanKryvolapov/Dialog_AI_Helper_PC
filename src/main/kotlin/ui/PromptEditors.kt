@@ -71,8 +71,11 @@ class PromptPartEditor(
         showState()
     }
 
+    // Text saved before a part gained a required placeholder is still sent as it is: say what it lacks.
     private fun showState() {
-        status.showNote(if (current() == builtIn) "Default text" else "Edited")
+        val problem = promptProblem(part, current())
+        if (problem != null) status.showError("$problem. Reset to default, or add it and save")
+        else status.showNote(if (current() == builtIn) "Default text" else "Edited")
     }
 }
 

@@ -1,5 +1,6 @@
 package utils
 
+import app.DialogApplication
 import dev.langchain4j.model.googleai.GoogleAiGeminiTokenUsage
 import dev.langchain4j.model.output.TokenUsage
 import kotlin.test.Test
@@ -35,5 +36,13 @@ class TokenUsageTrackerTest {
         assertEquals(TokenUsageTracker.Totals(), tracker.totals.value, "an answer to a request sent before Clear dialog")
         tracker.record("gpt-6.1-terra", TokenUsage(500, 20), tracker.currentDialog())
         assertEquals(520, tracker.totals.value.total)
+    }
+
+    @Test
+    fun `the top bar shows what was sent and what came back apart`() {
+        val tracker = TokenUsageTracker()
+        assertEquals("Tokens in 0 · out 0", DialogApplication.tokensText(tracker.totals.value))
+        tracker.record("gpt-6.1-terra", TokenUsage(12_340, 950), tracker.currentDialog())
+        assertEquals("Tokens in 12.3k · out 950", DialogApplication.tokensText(tracker.totals.value))
     }
 }

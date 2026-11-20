@@ -66,6 +66,10 @@ class DialogApplication : Application(), KoinComponent {
             else -> String.format(java.util.Locale.ROOT, "%.1fM", count / 1_000_000.0)
         }
 
+        /** The top bar's count: what the requests sent (in) and what the models wrote back (out), apart. */
+        internal fun tokensText(totals: TokenUsageTracker.Totals): String =
+            "Tokens in ${compactCount(totals.input)} · out ${compactCount(totals.output)}"
+
         internal fun tokensTooltip(totals: TokenUsageTracker.Totals): String = buildString {
             appendLine("Tokens this dialog has used since Clear dialog, translations, conversation summaries and questions,")
             append("as the providers reported them: in ${totals.input}, out ${totals.output}, ${totals.answers} answers")
@@ -188,7 +192,7 @@ class DialogApplication : Application(), KoinComponent {
 
         mainThreadScope.launch {
             tokenUsageTracker.totals.collect { totals ->
-                tokensLabel.text = "Tokens ${compactCount(totals.total)}"
+                tokensLabel.text = tokensText(totals)
                 tokensLabel.tooltip = Tooltip(tokensTooltip(totals))
             }
         }

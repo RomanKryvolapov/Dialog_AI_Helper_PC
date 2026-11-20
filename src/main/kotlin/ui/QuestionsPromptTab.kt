@@ -17,6 +17,7 @@ import repository.PreferencesRepository
 import ui.base.BaseTab
 import utils.LastRequests
 import utils.PromptPart
+import utils.QuestionPrompts
 
 /**
  * Settings → Questions: the mode that answers the questions asked in the conversation — on or off (also the box in
@@ -35,7 +36,7 @@ class QuestionsPromptTab(
             title = "Questions: answers to the questions asked in the conversation",
             note = "With the mode on, every phrase heard also goes, with the phrases before it, the conversation summary " +
                 "and the questions answered so far, to the model chosen below. It answers a new question once it has " +
-                "been asked in full, in English and in the first person, so it can be said aloud; several questions get " +
+                "been asked in full, in the first person, so it can be said aloud (in English unless another language is chosen below); several questions get " +
                 "one answer; a follow-up is answered knowing the earlier question and answer. Nothing appears on the " +
                 "Questions screen when there is no question. The phrases come from the method in use: its recogniser, " +
                 "or a voice model's own transcript. With Speechmatics' speaker labels each phrase says who spoke.",
@@ -52,6 +53,21 @@ class QuestionsPromptTab(
                 toStringFn = { it.title },
                 onSelected = { model -> save { it.copy(modelId = model.id) } },
             )
+        }
+        addSection(
+            title = "Language the question is shown in",
+            note = "The question as it appears on the Questions screen: in the language of the call, as it was asked, " +
+                "or translated into the language chosen here.",
+        ) {
+            languageBox(callLanguage = true, current = { settings().questionDisplayLanguage }) { language -> save { it.copy(questionDisplayLanguage = language) } }
+        }
+        addSection(
+            title = "Language the answer is shown in",
+            note = "English by default, ready to be said aloud in an English call. Both choices reach the model through " +
+                "the {{question_language}} and {{answer_language}} placeholders of the instructions below, and apply " +
+                "from the next question; the answers already on screen stay as they are.",
+        ) {
+            languageBox(callLanguage = false, current = { settings().answerDisplayLanguage }) { language -> save { it.copy(answerDisplayLanguage = language) } }
         }
         children.add(
             numberSetting(
@@ -78,7 +94,7 @@ class QuestionsPromptTab(
                 title = "Instructions (system message)",
                 description = "What counts as a question, when to wait for the rest of one, and the reply: a <status> line " +
                     "(answer, update, wait, answered or none), then for an answer or an update <question> and <answer>. The app reads these tags.",
-                part = PromptPart.INSTRUCTIONS,
+                part = PromptPart.QUESTIONS_INSTRUCTIONS,
                 lines = 24,
                 builtIn = builtIn.system,
                 current = { settings().system },
@@ -111,6 +127,20 @@ class QuestionsPromptTab(
                 enabledBox?.let { if (it.isSelected != on) it.isSelected = on }
             }
         }
+    }
+
+    /**
+     * A display-language choice. Only the question's offers the call's own language: it is saved blank, and a blank
+     * setting reads back as its default, which for the answer is English.
+     */
+    private fun VBox.languageBox(callLanguage: Boolean, current: () -> String, onPicked: (String) -> Unit) {
+        val languages = (if (callLanguage) listOf("") else emptyList()) + QuestionPrompts.DISPLAY_LANGUAGES
+        addComboBox(
+            items = languages,
+            selectedItem = languages.firstOrNull { it == current() },
+            toStringFn = { it.ifBlank { "The language of the call" } },
+            onSelected = { language -> if (current() != language) onPicked(language) },
+        )
     }
 
     private fun settings(): QuestionsSettings = getAppInfo().questions

@@ -32,7 +32,7 @@ The transcript is imperfect. Words can be misheard: when a word does not fit, pi
 
 Every call gives you these blocks:
 <summary> what the conversation has been about so far (may be empty or a little behind);
-<answered> the questions already found in this conversation, oldest first, each with the answer suggested to the user, who may have said less (may be empty). The last one is marked <qa replaceable="yes"> while it was answered only a moment ago: the other side may still be finishing that question;
+<answered> the questions already found in this conversation, oldest first, each with the answer suggested to the user, who may have said less (may be empty). They are written in the languages the user reads them in, which can differ from the language of the call: compare them with the speech by meaning. The last one is marked <qa replaceable="yes"> while it was answered only a moment ago: the other side may still be finishing that question;
 <speech> the latest recognized phrases, oldest first. The LAST line is the newest phrase;
 <silence> (only sometimes present) how long the speaker has been silent after the newest phrase; then the newest phrase is final, not cut: a question in it that can be understood is finished, even if the phrase lacks . ? or !.
 
@@ -49,11 +49,11 @@ IF the last entry of <answered> is replaceable and the other side's newest phras
 IF every question in <speech> is a question from <answered> asked again (repeated or reworded), or one still sitting in <speech> after it was answered -> no output.
 ELSE -> answer. If several new finished questions are open, one answer covers all of them, in the order asked.
 
-Answer in English, in the first person, the way a seasoned professional would say it aloud in the conversation: the direct answer first, then the one or two points that matter most for this question. Plain words, no filler, no side notes or caveats nobody asked about. 2-3 short sentences, about 40 words; a little more only when one answer covers several questions. Plain text only: no Markdown, lists or code blocks; if a query or code helps, give it as one short inline line. For a question about the user's own experience, which you cannot know, give a short outline with [placeholders] for the personal facts instead of inventing them.
+Answer in {{answer_language}}, in the first person, the way a seasoned professional would say it aloud in the conversation: the direct answer first, then the one or two points that matter most for this question. Plain words, no filler, no side notes or caveats nobody asked about. 2-3 short sentences, about 40 words; a little more only when one answer covers several questions. Plain text only: no Markdown, lists or code blocks; if a query or code helps, give it as one short inline line. For a question about the user's own experience, which you cannot know, give a short outline with [placeholders] for the personal facts instead of inventing them.
 
 Start the reply with a status line:
 <status>answer</status> a new finished question was found; then give
-<question>the question(s) as asked: complete and standalone, misheard words corrected, a follow-up restated in full; several questions numbered 1) 2)</question>
+<question>the question(s) in {{question_language}}: complete and standalone, misheard words corrected, a follow-up restated in full; several questions numbered 1) 2)</question>
 <answer>the answer</answer>
 <status>update</status> the newest phrase goes on with the replaceable question; then give <question> and <answer> for that whole question, as above
 <status>wait</status> a question is still being asked; write nothing else
@@ -76,6 +76,15 @@ Write nothing else.
 </speech>
 """.trimIndent()
 
+    /** The languages Settings → Questions offers for showing a question and its answer, besides the call's own. */
+    val DISPLAY_LANGUAGES = listOf(
+        "English", "Russian", "Ukrainian", "German", "French", "Spanish", "Italian", "Portuguese", "Polish",
+        "Turkish", "Chinese", "Japanese", "Korean",
+    )
+
+    /** What a display-language setting puts into the instructions; a blank one is the language of the call. */
+    fun languageFor(setting: String): String = setting.ifBlank { "the language of the call" }
+
     /** One question found earlier, with its answer (null: older ones keep only the question). */
     data class Answered(val question: String, val answer: String?)
 
@@ -88,7 +97,13 @@ Write nothing else.
         lastReplaceable: Boolean,
     ) =
         ModelPrompt(
-            system = settings.system,
+            system = fillTemplate(
+                settings.system,
+                mapOf(
+                    PromptVariables.QUESTION_LANGUAGE to languageFor(settings.questionDisplayLanguage),
+                    PromptVariables.ANSWER_LANGUAGE to languageFor(settings.answerDisplayLanguage),
+                ),
+            ),
             user = fillTemplate(
                 settings.user,
                 mapOf(

@@ -98,6 +98,27 @@ class QuestionsAssistantTest {
     }
 
     @Test
+    fun `a phrase heard after the answers were cleared is checked, though a request from before was still on its way`() {
+        val cloud = ScriptedCloud(
+            flow {
+                delay(600)
+                emit("<status>answer</status>\n<question>What is a thread?</question>\n<answer>A unit of execution.</answer>")
+            },
+            flowOf("<status>answer</status>\n<question>What is a deadlock?</question>\n<answer>Two threads wait for each other forever.</answer>"),
+        )
+        val screen = Rows()
+        val assistant = QuestionsAssistant(cloud, Prefs(), RateLimiters(), LastRequests(), screen)
+        assistant.phraseHeard(ConversationTurn("What is a thread?"), "")
+        val deadline = System.currentTimeMillis() + 5_000
+        while (cloud.messages.size < 1 && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        assistant.clear()
+        hear(assistant, cloud, "What is a deadlock?", 2)
+        assertEquals(2, cloud.messages.size, "the phrase heard after the clear was never checked")
+        assertTrue("What is a thread?" !in cloud.messages[1], "phrases from before the clear are gone")
+        assertEquals(listOf("What is a deadlock?" to "Two threads wait for each other forever."), screen.rows.toList())
+    }
+
+    @Test
     fun `a question that goes on after it was answered is answered again in its own row, not in a new one`() {
         val cloud = ScriptedCloud(
             flowOf("<status>answer</status>\n<question>How does garbage collection work in Java?</question>\n<answer>It frees objects nothing refers to.</answer>"),

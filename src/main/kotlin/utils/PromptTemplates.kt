@@ -14,6 +14,8 @@ object PromptVariables {
     const val TRANSLATED = "translated"
     const val ANSWERED = "answered"
     const val SPEECH = "speech"
+    const val QUESTION_LANGUAGE = "question_language"
+    const val ANSWER_LANGUAGE = "answer_language"
 
     val descriptions: Map<String, String> = linkedMapOf(
         SUMMARY to "the running summary of the conversation, empty until the first one is written",
@@ -25,6 +27,8 @@ object PromptVariables {
         TRANSLATED to "the translation given for it, empty while it is still being translated",
         ANSWERED to "the questions found so far in this dialog with their answers, oldest first (only the question for older ones)",
         SPEECH to "the latest phrases, oldest first, one per line; \"S1: \" before each when the recogniser tells speakers apart",
+        QUESTION_LANGUAGE to "the language chosen above for showing the question (\"the language of the call\" when none is chosen)",
+        ANSWER_LANGUAGE to "the language chosen above for showing the answer",
     )
 }
 
@@ -43,6 +47,12 @@ enum class PromptPart(val allowed: Set<String>, val required: Set<String> = empt
     QUESTIONS_MESSAGE(
         setOf(PromptVariables.SUMMARY, PromptVariables.ANSWERED, PromptVariables.SPEECH),
         required = setOf(PromptVariables.SPEECH),
+    ),
+
+    /** The questions instructions: the two display languages are settings of their own, so they come in by placeholder. */
+    QUESTIONS_INSTRUCTIONS(
+        setOf(PromptVariables.QUESTION_LANGUAGE, PromptVariables.ANSWER_LANGUAGE),
+        required = setOf(PromptVariables.QUESTION_LANGUAGE, PromptVariables.ANSWER_LANGUAGE),
     ),
 
     /** The instructions: sent the same with every request, so they take no placeholders. */

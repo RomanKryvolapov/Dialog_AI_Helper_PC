@@ -210,6 +210,8 @@ val defaultApplicationInfo = ApplicationInfo(
         modelId = OpenAiModelsEnum.GPT_6_1_TERRA.type,
         phrases = 8,
         fullAnswers = 3,
+        questionDisplayLanguage = "",
+        answerDisplayLanguage = "English",
         system = QuestionPrompts.INSTRUCTIONS,
         user = QuestionPrompts.MESSAGE,
     ),

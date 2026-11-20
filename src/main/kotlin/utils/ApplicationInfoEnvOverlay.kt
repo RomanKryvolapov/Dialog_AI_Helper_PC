@@ -218,6 +218,8 @@ class ApplicationInfoEnvOverlay(
                     modelId = saved.modelId.dropIfFallback(default.modelId),
                     phrases = saved.phrases.dropIfFallback(default.phrases),
                     fullAnswers = saved.fullAnswers.dropIfFallback(default.fullAnswers),
+                    questionDisplayLanguage = saved.questionDisplayLanguage.dropIfFallback(default.questionDisplayLanguage),
+                    answerDisplayLanguage = saved.answerDisplayLanguage.dropIfFallback(default.answerDisplayLanguage),
                     system = saved.system.dropIfFallback(default.system),
                     user = saved.user.dropIfFallback(default.user),
                 ).takeUnless { it == QuestionsSettingsNullable() }

@@ -25,7 +25,7 @@
     -fx-background-insets: 0 0 0 0;
 }
 
-/* Ширина вкладки: все вкладки и кнопки диалога рядом с ними (.header-button) одной ширины */
+/* Ширина вкладки: все вкладки одной ширины; кнопки диалога рядом с ними (.header-button) уже */
 .tab-pane {
     -fx-tab-min-width: 150px;
     -fx-tab-max-width: 150px;
@@ -383,11 +383,12 @@
     -fx-max-width: 24px;
 }
 
-/* «Старт диалога» и «Очистить» в строке вкладок: той же ширины и формы, что и вкладки (-fx-tab-min-width выше) */
+/* Кнопки диалога в строке вкладок: той же формы, что и вкладки, но уже — их три, и надписи мельче */
 .button.header-button {
-    -fx-pref-width: 150px;
-    -fx-min-width: 150px;
-    -fx-max-width: 150px;
+    -fx-pref-width: 128px;
+    -fx-min-width: 128px;
+    -fx-max-width: 128px;
+    -fx-font-size: 16px;
     -fx-padding: 0;
     -fx-background-radius: 24;
     -fx-border-radius: 24;

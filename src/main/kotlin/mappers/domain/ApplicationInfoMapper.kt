@@ -50,6 +50,8 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                         modelId = questions?.modelId?.let { id -> resolveLlmModel(id)?.takeIf { it.readsText }?.id } ?: default.modelId,
                         phrases = questions?.phrases ?: default.phrases,
                         fullAnswers = questions?.fullAnswers ?: default.fullAnswers,
+                        questionDisplayLanguage = questions?.questionDisplayLanguage ?: default.questionDisplayLanguage,
+                        answerDisplayLanguage = questions?.answerDisplayLanguage ?: default.answerDisplayLanguage,
                         system = questions?.system.orDefault(default.system),
                         user = questions?.user.orDefault(default.user),
                     )
@@ -86,6 +88,8 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                     modelId = questions.modelId,
                     phrases = questions.phrases,
                     fullAnswers = questions.fullAnswers,
+                    questionDisplayLanguage = questions.questionDisplayLanguage,
+                    answerDisplayLanguage = questions.answerDisplayLanguage,
                     system = questions.system,
                     user = questions.user,
                 ),

@@ -192,13 +192,19 @@ class MessagesTab(
         }
     }
 
+    /** Empties the Questions screen and its history of answers; the dialog itself goes on untouched. */
+    private val clearAnswersButton = Button("Clear answers").apply {
+        style = "-fx-background-color: $COLOUR_RED;"
+        setOnAction { questionsAssistant.clear() }
+    }
+
     /**
-     * The dialog's own buttons: the window shows them in its top bar, right after the tabs, sized and
+     * The dialog's own buttons: the window shows them in its top bar, right after the tabs, shaped and
      * spaced like them (the `header-button` style).
      */
-    val headerControls: HBox = HBox(HEADER_SPACING, listeningButton, clearButton).apply {
+    val headerControls: HBox = HBox(HEADER_SPACING, listeningButton, clearButton, clearAnswersButton).apply {
         alignment = Pos.CENTER_LEFT
-        listOf(listeningButton, clearButton).forEach { it.styleClass.add("header-button") }
+        listOf(listeningButton, clearButton, clearAnswersButton).forEach { it.styleClass.add("header-button") }
     }
 
     /** What the live loop is doing: recognition, translation, which method answers and why. */

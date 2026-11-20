@@ -14,6 +14,8 @@ class QuestionPromptsTest {
         modelId = "gpt-6.1-terra",
         phrases = 8,
         fullAnswers = 3,
+        questionDisplayLanguage = "",
+        answerDisplayLanguage = "English",
         system = QuestionPrompts.INSTRUCTIONS,
         user = QuestionPrompts.MESSAGE,
     )
@@ -33,7 +35,9 @@ class QuestionPromptsTest {
             afterSilence = false,
             lastReplaceable = true,
         )
-        assertEquals(QuestionPrompts.INSTRUCTIONS, prompt.system)
+        assertTrue("{{" !in prompt.system, "every placeholder of the instructions is filled")
+        assertTrue("Answer in English, in the first person" in prompt.system)
+        assertTrue("<question>the question(s) in the language of the call: complete" in prompt.system)
         assertTrue("<summary>\n(none yet)\n</summary>" in prompt.user)
         assertTrue("<qa>\n<question>What is a thread?</question>\n</qa>" in prompt.user, "an older entry keeps only its question")
         assertTrue(
@@ -86,6 +90,19 @@ class QuestionPromptsTest {
     @Test
     fun `the built-in questions message passes the check the settings screen makes`() {
         assertNull(promptProblem(PromptPart.QUESTIONS_MESSAGE, QuestionPrompts.MESSAGE))
-        assertNull(promptProblem(PromptPart.INSTRUCTIONS, QuestionPrompts.INSTRUCTIONS))
+        assertNull(promptProblem(PromptPart.QUESTIONS_INSTRUCTIONS, QuestionPrompts.INSTRUCTIONS))
+        assertTrue(
+            promptProblem(PromptPart.QUESTIONS_INSTRUCTIONS, "Answer in English.")!!.startsWith("{{question_language}}, {{answer_language}} is missing"),
+            "instructions without the placeholders would leave the language settings without effect",
+        )
+    }
+
+    @Test
+    fun `the languages chosen for the question and the answer reach the instructions`() {
+        val chosen = settings.copy(questionDisplayLanguage = "Russian", answerDisplayLanguage = "German")
+        val prompt = QuestionPrompts.request(chosen, "", emptyList(), listOf(turn("What is a thread?")), afterSilence = false, lastReplaceable = false)
+        assertTrue("Answer in German, in the first person" in prompt.system)
+        assertTrue("<question>the question(s) in Russian: complete" in prompt.system)
+        assertTrue("{{" !in prompt.system)
     }
 }

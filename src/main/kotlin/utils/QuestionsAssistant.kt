@@ -131,11 +131,15 @@ class QuestionsAssistant(
                 log.warn("Questions request failed ({}): {}", failure.kind, failure.detail)
                 null
             }
+            // After a clear, pending means phrases heard since it: they are checked like any others. The silence
+            // check drops itself when the epoch has moved on.
             val again = synchronized(lock) {
-                when {
-                    epoch != mine -> { inFlight = false; pending = false; return@launch }
-                    pending -> { pending = false; true }
-                    else -> { inFlight = false; false }
+                if (pending) {
+                    pending = false
+                    true
+                } else {
+                    inFlight = false
+                    false
                 }
             }
             if (again) launchRequest(afterSilence = false)
