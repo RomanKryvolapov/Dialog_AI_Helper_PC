@@ -5,8 +5,9 @@
 // hands the real size of the context window and its own 5-hour and 7-day figures, which stand in
 // for the usage API's, without a word, when those have gone stale. Beside the CONTEXT gauge it
 // writes how long the prompt cache stays warm, and last, under the limits, how many tokens the
-// session and the account have used. Of the limits it draws the account's windows alone; a model's
-// weekly bucket of its own is the injected block's.
+// session and the account have used, followed by the model and the effort the session runs on. Of
+// the limits it draws the account's windows alone; a model's weekly bucket of its own is the
+// injected block's.
 
 package main
 
@@ -24,8 +25,12 @@ import (
 type statusInput struct {
 	TranscriptPath string `json:"transcript_path"`
 	Model          *struct {
-		ID string `json:"id"`
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"` // "Opus 5.5"; a plugin is handed the id alone
 	} `json:"model"`
+	// Effort is the reasoning effort the session is set to. Claude Code sends none for a model that
+	// takes no effort setting, and hands a plugin none at all; see renderPanel.
+	Effort        *effortLevel `json:"effort"`
 	ContextWindow *struct {
 		TotalInputTokens  float64 `json:"total_input_tokens"`
 		ContextWindowSize float64 `json:"context_window_size"`
@@ -51,6 +56,83 @@ type promptCache struct {
 	CachingObserved bool     `json:"caching_observed"`
 	TTL             string   `json:"ttl"`        // the lifetime it was written with: "5m" or "1h"
 	ExpiresAt       *float64 `json:"expires_at"` // Unix seconds; null once nothing is cached
+}
+
+type effortLevel struct {
+	Level string `json:"level"` // low, medium, high, xhigh or max
+}
+
+// modelText is what the session runs on, as the status line writes it at the end, after the token
+// counts: "MODEL Opus 5.5 EFFORT high". The name is Claude Code's own where the input carries it, and
+// is otherwise worked out from the model's id; the effort is left out where there is none. Empty
+// where the input names no model.
+func (in *statusInput) modelText() string {
+	name := ""
+	if in.Model != nil {
+		name = strings.TrimSpace(in.Model.DisplayName)
+		if name == "" {
+			name = modelName(in.Model.ID)
+		}
+	}
+	effort := ""
+	if in.Effort != nil {
+		effort = strings.TrimSpace(in.Effort.Level)
+	}
+	switch {
+	case name == "":
+		return ""
+	case effort == "":
+		return "MODEL " + name
+	}
+	return "MODEL " + name + " EFFORT " + effort
+}
+
+// modelName is a model's name worked out from its id, the way Claude Code names its own models:
+// "claude-opus-5-5" is Opus 5.5, "claude-opus-4-0" Opus 4, "claude-3-5-haiku" Haiku 3.5, and a dated
+// "claude-sonnet-4-5-20250929" Sonnet 4.5. An id that asks for the million-token window,
+// "claude-opus-5-5[1m]", is Opus 5.5 (1M context): Claude Code writes it so for the models its
+// catalogue marks for it, and this, which cannot see that catalogue, for every model. Any other
+// suffix in brackets is no part of the name. An id of any other shape, another provider's or an
+// alias, is written as it is.
+func modelName(id string) string {
+	id = strings.TrimSpace(id)
+	base, suffix := id, ""
+	if i := strings.Index(id, "["); i > 0 {
+		base = strings.TrimSpace(id[:i])
+		if strings.HasSuffix(id, "[1m]") {
+			suffix = " (1M context)"
+		}
+	}
+	rest, ok := strings.CutPrefix(base, "claude-")
+	if !ok {
+		return id
+	}
+	parts := strings.Split(rest, "-")
+	if last := parts[len(parts)-1]; len(parts) > 1 && len(last) == 8 && isDigits(last) {
+		parts = parts[:len(parts)-1]
+	}
+	family, version := "", []string{}
+	for _, part := range parts {
+		switch {
+		case family == "" && part != "" && strings.Trim(part, "abcdefghijklmnopqrstuvwxyz") == "":
+			family = part
+		case len(part) > 0 && len(part) <= 2 && isDigits(part):
+			version = append(version, part)
+		default:
+			return id
+		}
+	}
+	if family == "" || len(version) == 0 || len(version) > 2 {
+		return id
+	}
+	if len(version) == 2 && version[1] == "0" {
+		version = version[:1]
+	}
+	return strings.ToUpper(family[:1]) + family[1:] + " " + strings.Join(version, ".") + suffix
+}
+
+func isDigits(s string) bool {
+	return s != "" && strings.Trim(s, "0123456789") == ""
 }
 
 type liveWindow struct {
@@ -218,7 +300,7 @@ func renderStatusline(args argSet, rawInput string, hookInput map[string]any, no
 	// The CONTEXT line carries how long the cache stays warm and, two spaces on, the token counts,
 	// where the terminal has room for them; see renderOpts.tokens.
 	o := renderOpts{p: p, width: statusWidth(), contextTail: in.cacheText(now, p),
-		tokens: tokensText(in.TranscriptPath, fiveStart, weekFrom, now)}
+		tokens: tokensText(in.TranscriptPath, in.modelText(), fiveStart, weekFrom, now)}
 
 	var lines []string
 	if st == nil {

@@ -1213,7 +1213,7 @@ type renderOpts struct {
 	// tokens follow contextTail two spaces on, where the line has room for them beside a CONTEXT gauge
 	// as long as the limits'; where it has not, they take a line of their own under the limits, so
 	// that no gauge is shortened or pushed out of line for them. The status line puts the session's
-	// and the account's token counts there.
+	// and the account's token counts there, followed by the model and the effort the session runs on.
 	tokens string
 }
 

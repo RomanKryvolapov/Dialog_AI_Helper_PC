@@ -373,13 +373,14 @@ func sessionTokenStats(transcript string, fiveStart, weekFrom, now time.Time) (t
 	return st, st.session.total() > 0 || st.weekly.total() > 0
 }
 
-// tokensText is the session's tokens and, where the limits' windows are known, the account's in
-// each, as the status line writes them: "SESSION: FRESH 1m CACHED 108m, ACCOUNT 5H: FRESH 20m CACHED
-// 1.2b, 7D: FRESH 21m CACHED 1.2b".
-func tokensText(transcript string, fiveStart, weekFrom, now time.Time) string {
+// tokensText is the session's tokens, where the limits' windows are known the account's tokens in
+// each, and last what the session runs on, as the status line writes them: "SESSION: FRESH 1m CACHED
+// 108m, ACCOUNT 5H: FRESH 20m CACHED 1.2b, 7D: FRESH 21m CACHED 1.2b, MODEL Opus 5.5 EFFORT high".
+// runsOn is the model and its effort (modelText); where there are no tokens to count, it stands alone.
+func tokensText(transcript, runsOn string, fiveStart, weekFrom, now time.Time) string {
 	st, ok := sessionTokenStats(transcript, fiveStart, weekFrom, now)
 	if !ok {
-		return ""
+		return runsOn
 	}
 	text := "SESSION: " + freshAndCached(st.session)
 	if !st.sessionWhole {
@@ -394,6 +395,9 @@ func tokensText(transcript string, fiveStart, weekFrom, now time.Time) string {
 		if !st.accountWhole {
 			text += " SO FAR"
 		}
+	}
+	if runsOn != "" {
+		text += ", " + runsOn
 	}
 	return text
 }

@@ -23,7 +23,10 @@ branch under each other. Before the pull:
   add); yours is the entry whose `sessionId` equals the `CLAUDE_CODE_SESSION_ID` environment variable.
   Ask only those working in this checkout, in one of its worktrees (`git worktree list`) or in another
   clone of it — never a session of another project, even when your work writes into its repository;
-  there, keep off whatever its checkout shows uncommitted. None → nothing to ask.
+  there, keep off whatever its checkout shows uncommitted. Of those, ask only the ones active right
+  now — `status` `busy`, or `waiting` (a turn in progress, paused on the developer's answer). An
+  `idle` session has no turn in flight: leave it out — it runs this same opening itself before its
+  next edit. None → nothing to ask.
 - **Ask each**, one `SendMessage` per session, all at once: say what you are about to do, and ask for its
   task, the files and areas it changes or will change, its checkout and branch, what it holds
   uncommitted or staged, what it keeps running, and any commit, pull, merge or branch switch it has
@@ -122,7 +125,7 @@ On every piece of work that reads or changes the repository — not on every mes
 
 ## Checklist
 
-- [ ] This repository's other sessions found with `claude agents --json` and asked before the pull, told what you are about to do; no session of another project messaged.
+- [ ] This repository's other sessions found with `claude agents --json`; the ones active right now (`busy` or `waiting`, never `idle`) asked before the pull and told what you are about to do; no session of another project messaged.
 - [ ] Nothing edited, the pull included, before they answered; one that did not answer kept clear of and reported; a late answer checked before the next edit.
 - [ ] An overlap told to the developer before touching it; in a shared checkout no branch switch, stash, reset, clean, rebase or restore of its files, and commits by path only.
 - [ ] A question from a session of this repository answered at once, without running this opening for it; one from another project left unanswered.

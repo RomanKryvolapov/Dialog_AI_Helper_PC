@@ -7,7 +7,8 @@
 // to the plugin.
 //
 // The input is the status line's, which the plugin builds from what Claude Code hands a plugin. That
-// holds no prompt-cache reading, so where the input carries none it is read from the transcript. And
+// holds no prompt-cache reading and no effort, so where the input carries none they are read from the
+// transcript; the model's name is worked out from its id, the one thing a plugin is told of it. And
 // before a session's first reply, when nothing has measured the context, the plugin adds what /context
 // estimates it holds, which the status line, handed no such figure, leaves out.
 
@@ -31,8 +32,9 @@ type panelPicture struct {
 	// Cache is how long the prompt cache stays warm, the status line's text after CACHE; null where
 	// nothing says.
 	Cache *panelText `json:"cache"`
-	// Tokens is the session's and the account's token counts as the status line writes them; empty
-	// where there is no transcript to count them in.
+	// Tokens is the session's and the account's token counts, followed by the model and the effort
+	// the session runs on, as the status line writes them; the model and the effort alone
+	// where there is no transcript to count tokens in, and empty where nothing names a model either.
 	Tokens string `json:"tokens"`
 	// Limits holds one entry per limit, in the status line's order; null without any figures at all,
 	// which the status line writes as LIMITS -> N/A.
@@ -89,11 +91,14 @@ func renderPanel(args argSet, rawInput string, hookInput map[string]any, now tim
 	if in.PromptCache == nil {
 		in.PromptCache = transcriptPromptCache(in.TranscriptPath, now)
 	}
+	if in.Effort == nil {
+		in.Effort = transcriptEffort(in.TranscriptPath)
+	}
 	st := in.limitsState(args, hookInput, now)
 	fiveStart, weekFrom := limitWindows(st)
 
 	pic := panelPicture{
-		Tokens:        tokensText(in.TranscriptPath, fiveStart, weekFrom, now),
+		Tokens:        tokensText(in.TranscriptPath, in.modelText(), fiveStart, weekFrom, now),
 		Notes:         []panelNote{},
 		FiguresColour: hexColour(figuresRGB),
 	}
@@ -147,6 +152,39 @@ func hexColour(rgb [3]int) string { return fmt.Sprintf("#%02x%02x%02x", rgb[0], 
 // hundred cells in 24-bit colour: colourOf gives each cell's colour.
 func panelEmpty(pct float64, colourOf func(cell, firstEmpty, cells int) [3]int) []colourRun {
 	return emptyRuns(filledCells(pct, barCells), barCells, func(c, first, n int) string { return hexColour(colourOf(c, first, n)) })
+}
+
+// transcriptEffort is the effort the newest main-thread reply in the transcript was asked for, which
+// Claude Code records with every reply: the panel's stand-in for the level the session is set to,
+// which a plugin is not told. So a level changed mid-session shows from the next reply on. Nil where
+// that reply records none — a model that takes no effort setting — and where there is no reply yet or
+// no transcript, which leaves the effort out until the first reply.
+func transcriptEffort(path string) *effortLevel {
+	lines := transcriptTail(path)
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := lines[i]
+		if !strings.Contains(line, `"assistant"`) {
+			continue
+		}
+		var entry struct {
+			Type        string `json:"type"`
+			IsSidechain bool   `json:"isSidechain"`
+			Effort      any    `json:"effort"` // a level; a number on Claude Code's own internal requests
+			Message     struct {
+				Model string `json:"model"`
+			} `json:"message"`
+		}
+		// A reply Claude Code writes itself, such as an API error, ran at no effort.
+		if json.Unmarshal([]byte(line), &entry) != nil || entry.Type != "assistant" || entry.IsSidechain ||
+			entry.Message.Model == "<synthetic>" {
+			continue
+		}
+		if level, ok := entry.Effort.(string); ok && strings.TrimSpace(level) != "" {
+			return &effortLevel{Level: strings.TrimSpace(level)}
+		}
+		return nil
+	}
+	return nil
 }
 
 // transcriptPromptCache is how long the prompt cache stays warm, read off the transcript: from the

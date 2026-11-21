@@ -91,18 +91,37 @@ Apply rule `code-quality` to what you built:
 
 ## Stage 6 — independent grading, once per task
 
-When you judge the whole task finished — not after each turn — launch the `change-reviewer` subagent
-(`.claude/agents/change-reviewer.md`) once, with the task's full diff and the requirement and nothing
-else: none of your reasoning, no defence of a choice. This launch is standing authorisation; a
-session-level instruction to avoid subagents does not cover it.
+When you judge the whole task finished — not after each turn — have it graded once by a reviewer that
+has not seen your reasoning. This is standing authorisation; a session-level instruction to avoid
+subagents does not cover it.
 
+- **Any code changed** — anything a program runs or the product reads: source, tests, configuration,
+  infrastructure, CI, the prompts the product sends → the built-in `/code-review`, at the level the
+  riskiest part of the change calls for, never its size:
+  - `high` — an ordinary change;
+  - `xhigh` — code with more than one caller, a contract between services, the database schema, money or
+    limits, sign-in, permissions or secrets, concurrency, a prompt or the AI's decision logic;
+  - `max` — a large task where several of those meet, or work about to leave the working branch; this
+    rule is the explicit request the skill requires before it runs `max`.
+- Always pass the level and `--max-findings all` — without them it reuses the level the developer last
+  typed and cuts the list short; never `low` (one unverified pass) or `medium` (`high` at lower effort).
+- `/code-review` reads `git diff`, which leaves untracked files out: `git add -N` the task's new files
+  first. In a checkout another session shares, also pass the task's own paths, or it reviews that
+  session's work too. It runs in the background: wait for its findings. Where it runs inline in your own
+  session instead, it has seen your reasoning — follow it with the cold pass below.
+- `/code-review` grades code, not the requirement: before launching it, walk the requirement's
+  acceptance criteria against what Stage 4 ran.
+- **Only text changed** — tracker entries, documents, Claude's own instructions → the `change-reviewer`
+  subagent, with the task's full diff and the requirement and nothing else: none of your reasoning, no
+  defence of a choice.
+- A level or a number of passes the developer names overrides the choice above.
 - On the turns before that, the report says the independent pass is still to come.
-- Check each finding against the code, never against your own reasoning; fix the real ones and run each
-  fix as Stage 4 demands.
+- Check each finding against the code, never against your own reasoning — below `max`, `/code-review`
+  returns unverified candidates; fix the real ones and run each fix as Stage 4 demands.
 - Do not re-run the reviewer for a new pass unless the fixes changed behaviour or structure rather than
   wording; re-run the code instead.
-- If the agent cannot be launched, say so and do the pass cold: re-read the diff without your notes and
-  try to make each change fail.
+- If the reviewer cannot be launched, say so and do the pass cold: re-read the diff without your notes
+  and try to make each change fail.
 
 ## The verdict
 
@@ -167,7 +186,7 @@ A pull request CI fails was handed over unfinished. Once one is asked for:
 - [ ] What could not be exercised named as unverified, after searching for the access.
 - [ ] Non-deterministic behaviour not called fixed on one run.
 - [ ] Judged as an architect; cause or symptom said.
-- [ ] At the end of the task, `change-reviewer` run once on the full diff and the requirement; its real findings fixed and the fixes run.
+- [ ] At the end of the task, one independent pass: `/code-review` at the risk's level with `--max-findings all` for code, `change-reviewer` for text only; its real findings fixed and the fixes run.
 - [ ] Verdict scoped; the report carries ran/read/assumed, who else was touched, what would prove it wrong.
 - [ ] No commit, push, pull request or merge without the developer's words; a requested commit preceded by a fresh pull and revision, audit logs staged.
 - [ ] Before a pull request: every CI gate run on the whole branch, the way CI runs it; no baseline recorded from a run that measures differently.

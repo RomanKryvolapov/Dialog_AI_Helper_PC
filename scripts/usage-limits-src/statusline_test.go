@@ -848,19 +848,31 @@ func TestReadTokens(t *testing.T) {
 	}
 
 	want := "SESSION: FRESH 66 CACHED 44, ACCOUNT 5H: FRESH 1k CACHED 2k, 7D: FRESH 2k CACHED 2k"
-	if got := tokensText(session, fiveStart, weekFrom, now); got != want {
+	if got := tokensText(session, "", fiveStart, weekFrom, now); got != want {
 		t.Errorf("tokens text = %q, want %q", got, want)
 	}
+	// What the session runs on goes last, after the account's counts.
+	want = "SESSION: FRESH 66 CACHED 44, ACCOUNT 5H: FRESH 1k CACHED 2k, 7D: FRESH 2k CACHED 2k, MODEL Opus 5.5 EFFORT high"
+	if got := tokensText(session, "MODEL Opus 5.5 EFFORT high", fiveStart, weekFrom, now); got != want {
+		t.Errorf("tokens text with the model = %q, want %q", got, want)
+	}
 	// No windows known: the session alone.
-	if got := tokensText(session, time.Time{}, time.Time{}, now); got != "SESSION: FRESH 66 CACHED 44" {
+	if got := tokensText(session, "", time.Time{}, time.Time{}, now); got != "SESSION: FRESH 66 CACHED 44" {
 		t.Errorf("tokens text without windows = %q", got)
+	}
+	if got := tokensText(session, "MODEL Opus 5.5", time.Time{}, time.Time{}, now); got != "SESSION: FRESH 66 CACHED 44, MODEL Opus 5.5" {
+		t.Errorf("tokens text without windows, with the model = %q", got)
 	}
 	// The same counts as the model is handed them.
 	if got := tokensElement(st); got != `<tokens session="fresh 66, cached 44" account_5h="fresh 1k, cached 2k" account_7d="fresh 2k, cached 2k"/>` {
 		t.Errorf("tokens element = %q", got)
 	}
-	if _, ok := sessionTokenStats("", fiveStart, weekFrom, now); ok || tokensText("", fiveStart, weekFrom, now) != "" {
+	if _, ok := sessionTokenStats("", fiveStart, weekFrom, now); ok || tokensText("", "", fiveStart, weekFrom, now) != "" {
 		t.Error("tokens without a session")
+	}
+	// Nothing to count: the model and its effort stand alone.
+	if got := tokensText("", "MODEL Opus 5.5 EFFORT high", fiveStart, weekFrom, now); got != "MODEL Opus 5.5 EFFORT high" {
+		t.Errorf("the model without tokens = %q", got)
 	}
 }
 
@@ -877,7 +889,7 @@ func TestRenderStatusline(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeLines(t, tp, replyAt("a", now.Add(-time.Minute), 5, 1000, 20000, 130000))
-	input := fmt.Sprintf(`{"transcript_path":%q,"model":{"id":"claude-fable-5-1","display_name":"Fable"},`+
+	input := fmt.Sprintf(`{"transcript_path":%q,"model":{"id":"claude-fable-5-1","display_name":"Fable"},"effort":{"level":"high"},`+
 		`"context_window":{"total_input_tokens":150005,"context_window_size":200000,"current_usage":{}},`+
 		`"prompt_cache":{"warm":true,"caching_observed":true,"ttl":"1h","expires_at":%d}}`, tp, now.Unix()+3600)
 
@@ -887,7 +899,7 @@ func TestRenderStatusline(t *testing.T) {
 	lines := strings.Split(out, "\n")
 	// CONTEXT with a hundred-cell gauge, the cache's time left and, two spaces on, the token counts.
 	if want := "CONTEXT  150k/200k  75 % " + strings.Repeat("▓", 75) + strings.Repeat("░", 25) + " CACHE 1:00  " +
-		"SESSION: FRESH 21k CACHED 130k, ACCOUNT 5H: FRESH 21k CACHED 130k, 7D: FRESH 21k CACHED 130k"; lines[0] != want {
+		"SESSION: FRESH 21k CACHED 130k, ACCOUNT 5H: FRESH 21k CACHED 130k, 7D: FRESH 21k CACHED 130k, MODEL Fable EFFORT high"; lines[0] != want {
 		t.Errorf("top line = %q, want %q", lines[0], want)
 	}
 	// The account's two windows on one pair of lines; the model's own weekly bucket, which the usage
@@ -923,6 +935,13 @@ func TestRenderStatusline(t *testing.T) {
 }
 
 // --- the panel -----------------------------------------------------------------------
+
+// withEffort is a reply line that records the effort it ran at, as Claude Code writes it beside the
+// message: a level, or anything else JSON holds.
+func withEffort(line string, effort any) string {
+	b, _ := json.Marshal(effort)
+	return strings.Replace(line, `{"type":"assistant",`, `{"type":"assistant","effort":`+string(b)+`,`, 1)
+}
 
 // replyCachedAt is a reply line written at a given moment that says, as the API does, which lifetime
 // its cache write was made with: "5m", "1h", or "" for a line that does not say at all.
@@ -978,7 +997,7 @@ func TestRenderPanel(t *testing.T) {
 		t.Fatal(err)
 	}
 	cachedAt := now.Add(-time.Minute)
-	writeLines(t, tp, replyCachedAt("a", cachedAt, 20000, 130000, "1h"))
+	writeLines(t, tp, withEffort(replyCachedAt("a", cachedAt, 20000, 130000, "1h"), "high"))
 	input := fmt.Sprintf(`{"transcript_path":%q,"model":{"id":"claude-fable-5-1"},"context_window":{"context_window_size":200000}}`, tp)
 
 	out := renderPanel(argSet{}, input, nil, now)
@@ -987,12 +1006,15 @@ func TestRenderPanel(t *testing.T) {
 		t.Fatalf("not JSON: %v\n%s", err, out)
 	}
 
-	// The status line for the same input, painted in 24-bit colour on one row, with the reading of
-	// the prompt cache the transcript gives.
+	// The status line for the same input, painted in 24-bit colour on one row, with what Claude Code
+	// hands a status line and not a plugin: the reading of the prompt cache the transcript gives, the
+	// model's name and the effort the reply ran at.
 	t.Setenv("COLUMNS", "")
 	t.Setenv("NO_COLOR", "")
 	t.Setenv("TERM_PROGRAM", "")
-	withReading := strings.TrimSuffix(input, "}") + fmt.Sprintf(`,"prompt_cache":{"warm":true,"caching_observed":true,"ttl":"1h","expires_at":%d}}`,
+	withReading := strings.Replace(input, `"model":{"id":"claude-fable-5-1"}`,
+		`"model":{"id":"claude-fable-5-1","display_name":"Fable 5.1"},"effort":{"level":"high"}`, 1)
+	withReading = strings.TrimSuffix(withReading, "}") + fmt.Sprintf(`,"prompt_cache":{"warm":true,"caching_observed":true,"ttl":"1h","expires_at":%d}}`,
 		cachedAt.Add(time.Hour).Unix())
 	status := renderStatusline(argSet{}, withReading, nil, now)
 	lines := strings.Split(status, "\n")
@@ -1017,7 +1039,8 @@ func TestRenderPanel(t *testing.T) {
 	if c := pic.Cache; c == nil || c.Text != top[5] || c.Text != "0:59" || c.Colour != sgrHex(t, top[4]) {
 		t.Errorf("cache = %+v, the status line's = %q %s", pic.Cache, top[5], sgrHex(t, top[4]))
 	}
-	if pic.Tokens != top[6] || !strings.HasPrefix(pic.Tokens, "SESSION: FRESH 21k CACHED 130k") {
+	if pic.Tokens != top[6] || !strings.HasPrefix(pic.Tokens, "SESSION: FRESH 21k CACHED 130k, ACCOUNT") ||
+		!strings.HasSuffix(pic.Tokens, ", MODEL Fable 5.1 EFFORT high") {
 		t.Errorf("tokens = %q, the status line's = %q", pic.Tokens, top[6])
 	}
 
@@ -1539,5 +1562,117 @@ func TestAnImplausiblePauseIsIgnored(t *testing.T) {
 	asked := usageFromServer(t, `{"five_hour":null,"seven_day":{"utilization":26,"resets_at":null}}`)
 	if st := getState(argSet{}, "", nil); st == nil || st.s7 != 26 || *asked != 1 {
 		t.Fatalf("asked %d times, s7 %v", *asked, st)
+	}
+}
+
+// --- what the session runs on --------------------------------------------------------
+
+// A model's name worked out from its id is the one Claude Code gives it: the ids and names of the
+// first two groups are Claude Code's own, from its catalogue of models and the name it gives a model
+// it marks for the million-token window.
+func TestModelNameIsClaudeCodes(t *testing.T) {
+	for id, want := range map[string]string{
+		"claude-opus-5-5":   "Opus 5.5",
+		"claude-fable-5-2":  "Fable 5.2",
+		"claude-fable-5":    "Fable 5",
+		"claude-haiku-5-5":  "Haiku 5.5",
+		"claude-sonnet-5-5": "Sonnet 5.5",
+		"claude-mythos-5-1": "Mythos 5.1",
+		"claude-opus-4-0":   "Opus 4",
+		"claude-sonnet-4-0": "Sonnet 4",
+		"claude-3-5-haiku":  "Haiku 3.5",
+		"claude-3-7-sonnet": "Sonnet 3.7",
+		// The million-token window is named as Claude Code names it; a date and any other suffix are
+		// no part of the name.
+		"claude-opus-5-5[1m]":        "Opus 5.5 (1M context)",
+		"claude-sonnet-4-6[1m]":      "Sonnet 4.6 (1M context)",
+		"claude-opus-5-5[2x]":        "Opus 5.5",
+		"claude-sonnet-4-5-20250929": "Sonnet 4.5",
+		" claude-opus-5-5 ":          "Opus 5.5",
+		// Anything else is written as it is.
+		"us.anthropic.claude-opus-5-5-v1:0": "us.anthropic.claude-opus-5-5-v1:0",
+		"opus":                              "opus",
+		"opus[1m]":                          "opus[1m]",
+		"claude-opus[1m]":                   "claude-opus[1m]",
+		"claude-opus":                       "claude-opus",
+		"claude-opus-5-5-5":                 "claude-opus-5-5-5",
+		"claude-opus-sonnet-5":              "claude-opus-sonnet-5",
+		"claude-opus-5-v1":                  "claude-opus-5-v1",
+		"claude-":                           "claude-",
+		"":                                  "",
+	} {
+		if got := modelName(id); got != want {
+			t.Errorf("modelName(%q) = %q, want %q", id, got, want)
+		}
+	}
+}
+
+func TestModelText(t *testing.T) {
+	for input, want := range map[string]string{
+		// Claude Code's own name wins over the one worked out from the id.
+		`{"model":{"id":"claude-opus-5-5","display_name":"Opus 5.5 (1M context)"},"effort":{"level":"xhigh"}}`: "MODEL Opus 5.5 (1M context) EFFORT xhigh",
+		`{"model":{"id":"claude-opus-5-5"},"effort":{"level":"high"}}`:                                         "MODEL Opus 5.5 EFFORT high",
+		`{"model":{"id":"claude-opus-5-5[1m]"},"effort":{"level":"high"}}`:                                     "MODEL Opus 5.5 (1M context) EFFORT high",
+		`{"model":{"id":"claude-opus-5-5","display_name":"  "},"effort":{"level":" max "}}`:                    "MODEL Opus 5.5 EFFORT max",
+		// A model that takes no effort setting, for which Claude Code sends none.
+		`{"model":{"id":"claude-haiku-4-5","display_name":"Haiku 4.5"}}`:                       "MODEL Haiku 4.5",
+		`{"model":{"id":"claude-haiku-4-5","display_name":"Haiku 4.5"},"effort":{"level":""}}`: "MODEL Haiku 4.5",
+		// No model named: nothing, whatever the effort.
+		`{"effort":{"level":"high"}}`:                   "",
+		`{"model":{"id":""},"effort":{"level":"high"}}`: "",
+		`{}`: "",
+	} {
+		if got := decodeStatusInput(input).modelText(); got != want {
+			t.Errorf("%s: modelText = %q, want %q", input, got, want)
+		}
+	}
+}
+
+// The panel, which Claude Code tells no effort, reads the level the newest main-thread reply ran at.
+func TestTranscriptEffort(t *testing.T) {
+	now := time.Now()
+	level := func(lines ...string) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "s.jsonl")
+		writeLines(t, p, lines...)
+		if e := transcriptEffort(p); e != nil {
+			return e.Level
+		}
+		return "<nil>"
+	}
+	reply := func(id string, effort any) string {
+		line := replyAt(id, now, 5, 10, 0, 100)
+		if effort != nil {
+			line = withEffort(line, effort)
+		}
+		return line
+	}
+	side := func(line string) string {
+		return strings.Replace(line, `{"type":"assistant",`, `{"type":"assistant","isSidechain":true,`, 1)
+	}
+	synthetic := `{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"API Error"}]}}`
+	for _, c := range []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{"the newest reply's", []string{reply("a", "low"), reply("b", "max")}, "max"},
+		{"past a user line", []string{reply("a", "xhigh"), `{"type":"user","message":{"content":"which effort?"}}`}, "xhigh"},
+		{"a subagent's reply is its own", []string{reply("a", "high"), side(reply("b", "low"))}, "high"},
+		{"an error Claude Code wrote is no reply", []string{reply("a", "medium"), synthetic}, "medium"},
+		// The newest reply ran at none: a model that takes no effort setting, not an older reply's level.
+		{"none on the newest reply", []string{reply("a", "max"), reply("b", nil)}, "<nil>"},
+		{"a number is no level", []string{reply("a", 31999)}, "<nil>"},
+		{"no reply yet", []string{`{"type":"user","message":{"content":"hi"}}`}, "<nil>"},
+	} {
+		if got := level(c.lines...); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+	if e := transcriptEffort(""); e != nil {
+		t.Errorf("no transcript: %+v", e)
+	}
+	if e := transcriptEffort(filepath.Join(t.TempDir(), "missing.jsonl")); e != nil {
+		t.Errorf("a missing transcript: %+v", e)
 	}
 }
