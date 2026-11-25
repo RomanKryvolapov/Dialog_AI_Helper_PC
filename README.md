@@ -10,6 +10,10 @@ The application's operation consists of 2 stages:
 
 * **Sending to LLM**: Send the recognized text with a prompt to LLM models and receive streaming responses
 
+A voice model can do both at once: it hears the recorded phrase itself and writes what was said and its translation.
+
+What the app does with each phrase is switched in the top bar: **Translation** (on by default) translates it on the Messages screen, and **Questions** (off by default) suggests answers to the questions asked in the call on the Questions screen. Either works without the other.
+
 ## Translation methods and reserves
 
 How each phrase becomes a translation is the **translation method**, chosen in **Settings → General** as up to three methods in order. A dialog starts on method 1; when the method in use fails — its model or its recogniser — the dialog switches to the next method at once and stays on it for the rest of the dialog. Stopping and starting the dialog begins with method 1 again, as does changing the methods or the keys. After method 3 there is nowhere to go: it stays, and a phrase it cannot translate says why on its row. The method in use is shown in the top bar after the token count (orange once the dialog has left method 1; its tooltip says why).
@@ -26,6 +30,8 @@ Any method can be a reserve: when the dialog switches to it, the audio input is 
 **What counts as a failure.** The request fails — a rate limit or used-up quota (HTTP 429), a rejected API key (401/403, or Google's 400 "API key not valid"), a missing model (404), any other rejected request (4xx), a server error or overload (5xx), a network error — no answer arrives, or the answer stops arriving, for 30 seconds, the answer is empty or not in the expected shape, the model's own rate limit would keep the phrase waiting more than 3 seconds, or the recogniser fails (Whisper cannot transcribe, the streaming process stops, Sherpa-ONNX or Speechmatics cannot start or loses its session). A method that cannot work at all when the dialog starts (no key, no model) is skipped the same way. "No speech" from a voice method is an answer, not a failure.
 
 On Settings → General the method in use is outlined in green and the ones the dialog left in orange (the tooltip says why); the status line under the messages says when the dialog switched.
+
+**Translation off.** With the **Translation** box in the top bar unticked, phrases are still heard and shown on the Messages screen, and still checked for questions when Questions is on, but none is sent for translation: a row holds what was said and nothing under it. Only the hearing of a method has to work then, so the dialog starts without the translating model's API key, and a phrase recorded for a voice model is transcribed by Whisper batch instead (set the Whisper model folder for that). A phrase already waiting in the queue when the box is unticked is left untranslated, and one recorded for a voice model that has not heard it yet is dropped; a request already on its way finishes. The conversation summary is written only while Translation or Questions is on. The box can be switched at any time, also in the middle of a dialog.
 
 ## Voice recognition
 
@@ -95,7 +101,8 @@ Most fields of the **Settings** screen — the API keys, the translation methods
 speech language, the phrase, Whisper and Sherpa-ONNX settings and the streaming toggle — can also be
 filled from a `.env` file in the project root, handy for keeping API tokens out of the app's saved
 settings and out of git. The prompts and the summary settings, each model's parameters, the Questions
-page and Speechmatics' region, model and speaker labels are set in the app only.
+page, Speechmatics' region, model and speaker labels, the Translation box and the interface size are set
+in the app only.
 
 Copy `.env.example` to `.env` and fill in what you need. Each setting is resolved in this order:
 
@@ -124,7 +131,7 @@ Every part has **Reset to default**; a part you never changed is not saved, so i
 
 ## Questions
 
-**Questions** (the box in the top bar, left of Mic) suggests answers to the questions the other side asks you in a call. Every phrase heard (from the recogniser of the method in use, or a voice model's own transcript) also goes, with the last 8 phrases, the conversation summary and the questions answered so far, to a model chosen on **Settings → Questions** (GPT-6.1 Terra by default). The model answers a new question once it has been asked in full — in English unless you choose another language, in the first person, two or three short sentences of plain text; several questions get one answer, and a follow-up ("why that order?") is answered knowing the earlier question and answer. The answers appear on the **Questions** screen next to Messages; a phrase without a question adds nothing there. A question still being asked waits for its end; if no phrase follows for 3 seconds the question is answered as it stands. If the other side goes on with a question after its answer has appeared (a recogniser without punctuation, such as Sherpa-ONNX, ends a phrase at every pause), the same row is answered again for the whole question instead of a second row being added. That happens only within 6 seconds of the phrase the answer was given on; anything said later is a question of its own and gets its own row. When both sides of the call are heard without speaker labels, your own first words can occasionally be taken for the other side's addition and rewrite the answer within those seconds; with speaker labels (Speechmatics) or only the other side heard this was not seen in testing. With Speechmatics' speaker labels each phrase carries who spoke. The question and the answer can each be shown in a language of your choice (Settings → Questions): by default the question appears in the language of the call, as it was asked, and the answer in English; choosing, say, Russian for the question shows it translated while the answer stays ready to be said aloud. Settings → Questions holds the model, the two languages, the number of phrases and kept answers, the prompt and the last request as it was sent. **Clear answers** in the top bar empties the Questions screen and its history without touching the dialog; Clear dialog empties both.
+**Questions** (the box in the top bar, between Translation and Mic) suggests answers to the questions the other side asks you in a call. Every phrase heard (from the recogniser of the method in use, or a voice model's own transcript) also goes, with the last 8 phrases, the conversation summary and the questions answered so far, to a model chosen on **Settings → Questions** (GPT-6.1 Terra by default). The model answers a new question once it has been asked in full — in English unless you choose another language, in the first person, two or three short sentences of plain text; several questions get one answer, and a follow-up ("why that order?") is answered knowing the earlier question and answer. The answers appear on the **Questions** screen next to Messages; a phrase without a question adds nothing there. A question still being asked waits for its end; if no phrase follows for 3 seconds the question is answered as it stands. If the other side goes on with a question after its answer has appeared (a recogniser without punctuation, such as Sherpa-ONNX, ends a phrase at every pause), the same row is answered again for the whole question instead of a second row being added. That happens only within 6 seconds of the phrase the answer was given on; anything said later is a question of its own and gets its own row. When both sides of the call are heard without speaker labels, your own first words can occasionally be taken for the other side's addition and rewrite the answer within those seconds; with speaker labels (Speechmatics) or only the other side heard this was not seen in testing. With Speechmatics' speaker labels each phrase carries who spoke. The question and the answer can each be shown in a language of your choice (Settings → Questions): by default the question appears in the language of the call, as it was asked, and the answer in English; choosing, say, Russian for the question shows it translated while the answer stays ready to be said aloud. Settings → Questions holds the model, the two languages, the number of phrases and kept answers, the prompt and the last request as it was sent. **Clear answers** in the top bar empties the Questions screen and its history without touching the dialog; Clear dialog empties both.
 
 ## Tabs
 
@@ -132,7 +139,7 @@ There are three top-level tabs (Questions is described above):
 
 * **Messages** — the live loop: shows recognized speech and the model's streaming answer, with a status line underneath (recognition, translation, which method answers and why)
 * **Settings** — a master-detail screen with a category sidebar:
-  * **General** — translation methods 1–3 (how the speech is heard → which model translates), input device, speech language
+  * **General** — translation methods 1–3 (how the speech is heard → which model translates), input device, speech language, interface size
   * **Phrases** — where speech is cut into phrases (silence threshold, the pause that ends a phrase, the longest phrase), used by Whisper and the voice models, and in part by Speechmatics
   * **LLM** — streaming-response toggle and each model's request parameters (temperature, top P / top K, max output tokens, thinking or reasoning effort, verbosity — only those the model accepts; an empty field takes its default, and the page shows what each request carries)
   * **API keys** — Google, OpenAI, Claude and Speechmatics keys
@@ -141,7 +148,13 @@ There are three top-level tabs (Questions is described above):
   * **Questions** — the [Questions](#questions) mode: its model, the languages the question and the answer are shown in, how many phrases and answers go with each request, its prompt and the last request as it was sent
   * **Console** — captures `stdout` / `stderr` from the running process for debugging
 
-Right of the tabs, the same shape and a little narrower, are **Start dialog**, **Clear dialog** and **Clear answers** (shown always, active on Messages and Questions), then the **Questions** box, the microphone and memory meters, the tokens the current dialog has used — sent to the models (in) and written back by them (out), apart — and the translation method in use.
+Right of the tabs, the same shape and a little narrower, are **Start dialog**, **Clear dialog** and **Clear answers** (shown always, active on Messages and Questions), then the **Translation** and **Questions** boxes, the microphone and memory meters, the tokens the current dialog has used — sent to the models (in) and written back by them (out), apart — and the translation method in use.
+
+**Small screens and the interface size.** A window too narrow for the whole top bar loses, in this order, the memory figures, the memory meter, the token count and the microphone meter, and then the method's name, leaving its number ("Method 1"); the buttons and the two boxes always stay. A window too narrow even for those is drawn smaller as a whole, so nothing is cut off. **Settings → General → Interface size** draws everything in the window larger or smaller, from 50% to 150% in steps of 10: the change applies at once and is remembered, and drop-down lists and tooltips follow it. A smaller size fits more on a small screen; on a window too narrow for the top bar at the chosen size, the smaller of the two applies.
+
+## Setting up on a new machine
+
+[docs/SETUP.md](docs/SETUP.md) is a step-by-step set-up written for a Claude Code session working on a fresh clone: which Java and Python it needs, the build, the speech models, the keys, the first run and Claude Code's own per-machine pieces, with a checklist at the end. It reads just as well by hand.
 
 ## Use for conferences
 
