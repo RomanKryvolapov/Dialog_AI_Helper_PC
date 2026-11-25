@@ -10,7 +10,7 @@ application {
 }
 
 javafx {
-    version = '27.0.1'
+    version = '27.0.1.1'
     modules = ['javafx.controls', 'javafx.base', 'javafx.graphics']
 }
 
@@ -24,14 +24,14 @@ repositories {
 ext {
     kotlinVersion = '2.4.21'
     kotlinxCoroutines = '1.11.0'
-    javaFxVersion =  '27.0.1'
+    javaFxVersion =  '27.0.1.1'
     ktor_version = "3.6.1"
-    logback_version = '1.6.6'
-    kotlinx_serialization_json_version = "1.12.0"
+    logback_version = '1.6.8'
+    kotlinx_serialization_json_version = "1.13.0"
     moshi_version = '1.15.2'
-    lc_4_j_version = '1.23.0'
+    lc_4_j_version = '1.24.0'
     koin_version = '4.2.2'
-    sherpa_onnx_version = '2.0.1'
+    sherpa_onnx_version = '2.0.3'
 }
 
 

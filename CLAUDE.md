@@ -55,16 +55,16 @@ Standard tools (`Read`, `Edit`, `Grep`, `Glob`, `Bash`) are only allowed for:
 
 | Area | Choice |
 |------|--------|
-| Language | Kotlin 2.4.21; builds, tests and runs on JDK 27 (Temurin, `~/.jdks/jdk-27+35`), bytecode target 26 until a stable Kotlin supports JVM_27 |
-| Build | Gradle 9.9 (`build.gradle` Groovy DSL, `application` plugin); JUnit 6 + kotlin-test under `src/test/` |
-| UI | JavaFX 27.0.1 (Stage/Scene/TabPane, CSS from `src/main/resources/styles/`) |
+| Language | Kotlin 2.4.21; builds, tests and runs on JDK 27 (Temurin, `~/.jdks/jdk-27+35`), which also runs Gradle; bytecode target 26 until a stable Kotlin supports JVM_27 |
+| Build | Gradle 9.9.2 (`build.gradle` Groovy DSL, `application` plugin); JUnit 6 + kotlin-test under `src/test/` |
+| UI | JavaFX 27.0.1.1 (Stage/Scene/TabPane, CSS from `src/main/resources/styles/`) |
 | DI | Koin 4.2.2 |
 | HTTP | Ktor client 3.6.1 (CIO engine, content-negotiation, logging) |
-| JSON | Moshi 1.15.2 (+ moshi-adapters, lenient model enums) + kotlinx.serialization 1.12.0 |
-| LLM clients | langchain4j 1.23.0 — Google Gemini/Gemma, OpenAI, Anthropic Claude (all streaming); mid-tier models only; each request carries the system message (instructions) and the user message, with the model's parameters narrowed by `effectiveParameters` to what it accepts (`ModelParameterSupport` per model; the defaults keep reasoning minimal) |
+| JSON | Moshi 1.15.2 (+ moshi-adapters, lenient model enums) + kotlinx.serialization 1.13.0 |
+| LLM clients | langchain4j 1.24.0 — Google Gemini/Gemma, OpenAI, Anthropic Claude (all streaming); mid-tier models only; each request carries the system message (instructions) and the user message, with the model's parameters narrowed by `effectiveParameters` to what it accepts (`ModelParameterSupport` per model; the defaults keep reasoning minimal) |
 | Translation methods | A chain of up to 3 on Settings → General (`TranslationMethod`, method 1 + 2 reserves), each on two levels (`Hearing`): how the speech is heard — a **voice** model that hears the WAV itself (Gemini 3.5 Flash-Lite, GPT-Audio-1.5) or a **recognizer** — and, for a recognizer only, the model that translates; failover in `utils/TranslationFailover.kt` |
-| Voice recognition | The recognizer level of a text method (`VoiceRecognitionEngine`, offered: **Whisper batch** — faster-whisper one-shot subprocess, **Whisper streaming** — persistent Python `whisper_streaming_util.py`, **Sherpa-ONNX** 2.0.1 — in-process JNI, vendored jars in `libs/`; Speechmatics is not wired and not offered) |
-| Logging | Logback 1.6.6 + SLF4J 2.0.20 |
+| Voice recognition | The recognizer level of a text method (`VoiceRecognitionEngine`, offered: **Whisper batch** — faster-whisper one-shot subprocess, **Whisper streaming** — persistent Python `whisper_streaming_util.py`, **Sherpa-ONNX** 2.0.3 — in-process JNI, vendored jars in `libs/`; Speechmatics is not wired and not offered) |
+| Logging | Logback 1.6.8 + SLF4J 2.0.20 |
 | Python utils | `python/` scripts invoked as subprocesses (see `python/requirements.txt`); separate `.venv` under `python/.venv/` |
 
 ## Module layout (`src/main/kotlin/`)
