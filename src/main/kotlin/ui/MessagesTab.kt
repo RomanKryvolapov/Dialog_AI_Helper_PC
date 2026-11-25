@@ -174,6 +174,13 @@ class MessagesTab(
     private var translationEpoch = 0L
 
 
+    /** The "Translation" box in the top bar (see [ApplicationInfo.translationEnabled]), as each new phrase finds it. */
+    @Volatile
+    private var translationEnabled = preferencesRepository.getAppInfo().translationEnabled
+
+    /** What a phrase's row shows in place of its translation while there is none: nothing when none is coming. */
+    private fun pendingTranslation() = if (translationEnabled) "..." else ""
+
     private var labelMessagePartVoiceRecognition = ""
     private var labelMessagePartProcessMessage = ""
     private var labelMessagePartRecord = ""
@@ -255,6 +262,10 @@ class MessagesTab(
                 .collect { deviceName ->
                     restartMicrophone(deviceName)
                 }
+        }
+
+        backgroundThreadScope.launch {
+            preferencesRepository.appInfoFlow.collect { translationEnabled = it.translationEnabled }
         }
 
         // A changed key or chain starts over from method 1.
@@ -343,6 +354,10 @@ class MessagesTab(
      * Each method takes the audio in its own way once it is in use, so it needs nothing from the others.
      */
     private fun startProblem(method: TranslationMethod, appInfo: ApplicationInfo): String? {
+        // Translation off: nothing goes to the model, so only the hearing has to work — Whisper's for a voice method.
+        if (!appInfo.translationEnabled) {
+            return recognizerProblem(method.recognizer ?: VoiceRecognitionEngine.WHISPER_BATCH, appInfo)
+        }
         if (apiKey(method.model, appInfo).isBlank()) return "no ${method.model.engine.type} API key"
         return method.recognizer?.let { recognizerProblem(it, appInfo) }
     }
@@ -362,7 +377,8 @@ class MessagesTab(
 
     private fun setupListeners() {
         audioChunker.onResultListener = { wavFile ->
-            if (currentRecognizer == null) onVoicePhrase(wavFile) else onWhisperPhrase(wavFile)
+            // A voice model hears a phrase only to translate it: with translation off Whisper hears it instead.
+            if (currentRecognizer == null && translationEnabled) onVoicePhrase(wavFile) else onWhisperPhrase(wavFile)
         }
         audioChunker.onRecordStart = {
             labelMessagePartRecord = "Audio chunker in record"
@@ -381,7 +397,7 @@ class MessagesTab(
      */
     private fun onWhisperPhrase(wavFile: File) {
         val appInfo = getAppInfo()
-        val audio = if (appInfo.translationMethods.any { it.voice }) {
+        val audio = if (translationEnabled && appInfo.translationMethods.any { it.voice }) {
             try {
                 PhraseAudio(wavFile.readBytes())
             } catch (e: IOException) {
@@ -394,7 +410,7 @@ class MessagesTab(
         Platform.runLater {
             val wasAtBottom = isScrolledToBottom()
             val index = messageBox.children.size
-            messageBox.children.add(createMessageEntry(DialogItem(originalMessage = "...", messageFromAi = "...")))
+            messageBox.children.add(createMessageEntry(DialogItem(originalMessage = "...", messageFromAi = pendingTranslation())))
             if (wasAtBottom) scrollToBottom()
             val epoch = translationEpoch
             val recordedFor = activeMethod.current(appInfo.translationMethods)
@@ -424,7 +440,7 @@ class MessagesTab(
                 dialogLogger.logQuestion(result.text)
                 val wasAtBottom = isScrolledToBottom()
                 if (index in 0 until messageBox.children.size) {
-                    messageBox.children[index] = createMessageEntry(DialogItem(originalMessage = result.text, messageFromAi = "..."))
+                    messageBox.children[index] = createMessageEntry(DialogItem(originalMessage = result.text, messageFromAi = pendingTranslation()))
                 }
                 if (wasAtBottom) scrollToBottom()
                 added.turn.source = result.text
@@ -480,13 +496,19 @@ class MessagesTab(
      */
     private fun beginTurn(source: String): ConversationContext.Added {
         val appInfo = getAppInfo()
-        val canSummarize = appInfo.translationMethods.any { it.model.readsText && apiKey(it.model, appInfo).isNotBlank() }
+        // The summary serves the translations and the questions: with both off nobody would read it.
+        val canSummarize = (translationEnabled || appInfo.questions.enabled) &&
+            appInfo.translationMethods.any { it.model.readsText && apiKey(it.model, appInfo).isNotBlank() }
         val added = conversationContext.add(source, TranslationPrompts.contextSettings(appInfo.prompts, canSummarize))
         added.fold?.let { foldConversation(it, appInfo) }
         return added
     }
 
-    /** [failedMethod]: the method that already failed this phrase (Whisper could not hear it for method 1). */
+    /**
+     * Queues the phrase for translation — unless translation is off and its text is known: then its row keeps
+     * the text alone. [failedMethod]: the method that already failed this phrase (Whisper could not hear it
+     * for method 1).
+     */
     private fun enqueueTranslation(
         index: Int,
         added: ConversationContext.Added,
@@ -494,6 +516,10 @@ class MessagesTab(
         failedMethod: TranslationMethod? = null,
         dialog: Long? = null,
     ) {
+        if (!translationEnabled && added.turn.source.isNotBlank()) {
+            updateMessageAt(index = index, newItem = DialogItem(originalMessage = added.turn.source, messageFromAi = ""))
+            return
+        }
         ensureSchedulerStarted()
         val task = TranslationTask(
             seq = ++translationSeq,
@@ -618,6 +644,11 @@ class MessagesTab(
                 markTranslationDropped(task)
                 continue
             }
+            if (!translationEnabled) {
+                // Switched off while the phrase waited, or before its retry: it is not sent after all.
+                leaveUntranslated(task)
+                continue
+            }
             val appInfo = getAppInfo()
             val chain = appInfo.translationMethods
             configureDispatchPool(activeMethod.current(chain).model)
@@ -679,6 +710,16 @@ class MessagesTab(
                     schedulerWakeups.trySend(Unit)
                 }
             }
+        }
+    }
+
+    /** A queued phrase that will not be translated: its row keeps the text, or goes if nobody heard it yet. */
+    private fun leaveUntranslated(task: TranslationTask) {
+        if (task.text.isNotBlank()) {
+            updateMessageAt(index = task.index, newItem = DialogItem(originalMessage = task.text, messageFromAi = ""))
+        } else {
+            conversationContext.discard(task.turn)
+            Platform.runLater { hideRow(task.index) }
         }
     }
 
@@ -1188,7 +1229,7 @@ class MessagesTab(
                     val wasAtBottom = isScrolledToBottom()
                     val idx = ensureStreamingRow()
                     messageBox.children[idx] = createMessageEntry(
-                        DialogItem(originalMessage = text, messageFromAi = "..."),
+                        DialogItem(originalMessage = text, messageFromAi = pendingTranslation()),
                     )
                     if (wasAtBottom) scrollToBottom()
                 }
@@ -1201,7 +1242,7 @@ class MessagesTab(
                     val wasAtBottom = isScrolledToBottom()
                     val idx = ensureStreamingRow()
                     messageBox.children[idx] = createMessageEntry(
-                        DialogItem(originalMessage = text, messageFromAi = "..."),
+                        DialogItem(originalMessage = text, messageFromAi = pendingTranslation()),
                     )
                     currentStreamingRow = -1
                     if (wasAtBottom) scrollToBottom()
@@ -1240,7 +1281,7 @@ class MessagesTab(
         if (currentStreamingRow in 0 until messageBox.children.size) return currentStreamingRow
         currentStreamingRow = messageBox.children.size
         messageBox.children.add(
-            createMessageEntry(DialogItem(originalMessage = "...", messageFromAi = "...")),
+            createMessageEntry(DialogItem(originalMessage = "...", messageFromAi = pendingTranslation())),
         )
         return currentStreamingRow
     }
@@ -1336,6 +1377,9 @@ class MessagesTab(
             styleClass.add("answer-message-label")
             isWrapText = true
             maxWidth = Double.MAX_VALUE
+            // No line at all for a phrase that gets no translation (the "Translation" box is off).
+            isVisible = item.messageFromAi.isNotEmpty()
+            isManaged = isVisible
         }
         return VBox(5.0, titleLabel, descLabel).apply {
             padding = Insets(10.0)

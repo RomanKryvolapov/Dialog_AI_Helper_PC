@@ -29,6 +29,7 @@ import javafx.scene.layout.HBox
 import javafx.scene.layout.StackPane
 import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
+import models.domain.ApplicationInfo
 import models.domain.SherpaModelConfig
 import models.domain.SpeechmaticsConfig
 import models.domain.WhisperModelConfig
@@ -175,6 +176,20 @@ class SettingsTab(
                     status.showNote("Saved")
                 },
                 status,
+            )
+        }
+
+        addSection(
+            title = "Interface size",
+            note = "How large everything in the window is drawn. A smaller size fits more on a small screen. " +
+                "A window too narrow for the top bar at the chosen size is drawn smaller, so that nothing is cut off.",
+        ) {
+            addComboBox(
+                items = ApplicationInfo.UI_SCALE_PERCENTS,
+                selectedItem = appInfo.uiScalePercent,
+                toStringFn = { percent -> "$percent%" },
+                onSelected = { percent -> saveAppInfo(getAppInfo().copy(uiScalePercent = percent)) },
+                short = true,
             )
         }
     })

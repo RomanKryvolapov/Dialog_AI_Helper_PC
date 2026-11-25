@@ -19,13 +19,19 @@ import javafx.scene.control.Tooltip
 import javafx.scene.layout.HBox
 import javafx.scene.layout.Region
 import javafx.scene.layout.StackPane
+import javafx.scene.text.Text
 import javafx.stage.Screen
 import javafx.stage.Stage
 import javafx.util.Duration as FxDuration
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import mainThreadScope
+import models.domain.ApplicationInfo
 import models.domain.resolveLlmModel
+import ui.base.ScaledPane
+import ui.base.scalePopupsLike
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import org.koin.core.context.startKoin
@@ -56,6 +62,28 @@ class DialogApplication : Application(), KoinComponent {
         private const val QUESTIONS_TAB_INDEX = 1
         /** The tab header row's height, as styles.css sets it. */
         private const val TOP_BAR_HEIGHT = 64.0
+        private const val BAR_SPACING = 24.0
+        private const val METER_SPACING = 12.0
+        private const val METER_BAR_WIDTH = 110.0
+        /** Kept clear between the top bar and the window's right edge. */
+        private const val BAR_RIGHT_GAP = 12.0
+        /** The method label keeps at least this much ("Method 1: " and the start of its name) before anything else goes. */
+        private const val METHOD_MIN_WIDTH = 220.0
+
+        /**
+         * How many of the [giveWay] widths (the first gives way first) must go so that the rest fits into
+         * [available] beside [alwaysShown].
+         */
+        internal fun hiddenCount(available: Double, alwaysShown: Double, giveWay: List<Double>): Int {
+            var needed = alwaysShown + giveWay.sum()
+            var hidden = 0
+            while (hidden < giveWay.size && needed > available) {
+                needed -= giveWay[hidden]
+                hidden++
+            }
+            return hidden
+        }
+
         /** The method label when the dialog has left method 1. */
         private const val RESERVE_COLOUR = "#E0A030"
 
@@ -114,63 +142,120 @@ class DialogApplication : Application(), KoinComponent {
 
         val overlayLabelStyle = "-fx-text-fill: #e6e6e6; -fx-font-size: 20px; -fx-pref-height: 32px; -fx-min-height: 32px; -fx-max-height: 32px;"
 
-        val micLabel = Label("Mic").apply {
+        // Shown whole or not at all (see fitTopBar below): never cut short with an ellipsis.
+        fun barLabel(text: String = "") = Label(text).apply {
             style = overlayLabelStyle
+            minWidth = Region.USE_PREF_SIZE
         }
 
-        val micBar = ProgressBar(0.0).apply {
-            prefWidth = 110.0
+        fun meterBar() = ProgressBar(0.0).apply {
+            prefWidth = METER_BAR_WIDTH
+            minWidth = METER_BAR_WIDTH
             prefHeight = 18.0
         }
 
-        val ramLabel = Label("RAM").apply {
-            style = overlayLabelStyle
-        }
+        val micLabel = barLabel("Mic")
+        val micBar = meterBar()
+        val ramLabel = barLabel("RAM")
+        val ramBar = meterBar()
+        val ramValueLabel = barLabel()
 
-        val ramBar = ProgressBar(0.0).apply {
-            prefWidth = 110.0
-            prefHeight = 18.0
-        }
-
-        val ramValueLabel = Label("").apply {
+        // A part of the app the top bar switches on and off; a change made elsewhere (Settings → Questions) is followed.
+        fun switchBox(
+            title: String,
+            read: (ApplicationInfo) -> Boolean,
+            write: (ApplicationInfo, Boolean) -> ApplicationInfo,
+        ) = CheckBox(title).apply {
             style = overlayLabelStyle
-        }
-
-        // The Questions mode on or off (Settings → Questions holds the rest of it).
-        val questionsBox = CheckBox("Questions").apply {
-            style = overlayLabelStyle
-            isSelected = preferencesRepository.getAppInfo().questions.enabled
+            minWidth = Region.USE_PREF_SIZE
+            isSelected = read(preferencesRepository.getAppInfo())
             selectedProperty().addListener { _, _, on ->
                 val info = preferencesRepository.getAppInfo()
-                if (info.questions.enabled != on) preferencesRepository.saveAppInfo(info.copy(questions = info.questions.copy(enabled = on)))
+                if (read(info) != on) preferencesRepository.saveAppInfo(write(info, on))
+            }
+            mainThreadScope.launch {
+                preferencesRepository.appInfoFlow.collect { info -> if (isSelected != read(info)) isSelected = read(info) }
             }
         }
 
-        val meters = HBox(12.0, micLabel, micBar, ramLabel, ramBar, ramValueLabel).apply {
-            alignment = Pos.CENTER_LEFT
-            isMouseTransparent = true
+        // Off: phrases are heard and shown but not sent for translation.
+        val translationBox = switchBox("Translation", { it.translationEnabled }) { info, on -> info.copy(translationEnabled = on) }
+
+        // The Questions mode on or off (Settings → Questions holds the rest of it).
+        val questionsBox = switchBox("Questions", { it.questions.enabled }) { info, on ->
+            info.copy(questions = info.questions.copy(enabled = on))
+        }
+
+        val micMeter = HBox(METER_SPACING, micLabel, micBar)
+        val ramMeter = HBox(METER_SPACING, ramLabel, ramBar, ramValueLabel)
+        listOf(micMeter, ramMeter).forEach {
+            it.alignment = Pos.CENTER_LEFT
+            it.isMouseTransparent = true
         }
 
         // The dialog's buttons act on its two screens, Messages and Questions; on Settings they stay in view, disabled.
         messagesTab.headerControls.disableProperty()
             .bind(tabPane.selectionModel.selectedIndexProperty().greaterThan(QUESTIONS_TAB_INDEX))
 
-        // The top bar sits in the tab header row, right of the tab names: the dialog's buttons, then the
-        // microphone and memory meters.
-        // No left padding: the last tab's own right inset is the gap, the same as between the tabs.
-        // Not part of the mouse-transparent meters: its tooltip breaks the count down.
-        val tokensLabel = Label().apply { style = overlayLabelStyle }
+        // The top bar sits in the tab header row, right of the tab names: the dialog's buttons, the two switches,
+        // then the microphone and memory meters, the token count and the method in use.
+        // Not mouse-transparent like the meters: its tooltip breaks the count down.
+        val tokensLabel = barLabel()
 
         // The method the dialog uses now: method 1 until it fails, then the next one until the dialog restarts.
+        // The one label that may be cut short, down to its number alone: its tooltip says it in full.
         val methodLabel = Label().apply { style = overlayLabelStyle }
+        var methodFull = ""
+        var methodShort = ""
+        val measure = Text()
+        fun widthOf(text: String): Double {
+            measure.font = methodLabel.font
+            measure.text = text
+            return Math.ceil(measure.layoutBounds.width) + 2.0
+        }
 
-        val topBar = HBox(24.0, messagesTab.headerControls, questionsBox, meters, tokensLabel, methodLabel).apply {
+        val topBar = HBox(BAR_SPACING, messagesTab.headerControls, translationBox, questionsBox, micMeter, ramMeter, tokensLabel, methodLabel).apply {
             alignment = Pos.CENTER_LEFT
             minHeight = TOP_BAR_HEIGHT
             prefHeight = TOP_BAR_HEIGHT
             maxHeight = TOP_BAR_HEIGHT
             maxWidth = Region.USE_PREF_SIZE
             StackPane.setAlignment(this, Pos.TOP_LEFT)
+        }
+
+        val root = StackPane(tabPane, topBar)
+
+        // The tab names' width: the top bar starts where they end (set once the window is shown).
+        var tabNamesWidth = 0.0
+
+        val scaledRoot = ScaledPane(root).apply { scale = appInfo.uiScalePercent / 100.0 }
+
+        // A window too narrow for the whole bar loses, in this order, the memory figures, the memory meter, the
+        // token count and the microphone meter, and then the method's name, leaving its number. The buttons, the
+        // switches and that number always stay: a window too narrow even for them is drawn smaller.
+        val fitTopBar = {
+            val giveWay = listOf(
+                ramValueLabel to ramValueLabel.prefWidth(-1.0) + METER_SPACING,
+                ramMeter to ramLabel.prefWidth(-1.0) + METER_SPACING + ramBar.prefWidth(-1.0) + BAR_SPACING,
+                tokensLabel to tokensLabel.prefWidth(-1.0) + BAR_SPACING,
+                micMeter to micMeter.prefWidth(-1.0) + BAR_SPACING,
+            )
+            val beforeMethod = messagesTab.headerControls.prefWidth(-1.0) + translationBox.prefWidth(-1.0) +
+                questionsBox.prefWidth(-1.0) + 3 * BAR_SPACING
+            val withMethodName = beforeMethod + widthOf(methodFull).coerceAtMost(METHOD_MIN_WIDTH)
+            val available = root.width - tabNamesWidth - BAR_RIGHT_GAP
+            val hidden = hiddenCount(available, withMethodName, giveWay.map { it.second })
+            giveWay.forEachIndexed { place, (node, _) ->
+                node.isVisible = place >= hidden
+                node.isManaged = node.isVisible
+            }
+            methodLabel.text = if (withMethodName > available) methodShort else methodFull
+            scaledRoot.minContentWidth = tabNamesWidth + beforeMethod + widthOf(methodShort) + BAR_RIGHT_GAP
+        }
+        root.widthProperty().addListener { _, _, _ -> fitTopBar() }
+        // Once the label has taken its new text in: its width is still the old one while the text changes.
+        listOf(ramValueLabel, tokensLabel).forEach {
+            it.textProperty().addListener { _, _, _ -> javafx.application.Platform.runLater(fitTopBar) }
         }
 
         val osBean = ManagementFactory.getPlatformMXBean(OperatingSystemMXBean::class.java)
@@ -202,7 +287,9 @@ class DialogApplication : Application(), KoinComponent {
                 .collect { (chain, state) ->
                     val index = state.index.coerceIn(0, chain.lastIndex)
                     val method = chain[index]
-                    methodLabel.text = "Method ${index + 1}: ${method.shortTitle}"
+                    methodShort = "Method ${index + 1}"
+                    methodFull = "$methodShort: ${method.shortTitle}"
+                    fitTopBar()
                     methodLabel.style = overlayLabelStyle + if (index > 0) " -fx-text-fill: $RESERVE_COLOUR;" else ""
                     methodLabel.tooltip = Tooltip(
                         buildString {
@@ -216,20 +303,19 @@ class DialogApplication : Application(), KoinComponent {
                 }
         }
 
-        // Settings → Questions switches the same setting.
-        mainThreadScope.launch {
-            preferencesRepository.appInfoFlow.collect { info ->
-                if (questionsBox.isSelected != info.questions.enabled) questionsBox.isSelected = info.questions.enabled
-            }
-        }
-
         mainThreadScope.launch {
             audioChunker.noiceLevelFlow.collect { level ->
                 micBar.progress = level.coerceIn(0, 100) / 100.0
             }
         }
 
-        val root = StackPane(tabPane, topBar)
+        // Settings → General: the whole window drawn larger or smaller.
+        mainThreadScope.launch {
+            preferencesRepository.appInfoFlow.map { it.uiScalePercent }.distinctUntilChanged()
+                .collect { scaledRoot.scale = it / 100.0 }
+        }
+
+        scalePopupsLike(scaledRoot)
 
         val screenBounds: Rectangle2D =
             Screen.getScreens().let { if (it.size > 1) it[1] else it[0] }.visualBounds
@@ -239,7 +325,7 @@ class DialogApplication : Application(), KoinComponent {
             System.err.println("[DialogApplication] /styles/styles.css not found on classpath")
         }
 
-        val scene = Scene(root, screenBounds.width, screenBounds.height).apply {
+        val scene = Scene(scaledRoot, screenBounds.width, screenBounds.height).apply {
             stylesheetUrl?.let { stylesheets.add(it) }
         }
 
@@ -256,7 +342,13 @@ class DialogApplication : Application(), KoinComponent {
         javafx.application.Platform.runLater {
             val headersRegion = tabPane.lookup(".tab-header-area > .headers-region") as? Region
             if (headersRegion != null) {
-                topBar.translateXProperty().bind(headersRegion.widthProperty())
+                val placeTopBar = {
+                    tabNamesWidth = headersRegion.width
+                    StackPane.setMargin(topBar, Insets(0.0, BAR_RIGHT_GAP, 0.0, tabNamesWidth))
+                    fitTopBar()
+                }
+                headersRegion.widthProperty().addListener { _, _, _ -> placeTopBar() }
+                placeTopBar()
             } else {
                 System.err.println("[DialogApplication] .headers-region not found, top bar pinned to left edge")
             }

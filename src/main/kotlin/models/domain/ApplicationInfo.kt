@@ -26,6 +26,17 @@ data class ApplicationInfo(
     val speechmaticsConfig: SpeechmaticsConfig,
     /** The Questions mode (Settings → Questions, the box in the top bar). */
     val questions: QuestionsSettings,
+    /**
+     * The "Translation" box in the top bar. Off: phrases are still heard and shown (and checked for questions),
+     * but none is sent for translation; a phrase recorded for a voice model is heard by Whisper (batch) instead.
+     */
+    val translationEnabled: Boolean,
+    /** How large the whole window is drawn, in percent (Settings → General); one of [UI_SCALE_PERCENTS]. */
+    val uiScalePercent: Int,
 ) {
     val primaryMethod: TranslationMethod get() = translationMethods.first()
+
+    companion object {
+        val UI_SCALE_PERCENTS: List<Int> = (50..150 step 10).toList()
+    }
 }

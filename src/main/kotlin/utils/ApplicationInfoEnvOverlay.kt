@@ -237,6 +237,8 @@ class ApplicationInfoEnvOverlay(
                 ?.takeIf { it.isNotEmpty() },
             lastOpenedTab = toSave.lastOpenedTab
                 .dropIfFallback(envLastOpenedTab() ?: defaultApplicationInfo.lastOpenedTab),
+            translationEnabled = toSave.translationEnabled.dropIfFallback(defaultApplicationInfo.translationEnabled),
+            uiScalePercent = toSave.uiScalePercent.dropIfFallback(defaultApplicationInfo.uiScalePercent),
 
             whisperModelPath = toSave.whisperModelPath
                 .dropIfFallback(envWhisperModelPath() ?: defaultApplicationInfo.whisperModelPath),

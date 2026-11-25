@@ -61,6 +61,10 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                     model = speechmaticsConfig?.model ?: defaultApplicationInfo.speechmaticsConfig.model,
                     speakerLabels = speechmaticsConfig?.speakerLabels ?: defaultApplicationInfo.speechmaticsConfig.speakerLabels,
                 ),
+                translationEnabled = translationEnabled ?: defaultApplicationInfo.translationEnabled,
+                // A saved value the screen does not offer falls back to the built-in size.
+                uiScalePercent = uiScalePercent?.takeIf { it in ApplicationInfo.UI_SCALE_PERCENTS }
+                    ?: defaultApplicationInfo.uiScalePercent,
             )
         }
     }
@@ -98,6 +102,8 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                     model = speechmaticsConfig.model,
                     speakerLabels = speechmaticsConfig.speakerLabels,
                 ),
+                translationEnabled = translationEnabled,
+                uiScalePercent = uiScalePercent,
             )
         }
     }

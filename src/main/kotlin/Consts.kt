@@ -215,6 +215,8 @@ val defaultApplicationInfo = ApplicationInfo(
         system = QuestionPrompts.INSTRUCTIONS,
         user = QuestionPrompts.MESSAGE,
     ),
+    translationEnabled = true,
+    uiScalePercent = 100,
 )
 
 

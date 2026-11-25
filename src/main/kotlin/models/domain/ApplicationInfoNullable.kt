@@ -31,4 +31,6 @@ data class ApplicationInfoNullable(
     val speechmaticsConfig: SpeechmaticsConfigNullable? = null,
     /** Only the parts the user changed; the rest are the built-in ones. */
     val questions: QuestionsSettingsNullable? = null,
+    val translationEnabled: Boolean? = null,
+    val uiScalePercent: Int? = null,
 )
