@@ -8,21 +8,27 @@
   "fallbackModel": [
     "claude-sonnet-5-5"
   ],
-  "idleCompaction": false,
   "showThinkingSummaries": true,
   "cleanupPeriodDays": 90,
   "env": {
     "MCP_TIMEOUT": "60000",
-    "CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION": "500",
+    "CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION": "5000",
     "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "10",
     "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-5-5"
   },
+  "enableAllProjectMcpServers": false,
+  "enabledMcpjsonServers": [
+    "serena",
+    "context7"
+  ],
   "permissions": {
     "allow": [
+      "Agent",
       "Bash",
       "WebFetch",
       "Skill",
       "mcp__serena__*",
+      "mcp__context7__*",
       "Bash(grep:*)",
       "mcp__acp__Edit",
       "mcp__acp__Write",
@@ -30,6 +36,10 @@
       "Bash(git mv *)",
       "Read(.claude/skills/**)",
       "Edit(.claude/skills/**)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)"
     ],
     "defaultMode": "bypassPermissions"
   },
