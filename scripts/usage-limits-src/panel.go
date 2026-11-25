@@ -70,6 +70,9 @@ type panelLimit struct {
 	// Window is the gauge under it; null where the API gave no reset, where the status line draws no
 	// second line either.
 	Window *panelWindow `json:"window"`
+	// Buckets are the per-model weekly buckets drawn inside the 7-day limit, one line each between its
+	// LIMIT gauge and its time gauge, captioned with the model's name; their own Window is null.
+	Buckets []panelLimit `json:"buckets"`
 }
 
 type panelWindow struct {
@@ -121,9 +124,16 @@ func renderPanel(args argSet, rawInput string, hookInput map[string]any, now tim
 	}
 	if st != nil {
 		pic.Limits = []panelLimit{}
-		for _, r := range windowRows(st, now) {
-			limit := panelLimit{Label: r.label, Pct: round(r.pct, 0), Colour: hexColour(limitRGB(r.paceAt())), Reset: r.reset,
-				Empty: panelEmpty(r.pct, func(c, first, n int) [3]int { return limitRGB(limitShade(c, first, n)) })}
+		for _, r := range statusRows(st, now) {
+			limit := panelLimitGauge(r)
+			limit.Buckets = []panelLimit{}
+			for _, b := range r.buckets {
+				bucket := panelLimitGauge(b)
+				if bucket.Reset == r.reset {
+					bucket.Reset = ""
+				}
+				limit.Buckets = append(limit.Buckets, bucket)
+			}
 			// windowBar marks that the row has a time gauge at all; see limitBlocks.
 			if r.windowBar != "" {
 				caption := r.windowCaption
@@ -144,6 +154,12 @@ func renderPanel(args argSet, rawInput string, hookInput map[string]any, now tim
 		return ""
 	}
 	return string(out)
+}
+
+// panelLimitGauge is a row's LIMIT gauge, without the time gauge under it.
+func panelLimitGauge(r statusRow) panelLimit {
+	return panelLimit{Label: r.label, Pct: round(r.pct, 0), Colour: hexColour(limitRGB(r.paceAt())), Reset: r.reset,
+		Empty: panelEmpty(r.pct, func(c, first, n int) [3]int { return limitRGB(limitShade(c, first, n)) })}
 }
 
 func hexColour(rgb [3]int) string { return fmt.Sprintf("#%02x%02x%02x", rgb[0], rgb[1], rgb[2]) }

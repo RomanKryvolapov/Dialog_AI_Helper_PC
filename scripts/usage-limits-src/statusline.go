@@ -6,8 +6,8 @@
 // for the usage API's, without a word, when those have gone stale. Beside the CONTEXT gauge it
 // writes how long the prompt cache stays warm, and last, under the limits, how many tokens the
 // session and the account have used, followed by the model and the effort the session runs on. Of
-// the limits it draws the account's windows alone; a model's weekly bucket of its own is the
-// injected block's.
+// the limits it draws the account's windows, each per-model weekly bucket above 0% as a line
+// of its own inside the 7-day block.
 
 package main
 
@@ -312,7 +312,7 @@ func renderStatusline(args argSet, rawInput string, hookInput map[string]any, no
 		}
 		lines = append(lines, "LIMITS -> N/A")
 	} else {
-		lines = append(lines, renderLimits(windowRows(st, now), in.statusContext(), o))
+		lines = append(lines, renderLimits(statusRows(st, now), in.statusContext(), o))
 	}
 	if rows := configRows(); len(rows) > 0 {
 		lines = append(lines, renderTextRows(rows))

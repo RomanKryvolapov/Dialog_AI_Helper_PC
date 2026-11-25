@@ -22,8 +22,8 @@
 // ahead of the clock — and last the token counts. Every gauge is one cell per percent. That second
 // gauge is calendar time on the 5-hour row (captioned TIME) and working time on the weekly row
 // (captioned WORK), weighted per weekday; see workingWeek. It is coloured, fitted to the terminal,
-// and carries the prompt cache beside CONTEXT; see statusline.go. A model's weekly bucket of its own
-// is in the model's block alone.
+// and carries the prompt cache beside CONTEXT; see statusline.go. A per-model weekly bucket gets a pair
+// of gauges of its own beside them once anything is spent from it.
 //
 // The model is handed the same figures as data — XML, with no gauge; see modelblock.go — plus the
 // token counts and the elements it acts on: burn, zone, and the model at session start.
@@ -1140,6 +1140,9 @@ type statusRow struct {
 	windowCaption string
 	after         string
 	text          string
+	// buckets are the per-model weekly buckets the status line draws inside this (the 7-day) block,
+	// one line each between LIMIT and the time gauge, captioned with the model's name.
+	buckets []statusRow
 }
 
 // resetCells turns a reset timestamp into its two display columns.
@@ -1232,6 +1235,7 @@ func (o renderOpts) withTokens() string {
 // which are filled in once the block's place in a row is known — see renderLimits.
 type limitBlock struct {
 	top, bottom string
+	mids        []string // a line per per-model bucket, between top and bottom; see statusRow.buckets
 	labelWidth  int
 	width       int
 }
@@ -1264,8 +1268,19 @@ func limitBlocks(rows []statusRow, cells int, h heads, p painter) []limitBlock {
 			}
 		}
 		lw := runeWidth(label)
-		blocks = append(blocks, limitBlock{top: top, bottom: bottom, labelWidth: lw,
-			width: max(runeWidth(top), lw+runeWidth(bottom))})
+		width := max(runeWidth(top), lw+runeWidth(bottom))
+		var mids []string
+		for _, b := range r.buckets {
+			mid := cellGap + padLeftRunes(p.paint(pctCell(b.pct), p.figuresColour()), h.figure) + " " +
+				captionCell(b.label) + " " + p.gauge(b.pct, cells, p.limitColour(b.paceAt()),
+				func(c, first, n int) string { return p.limitColour(limitShade(c, first, n)) })
+			if b.reset != "" && b.reset != r.reset {
+				mid += " RESET AT " + p.paint(b.reset, p.figuresColour())
+			}
+			mids = append(mids, mid)
+			width = max(width, lw+runeWidth(mid))
+		}
+		blocks = append(blocks, limitBlock{top: top, bottom: bottom, mids: mids, labelWidth: lw, width: width})
 	}
 	return blocks
 }
@@ -1330,6 +1345,11 @@ func renderLimits(rows []statusRow, ctx contextReading, o renderOpts) string {
 	for _, group := range packBlocks(blocks, o.width) {
 		tops := make([]string, 0, len(group))
 		bottoms := make([]string, 0, len(group))
+		nMids := 0
+		for _, b := range group {
+			nMids = max(nMids, len(b.mids))
+		}
+		mids := make([][]string, nMids)
 		for i, b := range group {
 			// The bottom line carries no label of its own — just the space its block's label takes, so
 			// the two lines stay column-for-column. The first column of a row is the exception: Claude
@@ -1341,11 +1361,21 @@ func renderLimits(rows []statusRow, ctx contextReading, o renderOpts) string {
 			}
 			tops = append(tops, padRunes(b.top, b.width))
 			bottoms = append(bottoms, padRunes(area+b.bottom, b.width))
+			for k := range mids {
+				mid := ""
+				if k < len(b.mids) {
+					mid = area + b.mids[k]
+				} else if i == 0 && b.labelWidth > 0 {
+					mid = "-"
+				}
+				mids[k] = append(mids[k], padRunes(mid, b.width))
+			}
 		}
-		lines = append(lines,
-			strings.TrimRight(statusIndent+strings.Join(tops, blockGap), " "),
-			strings.TrimRight(statusIndent+strings.Join(bottoms, blockGap), " "),
-		)
+		lines = append(lines, strings.TrimRight(statusIndent+strings.Join(tops, blockGap), " "))
+		for _, m := range mids {
+			lines = append(lines, strings.TrimRight(statusIndent+strings.Join(m, blockGap), " "))
+		}
+		lines = append(lines, strings.TrimRight(statusIndent+strings.Join(bottoms, blockGap), " "))
 	}
 	if under != "" {
 		lines = append(lines, under)
@@ -1961,15 +1991,33 @@ func limitRows(st *state) []statusRow {
 	now := time.Now()
 	rows := windowRows(st, now)
 	for _, sc := range st.scoped {
-		row := statusRow{label: strings.ToUpper(sc.Model), limit: sc.Model + " weekly bucket", pct: sc.Percent}
-		if t, ok := parseTime(sc.ResetsAt); ok {
-			row.reset, row.after = resetCells(&t, t.Sub(now).Minutes(), true)
-			row.windowBar, row.windowPct = weeklyWindowGauge(t, now)
-			row.windowCaption = weeklyCaption()
-		}
-		rows = append(rows, row)
+		rows = append(rows, bucketRow(sc, now))
 	}
 	return rows
+}
+
+// statusRows is what the status line and the panel draw: the account's windows, the per-model buckets that have
+// anything spent drawn inside the 7-day block, one line each; see limitBlocks.
+func statusRows(st *state, now time.Time) []statusRow {
+	rows := windowRows(st, now)
+	weekly := &rows[len(rows)-1]
+	for _, sc := range st.scoped {
+		if sc.Percent > 0 {
+			weekly.buckets = append(weekly.buckets, bucketRow(sc, now))
+		}
+	}
+	return rows
+}
+
+// bucketRow is one per-model weekly bucket as a row, on the weekly scale.
+func bucketRow(sc scopedBucket, now time.Time) statusRow {
+	row := statusRow{label: strings.ToUpper(sc.Model), limit: sc.Model + " weekly bucket", pct: sc.Percent}
+	if t, ok := parseTime(sc.ResetsAt); ok {
+		row.reset, row.after = resetCells(&t, t.Sub(now).Minutes(), true)
+		row.windowBar, row.windowPct = weeklyWindowGauge(t, now)
+		row.windowCaption = weeklyCaption()
+	}
+	return row
 }
 
 // weeklyCaption names the gauge under a weekly limit. The weekly gauges alone move to the
@@ -1982,9 +2030,7 @@ func weeklyCaption() string {
 }
 
 // windowRows is the account's own windows: the 5-hour one where the API reports it, then the 7-day
-// one. They are all the status line and the panel draw: a model's weekly bucket of its own is left to
-// the model's block, which weighs it for the model in use, while on the person's screen it was one more
-// pair of gauges, for a model the session mostly does not run.
+// one. The status line and the panel draw the per-model buckets in use inside the 7-day one; see statusRows.
 func windowRows(st *state, now time.Time) []statusRow {
 	var rows []statusRow
 	// The 5-hour row only where the API reports the window: a plan without one gets no row rather

@@ -902,11 +902,11 @@ func TestRenderStatusline(t *testing.T) {
 		"SESSION: FRESH 21k CACHED 130k, ACCOUNT 5H: FRESH 21k CACHED 130k, 7D: FRESH 21k CACHED 130k, MODEL Fable EFFORT high"; lines[0] != want {
 		t.Errorf("top line = %q, want %q", lines[0], want)
 	}
-	// The account's two windows on one pair of lines; the model's own weekly bucket, which the usage
-	// document carries, is the model's block's alone.
-	if len(lines) != 3 || !strings.HasPrefix(lines[1], "5 HOURS") || !strings.Contains(lines[1], "7 DAYS        10 % LIMIT") ||
-		strings.Contains(out, "FABLE") {
-		t.Errorf("want CONTEXT and one pair of lines for the two windows, nothing else:\n%s", out)
+	// The account's two windows side by side, and the model's own weekly bucket, which has something
+	// spent, as a line of its own inside the 7-day block, between LIMIT and WORK.
+	if len(lines) != 4 || !strings.HasPrefix(lines[1], "5 HOURS") || !strings.Contains(lines[1], "7 DAYS        10 % LIMIT") ||
+		!strings.Contains(lines[2], "12 % FABLE") || strings.Contains(lines[2], "RESET AT") || !strings.Contains(lines[3], "WORK") {
+		t.Errorf("want CONTEXT, the two windows' LIMIT line, the Fable line and the time line:\n%s", out)
 	}
 	if strings.Contains(out, "\x1b") {
 		t.Errorf("NO_COLOR not honoured:\n%s", out)
@@ -929,7 +929,7 @@ func TestRenderStatusline(t *testing.T) {
 	}
 	withLive := strings.TrimSuffix(input, "}") + fmt.Sprintf(`,"rate_limits":{"five_hour":{"used_percentage":71,"resets_at":%d}}}`, now.Unix()+3600)
 	out = renderStatusline(argSet{}, withLive, nil, now)
-	if !strings.Contains(out, "5 HOURS       71 % LIMIT") || strings.Contains(out, "DATA") || len(strings.Split(out, "\n")) != 3 {
+	if !strings.Contains(out, "5 HOURS       71 % LIMIT") || strings.Contains(out, "DATA") || len(strings.Split(out, "\n")) != 4 {
 		t.Errorf("stale figures not replaced quietly:\n%s", out)
 	}
 }
@@ -1018,8 +1018,8 @@ func TestRenderPanel(t *testing.T) {
 		cachedAt.Add(time.Hour).Unix())
 	status := renderStatusline(argSet{}, withReading, nil, now)
 	lines := strings.Split(status, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("want the status line on three lines:\n%s", stripColour(status))
+	if len(lines) != 4 {
+		t.Fatalf("want the status line on four lines:\n%s", stripColour(status))
 	}
 
 	top := regexp.MustCompile("^CONTEXT +\x1b\\[([0-9;]+)m([^\x1b]+)\x1b\\[0m +\x1b\\[[0-9;]+m *([0-9]+) %.* CACHE \x1b\\[([0-9;]+)m([^\x1b]+)\x1b\\[0m  (.+)$").
@@ -1047,7 +1047,7 @@ func TestRenderPanel(t *testing.T) {
 	limitTops := regexp.MustCompile("([0-9A-Z][0-9A-Z ]*?) +\x1b\\[([0-9;]+)m *([0-9]+) %\x1b\\[0m LIMIT \x1b\\[([0-9;]+)m▓+\x1b\\[0m(?:\x1b\\[[0-9;]+m░+\x1b\\[0m)* RESET AT \x1b\\[[0-9;]+m([^\x1b]+)\x1b\\[0m").
 		FindAllStringSubmatch(lines[1], -1)
 	bottoms := regexp.MustCompile(`([0-9]+) %  ?(TIME|WORK) [▓░]+ RESET AFTER ([0-9a-z: ]+?)(?: {2,}|$)`).
-		FindAllStringSubmatch(stripColour(lines[2]), -1)
+		FindAllStringSubmatch(stripColour(lines[3]), -1)
 	if len(pic.Limits) != 2 || len(limitTops) != 2 || len(bottoms) != 2 {
 		t.Fatalf("want the two windows on both sides; panel %d, status line %d and %d:\n%s", len(pic.Limits), len(limitTops), len(bottoms), stripColour(status))
 	}
@@ -1063,19 +1063,25 @@ func TestRenderPanel(t *testing.T) {
 			t.Errorf("limit %d's window = %+v, the status line's = %s %% %s %q", i, l.Window, sb[1], sb[2], sb[3])
 		}
 		// The LIMIT gauges stand side by side on the status line's second line, the time gauges on its
-		// third.
+		// fourth.
 		if want := emptyOf(t, cellColours(lines[1])[i*100:(i+1)*100], int(l.Pct)); !reflect.DeepEqual(l.Empty, want) {
 			t.Errorf("limit %d's empty part = %v, the status line's = %v", i, l.Empty, want)
 		}
 		if w := l.Window; w != nil {
-			if want := emptyOf(t, cellColours(lines[2])[i*100:(i+1)*100], int(w.Pct)); !reflect.DeepEqual(w.Empty, want) {
+			if want := emptyOf(t, cellColours(lines[3])[i*100:(i+1)*100], int(w.Pct)); !reflect.DeepEqual(w.Empty, want) {
 				t.Errorf("limit %d's window's empty part = %v, the status line's = %v", i, w.Empty, want)
 			}
 		}
 	}
-	// The usage document has a Fable bucket too, which neither draws.
 	if pic.Limits[0].Label != "5 HOURS" || pic.Limits[1].Label != "7 DAYS" {
 		t.Errorf("want the 5-hour window, then the 7-day one: %+v", pic.Limits)
+	}
+	// The usage document's Fable bucket: inside the 7-day limit on both, the status line's third line.
+	if b := pic.Limits[1].Buckets; len(pic.Limits[0].Buckets) != 0 || len(b) != 1 || b[0].Label != "FABLE" || b[0].Pct != 12 ||
+		b[0].Reset != "" || !strings.Contains(stripColour(lines[2]), "12 % FABLE") {
+		t.Errorf("want the Fable bucket in the 7-day limit: %+v\n%s", pic.Limits, stripColour(status))
+	} else if want := emptyOf(t, cellColours(lines[2]), 12); !reflect.DeepEqual(b[0].Empty, want) {
+		t.Errorf("the Fable bucket's empty part = %v, the status line's = %v", b[0].Empty, want)
 	}
 
 	// A prompt-cache reading in the input is taken over the transcript's.
@@ -1674,5 +1680,14 @@ func TestTranscriptEffort(t *testing.T) {
 	}
 	if e := transcriptEffort(filepath.Join(t.TempDir(), "missing.jsonl")); e != nil {
 		t.Errorf("a missing transcript: %+v", e)
+	}
+}
+
+// A per-model bucket is drawn, inside the 7-day block, only once something is spent from it.
+func TestStatusRowsSkipsEmptyBuckets(t *testing.T) {
+	st := &state{scoped: []scopedBucket{{Model: "Fable", Percent: 0}, {Model: "Opus", Percent: 3}}}
+	rows := statusRows(st, time.Now())
+	if len(rows) != 1 || rows[0].label != "7 DAYS" || len(rows[0].buckets) != 1 || rows[0].buckets[0].label != "OPUS" {
+		t.Errorf("rows = %+v, want 7 DAYS holding OPUS alone", rows)
 	}
 }
