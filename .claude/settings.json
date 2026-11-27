@@ -37,10 +37,6 @@
       "Read(.claude/skills/**)",
       "Edit(.claude/skills/**)"
     ],
-    "deny": [
-      "Read(./.env)",
-      "Read(./.env.*)"
-    ],
     "defaultMode": "bypassPermissions"
   },
   "statusLine": {
