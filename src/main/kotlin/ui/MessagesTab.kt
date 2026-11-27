@@ -31,6 +31,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import mainThreadScope
 import models.domain.DialogItem
@@ -310,9 +312,15 @@ class MessagesTab(
         audioChunker.startListening(device)
     }
 
-    private fun toggleDialog() {
+    private val dialogRunningFlow = MutableStateFlow(false)
+    /** Whether a dialog is being listened to (between Start dialog and Stop dialog). */
+    val dialogRunning: StateFlow<Boolean> = dialogRunningFlow
+
+    /** Start dialog or Stop dialog, whichever the button offers now. */
+    fun toggleDialog() {
         if (audioChunker.chunkProcessingEnabled) {
             audioChunker.chunkProcessingEnabled = false
+            dialogRunningFlow.value = false
             Platform.runLater {
                 listeningButton.text = "Start dialog"
                 listeningButton.style = "-fx-background-color: $COLOUR_GREEN;"
@@ -357,6 +365,7 @@ class MessagesTab(
         }
         dialogLogger.startSession()
         audioChunker.chunkProcessingEnabled = true
+        dialogRunningFlow.value = true
         Platform.runLater {
             listeningButton.text = "Stop dialog"
             listeningButton.style = "-fx-background-color: $COLOUR_BLUE;"

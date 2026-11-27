@@ -146,6 +146,7 @@ There are three top-level tabs (Questions is described above):
 * **Messages** — the live loop: shows recognized speech and the model's streaming answer, with a status line underneath (recognition, translation, which method answers and why)
 * **Settings** — a master-detail screen with a category sidebar:
   * **General** — translation methods 1–3 (how the speech is heard → which model translates), input device, speech language, interface size
+  * **System** — how the window behaves on the desktop (see [The window on the desktop](#the-window-on-the-desktop))
   * **Phrases** — where speech is cut into phrases (silence threshold, the pause that ends a phrase, the longest phrase), used by Whisper and the voice models, and in part by Speechmatics
   * **LLM** — streaming-response toggle and each model's request parameters (temperature, top P / top K, max output tokens, thinking or reasoning effort, verbosity — only those the model accepts; an empty field takes its default, and the page shows what each request carries)
   * **API keys** — Google, OpenAI, Claude and Speechmatics keys
@@ -157,6 +158,15 @@ There are three top-level tabs (Questions is described above):
 Right of the tabs, the same shape and a little narrower, are **Start dialog**, **Clear dialog** and **Clear answers** (shown always, active on Messages and Questions), then the **Translation** and **Questions** boxes, the microphone and memory meters, the tokens the current dialog has used — sent to the models (in) and written back by them (out), apart — and the translation method in use.
 
 **Small screens and the interface size.** A window too narrow for the whole top bar loses, in this order, the memory figures, the memory meter, the token count and the microphone meter, and then the method's name, leaving its number ("Method 1"); the buttons and the two boxes always stay. A window too narrow even for those is drawn smaller as a whole, so nothing is cut off. **Settings → General → Interface size** draws everything in the window larger or smaller, from 50% to 150% in steps of 10: the change applies at once and is remembered, and drop-down lists and tooltips follow it. A smaller size fits more on a small screen; on a window too narrow for the top bar at the chosen size, the smaller of the two applies.
+
+## The window on the desktop
+
+**Settings → System** gathers what the window does outside itself (Windows):
+
+* **Notification area** — the app has an icon next to the clock; a click hides or shows the window, and its menu starts or stops the dialog and quits. Minimising and closing can each hide the window to that icon instead; then only **Exit** in its menu quits. A green dot on the icon means a dialog is listened to, an orange one an answer that came while the window was hidden.
+* **Taskbar** — the window can stay off the taskbar and Alt+Tab even while it is shown; minimising then hides it.
+* **Hotkeys** — key combinations that work from any program: hide and show the window, start and stop the dialog, answer now, clear answers, hide and show the floating panel, copy the latest answer. Each can be changed (click the field and press the combination; Backspace clears it) or left empty; a combination another program already holds is marked.
+* **Floating panel** — a small window on top of the others with the latest question and its answer, off, shown while the main window is hidden, or always, at the chosen opacity; drag it anywhere, click it to bring the main window back.
 
 ## Setting up on a new machine
 

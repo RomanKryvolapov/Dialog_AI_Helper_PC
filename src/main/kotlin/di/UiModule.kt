@@ -13,6 +13,7 @@ import ui.MethodChainSelector
 import ui.ModelParametersPane
 import ui.SettingsTab
 import ui.VoicePromptTab
+import ui.WindowPresence
 
 val uiModule = module {
 
@@ -25,5 +26,6 @@ val uiModule = module {
     singleOf(::ModelParametersPane)
     singleOf(::ConsoleTab)
     singleOf(::MethodChainSelector)
+    singleOf(::WindowPresence)
 
 }

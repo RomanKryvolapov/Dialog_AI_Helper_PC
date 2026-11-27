@@ -47,6 +47,8 @@ dependencies {
     implementation "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:$kotlinx_serialization_json_version"
 
     implementation 'net.java.dev.jna:jna:5.19.1'
+    // The Windows calls behind the global hotkey and the window kept off the taskbar (Settings → System).
+    implementation 'net.java.dev.jna:jna-platform:5.19.1'
 
     implementation("org.json:json:20260814")
 

@@ -16,6 +16,7 @@ import javafx.scene.control.ScrollPane
 import javafx.scene.control.Tab
 import javafx.scene.control.TabPane
 import javafx.scene.control.Tooltip
+import javafx.scene.image.Image
 import javafx.scene.layout.HBox
 import javafx.scene.layout.Region
 import javafx.scene.layout.StackPane
@@ -40,6 +41,7 @@ import ui.ConsoleTab
 import ui.MessagesTab
 import ui.QuestionsTab
 import ui.SettingsTab
+import ui.WindowPresence
 import utils.AudioChunker
 import utils.ActiveMethod
 import utils.TokenUsageTracker
@@ -56,6 +58,7 @@ class DialogApplication : Application(), KoinComponent {
     private val consoleTab: ConsoleTab by inject()
     private val tokenUsageTracker: TokenUsageTracker by inject()
     private val activeMethod: ActiveMethod by inject()
+    private val windowPresence: WindowPresence by inject()
 
     companion object {
         var ownerStage: Stage? = null
@@ -343,9 +346,11 @@ class DialogApplication : Application(), KoinComponent {
             width = screenBounds.width
             height = screenBounds.height
             title = "Dialog Application"
+            icons.addAll(listOf(16, 24, 32, 48, 64, 128, 256).map { Image("/icons/app-$it.png") })
             this.scene = scene
             show()
         }
+        windowPresence.attach(primaryStage)
 
         javafx.application.Platform.runLater {
             val headersRegion = tabPane.lookup(".tab-header-area > .headers-region") as? Region

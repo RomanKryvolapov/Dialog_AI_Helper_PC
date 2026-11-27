@@ -15,6 +15,7 @@ import models.domain.SummarySettingsNullable
 import models.domain.TranslationMethod
 import models.domain.VoiceRecognitionEngine
 import models.domain.WhisperModelConfigNullable
+import models.domain.WindowSettingsNullable
 import models.domain.onRecognizer
 import models.domain.resolveLlmModel
 import models.domain.resolveMethodChain
@@ -246,6 +247,21 @@ class ApplicationInfoEnvOverlay(
                 .dropIfFallback(envLastOpenedTab() ?: defaultApplicationInfo.lastOpenedTab),
             translationEnabled = toSave.translationEnabled.dropIfFallback(defaultApplicationInfo.translationEnabled),
             uiScalePercent = toSave.uiScalePercent.dropIfFallback(defaultApplicationInfo.uiScalePercent),
+            window = toSave.window?.let { saved ->
+                val default = defaultApplicationInfo.window
+                WindowSettingsNullable(
+                    minimizeToTray = saved.minimizeToTray.dropIfFallback(default.minimizeToTray),
+                    closeToTray = saved.closeToTray.dropIfFallback(default.closeToTray),
+                    hideFromTaskbar = saved.hideFromTaskbar.dropIfFallback(default.hideFromTaskbar),
+                    // Blank is a choice here (no hotkey), not an emptied field: kept, unlike other texts.
+                    hotkeys = saved.hotkeys
+                        ?.filter { (name, keys) -> default.hotkeys.entries.none { it.key.name == name && it.value == keys } }
+                        ?.takeIf { it.isNotEmpty() },
+                    floatingPanel = saved.floatingPanel.dropIfFallback(default.floatingPanel.name),
+                    panelOpacityPercent = saved.panelOpacityPercent.dropIfFallback(default.panelOpacityPercent),
+                    newAnswerSignal = saved.newAnswerSignal.dropIfFallback(default.newAnswerSignal),
+                ).takeUnless { it == WindowSettingsNullable() }
+            },
 
             whisperModelPath = toSave.whisperModelPath
                 .dropIfFallback(envWhisperModelPath() ?: defaultApplicationInfo.whisperModelPath),

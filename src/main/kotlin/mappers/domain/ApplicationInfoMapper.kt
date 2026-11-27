@@ -20,6 +20,10 @@ import models.domain.SummarySettings
 import models.domain.SummarySettingsNullable
 import models.domain.WhisperModelConfig
 import models.domain.WhisperModelConfigNullable
+import models.domain.FloatingPanelMode
+import models.domain.HotkeyAction
+import models.domain.WindowSettings
+import models.domain.WindowSettingsNullable
 import models.domain.onRecognizer
 import models.domain.resolveMethodChain
 
@@ -75,6 +79,21 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                 // A saved value the screen does not offer falls back to the built-in size.
                 uiScalePercent = uiScalePercent?.takeIf { it in ApplicationInfo.UI_SCALE_PERCENTS }
                     ?: defaultApplicationInfo.uiScalePercent,
+                window = defaultApplicationInfo.window.let { default ->
+                    WindowSettings(
+                        minimizeToTray = window?.minimizeToTray ?: default.minimizeToTray,
+                        closeToTray = window?.closeToTray ?: default.closeToTray,
+                        hideFromTaskbar = window?.hideFromTaskbar ?: default.hideFromTaskbar,
+                        hotkeys = default.hotkeys + HotkeyAction.entries.mapNotNull { action ->
+                            window?.hotkeys?.get(action.name)?.let { action to it }
+                        },
+                        floatingPanel = FloatingPanelMode.entries.firstOrNull { it.name == window?.floatingPanel }
+                            ?: default.floatingPanel,
+                        panelOpacityPercent = window?.panelOpacityPercent
+                            ?.takeIf { it in WindowSettings.PANEL_OPACITY_PERCENTS } ?: default.panelOpacityPercent,
+                        newAnswerSignal = window?.newAnswerSignal ?: default.newAnswerSignal,
+                    )
+                },
             )
         }
     }
@@ -121,6 +140,15 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                 ),
                 translationEnabled = translationEnabled,
                 uiScalePercent = uiScalePercent,
+                window = WindowSettingsNullable(
+                    minimizeToTray = window.minimizeToTray,
+                    closeToTray = window.closeToTray,
+                    hideFromTaskbar = window.hideFromTaskbar,
+                    hotkeys = window.hotkeys.mapKeys { it.key.name },
+                    floatingPanel = window.floatingPanel.name,
+                    panelOpacityPercent = window.panelOpacityPercent,
+                    newAnswerSignal = window.newAnswerSignal,
+                ),
             )
         }
     }

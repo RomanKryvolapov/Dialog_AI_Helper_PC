@@ -33,6 +33,8 @@ data class ApplicationInfo(
     val translationEnabled: Boolean,
     /** How large the whole window is drawn, in percent (Settings → General); one of [UI_SCALE_PERCENTS]. */
     val uiScalePercent: Int,
+    /** Settings → System: the notification-area icon, the hotkey, the taskbar, the floating panel. */
+    val window: WindowSettings,
 ) {
     val primaryMethod: TranslationMethod get() = translationMethods.first()
 

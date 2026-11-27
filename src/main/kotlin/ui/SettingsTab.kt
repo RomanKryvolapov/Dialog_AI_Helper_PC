@@ -13,6 +13,8 @@ import extensions.noteLabel
 import extensions.pasteButton
 import extensions.saveButton
 import extensions.settingsPage
+import extensions.settingsTextField
+import extensions.showError
 import extensions.showAlert
 import extensions.showNote
 import extensions.statusLabel
@@ -29,7 +31,15 @@ import javafx.scene.layout.HBox
 import javafx.scene.layout.StackPane
 import javafx.scene.layout.VBox
 import javafx.scene.paint.Color
+import javafx.scene.input.KeyCode
+import kotlinx.coroutines.launch
+import mainThreadScope
 import models.domain.ApplicationInfo
+import models.domain.FloatingPanelMode
+import models.domain.HotkeyAction
+import javafx.scene.control.Label
+import models.domain.WindowSettings
+import utils.Hotkey
 import models.domain.SherpaModelConfig
 import models.domain.SpeechmaticsConfig
 import models.domain.WhisperModelConfig
@@ -49,6 +59,7 @@ class SettingsTab(
     private val modelParametersPane: ModelParametersPane,
     private val consoleTab: ConsoleTab,
     private val methodChainSelector: MethodChainSelector,
+    private val windowPresence: WindowPresence,
     preferencesRepository: PreferencesRepository,
 ) : BaseTab(
     preferencesRepository = preferencesRepository,
@@ -59,6 +70,20 @@ class SettingsTab(
         private const val SIDEBAR_BACKGROUND_COLOUR = "#2b2b2b"
         private const val CHAIN_MAX_WIDTH = 1200.0
         private const val CHAIN_ROW_PADDING = 20.0
+        private const val HOTKEY_TITLE_WIDTH = 320.0
+
+        /**
+         * Why [keys] (blank: none) cannot be saved: a text that is no combination, or one combination given to two
+         * actions. Null when they can.
+         */
+        internal fun hotkeysProblem(keys: Map<HotkeyAction, String>): String? {
+            val parsed = keys.filterValues { it.isNotBlank() }.mapValues { (action, text) ->
+                Hotkey.parse(text) ?: return "${action.title}: press a modifier (Ctrl, Alt, Shift, Win) together with a key"
+            }
+            val twice = parsed.entries.groupBy({ it.value.text }, { it.key }).entries.firstOrNull { it.value.size > 1 }
+                ?: return null
+            return "${twice.key} is given to both ${twice.value[0].title} and ${twice.value[1].title}"
+        }
     }
 
     private val log = LoggerFactory.getLogger("SettingsTab")
@@ -73,6 +98,7 @@ class SettingsTab(
         // The sidebar lists them in this order.
         val pages = listOf(
             "General" to buildGeneralPane(),
+            "System" to buildSystemPane(),
             "Phrases" to buildPhrasesPane(),
             "LLM" to scrollOf(modelParametersPane.content),
             "API keys" to buildApiKeysPane(),
@@ -193,6 +219,133 @@ class SettingsTab(
             )
         }
     })
+
+    private fun buildSystemPane(): ScrollPane = scrollOf(settingsPage {
+        val window = getAppInfo().window
+        fun save(change: (WindowSettings) -> WindowSettings) =
+            saveAppInfo(getAppInfo().let { it.copy(window = change(it.window)) })
+
+        addSection(
+            title = "Notification area",
+            note = "The app keeps an icon next to the clock. A click on it hides or shows the window; its menu also " +
+                "starts and stops the dialog and quits. A green dot on it means a dialog is being listened to.",
+        ) {
+            addCheckBox("Minimise to the notification area", window.minimizeToTray) { on -> save { it.copy(minimizeToTray = on) } }
+            addCheckBox("Close to the notification area (Exit in the icon's menu quits)", window.closeToTray) { on ->
+                save { it.copy(closeToTray = on) }
+            }
+        }
+
+        addSection(
+            title = "Taskbar",
+            note = "Without a taskbar button and an Alt+Tab entry the window is reached through the icon next to the " +
+                "clock and the hotkey. Minimising then hides it.",
+        ) {
+            addCheckBox("Hide from the taskbar and Alt+Tab", window.hideFromTaskbar) { on -> save { it.copy(hideFromTaskbar = on) } }
+        }
+
+        addSection(
+            title = "Hotkeys",
+            note = "Work from any program. Click a field and press the combination: Ctrl, Alt, Shift or Win with a " +
+                "letter, a digit, F1–F24 or Space; Backspace leaves the action without one. The window's hotkey " +
+                "brings a window that is behind others to the front, and hides it when it is in front.",
+        ) {
+            val fields = HotkeyAction.entries.associateWith { action ->
+                hotkeyField(window.hotkeys[action].orEmpty())
+            }
+            val problems = HotkeyAction.entries.associateWith { noteLabel("") }
+            HotkeyAction.entries.forEach { action ->
+                children.add(
+                    HBox(
+                        12.0,
+                        Label(action.title).apply { minWidth = HOTKEY_TITLE_WIDTH; prefWidth = HOTKEY_TITLE_WIDTH },
+                        fields.getValue(action),
+                        problems.getValue(action),
+                    ).apply { alignment = Pos.CENTER_LEFT },
+                )
+            }
+            val status = statusLabel()
+            addButtons(
+                saveButton {
+                    val error = hotkeysProblem(fields.mapValues { it.value.text })
+                    if (error != null) {
+                        status.showError(error)
+                    } else {
+                        val keys = fields.mapValues { (_, field) -> Hotkey.parse(field.text)?.text.orEmpty() }
+                        keys.forEach { (action, text) -> fields.getValue(action).text = text }
+                        save { it.copy(hotkeys = keys) }
+                        status.showNote("Saved")
+                    }
+                },
+                actionButton("Defaults") {
+                    fields.forEach { (action, field) -> field.text = action.defaultKeys }
+                    save { it.copy(hotkeys = HotkeyAction.entries.associateWith { action -> action.defaultKeys }) }
+                    status.showNote("Saved")
+                },
+                status,
+            )
+            mainThreadScope.launch {
+                windowPresence.hotkeyProblems.collect { taken ->
+                    problems.forEach { (action, label) -> label.text = taken[action].orEmpty() }
+                }
+            }
+        }
+
+        addSection(
+            title = "Floating panel",
+            note = "A small window above all others with the newest question and its answer. Drag it anywhere; a " +
+                "click on it opens the main window.",
+        ) {
+            addComboBox(
+                items = FloatingPanelMode.entries,
+                selectedItem = window.floatingPanel,
+                toStringFn = { it.title },
+                onSelected = { mode -> save { it.copy(floatingPanel = mode) } },
+            )
+            addComboBox(
+                items = WindowSettings.PANEL_OPACITY_PERCENTS,
+                selectedItem = window.panelOpacityPercent,
+                toStringFn = { "$it% opaque" },
+                onSelected = { percent -> save { it.copy(panelOpacityPercent = percent) } },
+                short = true,
+            )
+        }
+
+        addSection(
+            title = "New answer signal",
+            note = "An answer that comes while the window is hidden puts an orange dot on the icon next to the clock, " +
+                "until the window is shown.",
+        ) {
+            addCheckBox("Mark the icon when an answer comes", window.newAnswerSignal) { on -> save { it.copy(newAnswerSignal = on) } }
+        }
+    })
+
+    /** A field that takes the combination pressed in it, rather than typed text; Backspace or Delete empties it. */
+    private fun hotkeyField(value: String) = settingsTextField(value, short = true).apply {
+        isEditable = false
+        promptText = "None"
+        setOnKeyPressed { event ->
+            if (event.code == KeyCode.TAB) return@setOnKeyPressed
+            event.consume()
+            if (event.code == KeyCode.BACK_SPACE || event.code == KeyCode.DELETE) {
+                text = ""
+                return@setOnKeyPressed
+            }
+            val key = when {
+                event.code.isLetterKey || event.code.isFunctionKey -> event.code.getName()
+                event.code.name.startsWith("DIGIT") -> event.code.getName()
+                event.code == KeyCode.SPACE -> "Space"
+                else -> null
+            }
+            val modifiers = listOfNotNull(
+                "Ctrl".takeIf { event.isControlDown },
+                "Alt".takeIf { event.isAltDown },
+                "Shift".takeIf { event.isShiftDown },
+                "Win".takeIf { event.isMetaDown },
+            )
+            text = (modifiers + listOfNotNull(key)).joinToString("+")
+        }
+    }
 
     /**
      * Temporary: the chain selector centres its rows itself and pads them [CHAIN_ROW_PADDING] on each side, so here

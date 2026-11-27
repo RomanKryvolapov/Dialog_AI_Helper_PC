@@ -33,4 +33,5 @@ data class ApplicationInfoNullable(
     val questions: QuestionsSettingsNullable? = null,
     val translationEnabled: Boolean? = null,
     val uiScalePercent: Int? = null,
+    val window: WindowSettingsNullable? = null,
 )

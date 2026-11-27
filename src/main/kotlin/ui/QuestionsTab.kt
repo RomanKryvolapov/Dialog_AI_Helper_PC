@@ -31,6 +31,8 @@ import javafx.scene.text.Text
 import javafx.scene.text.TextFlow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
 import utils.AnswerExpander
@@ -47,6 +49,9 @@ import utils.splitCodeBlocks
  * card off the screen: it stays in the list, hidden, since the Questions mode addresses rows by their place.
  */
 class QuestionsTab(private val expander: AnswerExpander) : QuestionsDisplay {
+
+    /** The newest card's question and answer as they stand; [serial] grows with each new card. */
+    data class Latest(val serial: Long, val row: Int, val question: String, val answer: String)
 
     private companion object {
         const val BACKGROUND_COLOUR = "#323232"
@@ -116,6 +121,11 @@ class QuestionsTab(private val expander: AnswerExpander) : QuestionsDisplay {
     /** Bumped by [clear]: a reply to a request from before it changes nothing. */
     private var epoch = 0
     private val jobs = ArrayList<Job>()
+    private var serial = 0L
+
+    private val latestFlow = MutableStateFlow<Latest?>(null)
+    /** For the floating panel and the tray icon's new-answer mark; null while the screen is empty. Set on the FX thread. */
+    val latest: StateFlow<Latest?> = latestFlow
 
     /** Adds a found question with its answer so far; the returned row is passed back to [update] as the answer grows. */
     override fun add(question: String, answer: String): Int {
@@ -126,6 +136,7 @@ class QuestionsTab(private val expander: AnswerExpander) : QuestionsDisplay {
             rows.add(row)
             cards.children.add(card(index, row))
             if (atBottom) scrollToBottom()
+            latestFlow.value = Latest(++serial, index, question, answer)
         }
         return index
     }
@@ -143,6 +154,7 @@ class QuestionsTab(private val expander: AnswerExpander) : QuestionsDisplay {
             state.question = question
             state.answer = answer
             redraw(row)
+            latestFlow.value?.takeIf { it.row == row }?.let { latestFlow.value = it.copy(question = question, answer = answer) }
         }
     }
 
@@ -159,6 +171,7 @@ class QuestionsTab(private val expander: AnswerExpander) : QuestionsDisplay {
             jobs.clear()
             rows.clear()
             cards.children.clear()
+            latestFlow.value = null
         }
     }
 

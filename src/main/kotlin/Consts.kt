@@ -225,6 +225,7 @@ val defaultApplicationInfo = ApplicationInfo(
     ),
     translationEnabled = true,
     uiScalePercent = 100,
+    window = WindowSettings(),
 )
 
 
