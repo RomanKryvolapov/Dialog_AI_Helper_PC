@@ -16,6 +16,12 @@ object PromptVariables {
     const val SPEECH = "speech"
     const val QUESTION_LANGUAGE = "question_language"
     const val ANSWER_LANGUAGE = "answer_language"
+    const val ABOUT_USER = "about_user"
+    const val TOPIC = "topic"
+    const val QUESTION = "question"
+    const val ANSWER = "answer"
+    const val FOLLOW_UP = "follow_up"
+    const val HEARD = "heard"
 
     val descriptions: Map<String, String> = linkedMapOf(
         SUMMARY to "the running summary of the conversation, empty until the first one is written",
@@ -29,6 +35,12 @@ object PromptVariables {
         SPEECH to "the latest phrases, oldest first, one per line; \"S1: \" before each when the recogniser tells speakers apart",
         QUESTION_LANGUAGE to "the language chosen above for showing the question (\"the language of the call\" when none is chosen)",
         ANSWER_LANGUAGE to "the language chosen above for showing the answer",
+        ABOUT_USER to "About me: the user's background and skills, \"(not given)\" when empty",
+        TOPIC to "the topic of the calls, such as the language code is written in, \"(not given)\" when empty",
+        QUESTION to "the question the answer was given to",
+        ANSWER to "the short answer suggested for it",
+        FOLLOW_UP to "the follow-up question the user picked",
+        HEARD to "whose speech the transcript holds: both sides (speaker labels), or the other side with the user perhaps mixed in",
     )
 }
 
@@ -45,9 +57,26 @@ enum class PromptPart(val allowed: Set<String>, val required: Set<String> = empt
     ),
     PREVIOUS_PHRASE(setOf(PromptVariables.SAID, PromptVariables.TRANSLATED), required = setOf(PromptVariables.SAID)),
     QUESTIONS_MESSAGE(
-        setOf(PromptVariables.SUMMARY, PromptVariables.ANSWERED, PromptVariables.SPEECH),
+        setOf(
+            PromptVariables.ABOUT_USER, PromptVariables.TOPIC, PromptVariables.SUMMARY, PromptVariables.ANSWERED,
+            PromptVariables.HEARD, PromptVariables.SPEECH,
+        ),
         required = setOf(PromptVariables.SPEECH),
     ),
+    FOLLOW_UPS_MESSAGE(
+        setOf(PromptVariables.ABOUT_USER, PromptVariables.TOPIC, PromptVariables.SUMMARY, PromptVariables.QUESTION, PromptVariables.ANSWER),
+        required = setOf(PromptVariables.QUESTION, PromptVariables.ANSWER),
+    ),
+    EXPANSION_MESSAGE(
+        setOf(
+            PromptVariables.ABOUT_USER, PromptVariables.TOPIC, PromptVariables.SUMMARY, PromptVariables.QUESTION,
+            PromptVariables.ANSWER, PromptVariables.FOLLOW_UP,
+        ),
+        required = setOf(PromptVariables.QUESTION, PromptVariables.FOLLOW_UP),
+    ),
+
+    /** The follow-up and fuller-answer instructions: written in the answer language, which is a setting of its own. */
+    ANSWER_LANGUAGE_INSTRUCTIONS(setOf(PromptVariables.ANSWER_LANGUAGE), required = setOf(PromptVariables.ANSWER_LANGUAGE)),
 
     /** The questions instructions: the two display languages are settings of their own, so they come in by placeholder. */
     QUESTIONS_INSTRUCTIONS(

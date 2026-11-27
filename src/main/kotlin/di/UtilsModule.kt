@@ -20,6 +20,7 @@ import utils.DialogLogger
 import utils.DialogLoggerImpl
 import utils.EnvSettings
 import utils.EnvSettingsImpl
+import utils.AnswerExpander
 import utils.LastRequests
 import utils.QuestionsAssistant
 import utils.RateLimiters
@@ -55,6 +56,7 @@ val utilsModule = module {
     singleOf(::LastRequests)
     singleOf(::RateLimiters)
     singleOf(::QuestionsAssistant)
+    singleOf(::AnswerExpander)
 
     single<Preferences> {
         Preferences.userRoot().node("PREFERENCES_DATABASE")

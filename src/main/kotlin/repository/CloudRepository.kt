@@ -1,6 +1,8 @@
 package repository
 
 import kotlinx.coroutines.flow.Flow
+import models.domain.LlmModel
+import models.domain.LlmModelEngine
 import models.domain.ModelParameters
 import models.domain.ModelPrompt
 
@@ -24,3 +26,11 @@ interface CloudRepository {
     fun streamClaude(model: String, apiKey: String, prompt: ModelPrompt, parameters: ModelParameters): Flow<String>
 
 }
+
+/** A text request to [model], by its provider. */
+fun CloudRepository.streamText(model: LlmModel, key: String, prompt: ModelPrompt, parameters: ModelParameters): Flow<String> =
+    when (model.engine) {
+        LlmModelEngine.GOOGLE -> streamGoogleAI(model.id, key, prompt, parameters)
+        LlmModelEngine.OPENAI -> streamOpenAI(model.id, key, prompt, parameters)
+        LlmModelEngine.CLAUDE -> streamClaude(model.id, key, prompt, parameters)
+    }

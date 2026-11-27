@@ -16,8 +16,18 @@ data class QuestionsSettings(
      */
     val questionDisplayLanguage: String,
     val answerDisplayLanguage: String,
+    /** Facts about the user that answers are pitched at: background and skills. */
+    val aboutUser: String,
+    /** What the calls are about, such as their main technology or programming language; code is written in it. */
+    val topic: String,
+    /** The model that writes the fuller answers: they are asked for by hand, so a slower, stronger one fits. */
+    val expansionModelId: String,
     val system: String,
     val user: String,
+    val followUpsSystem: String,
+    val followUpsUser: String,
+    val expansionSystem: String,
+    val expansionUser: String,
 )
 
 data class QuestionsSettingsNullable(
@@ -27,6 +37,13 @@ data class QuestionsSettingsNullable(
     val fullAnswers: Int? = null,
     val questionDisplayLanguage: String? = null,
     val answerDisplayLanguage: String? = null,
+    val aboutUser: String? = null,
+    val topic: String? = null,
+    val expansionModelId: String? = null,
     val system: String? = null,
     val user: String? = null,
+    val followUpsSystem: String? = null,
+    val followUpsUser: String? = null,
+    val expansionSystem: String? = null,
+    val expansionUser: String? = null,
 )

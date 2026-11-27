@@ -59,6 +59,7 @@ class DialogApplication : Application(), KoinComponent {
 
     companion object {
         var ownerStage: Stage? = null
+        private const val MESSAGES_TAB_INDEX = 0
         private const val QUESTIONS_TAB_INDEX = 1
         /** The tab header row's height, as styles.css sets it. */
         private const val TOP_BAR_HEIGHT = 64.0
@@ -127,7 +128,7 @@ class DialogApplication : Application(), KoinComponent {
             tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
             tabs.addAll(
                 Tab("Messages", messagesTab.content),
-                Tab("Questions", questionsTab.content),
+                Tab("Context", questionsTab.content),
                 Tab("Settings", settingsTab.content),
             )
             selectionModel.select(appInfo.lastOpenedTab.coerceIn(0, tabs.size - 1))
@@ -182,7 +183,7 @@ class DialogApplication : Application(), KoinComponent {
         val translationBox = switchBox("Translation", { it.translationEnabled }) { info, on -> info.copy(translationEnabled = on) }
 
         // The Questions mode on or off (Settings → Questions holds the rest of it).
-        val questionsBox = switchBox("Questions", { it.questions.enabled }) { info, on ->
+        val questionsBox = switchBox("Context", { it.questions.enabled }) { info, on ->
             info.copy(questions = info.questions.copy(enabled = on))
         }
 
@@ -193,7 +194,7 @@ class DialogApplication : Application(), KoinComponent {
             it.isMouseTransparent = true
         }
 
-        // The dialog's buttons act on its two screens, Messages and Questions; on Settings they stay in view, disabled.
+        // The dialog's buttons act on its two screens, Messages and Context; on Settings Start dialog stays in view, disabled.
         messagesTab.headerControls.disableProperty()
             .bind(tabPane.selectionModel.selectedIndexProperty().greaterThan(QUESTIONS_TAB_INDEX))
 
@@ -253,6 +254,13 @@ class DialogApplication : Application(), KoinComponent {
             scaledRoot.minContentWidth = tabNamesWidth + beforeMethod + widthOf(methodShort) + BAR_RIGHT_GAP
         }
         root.widthProperty().addListener { _, _, _ -> fitTopBar() }
+        // The buttons change with the screen, and with them the room left for the rest of the bar.
+        val showButtons = { index: Int ->
+            messagesTab.showButtonsFor(messagesScreen = index == MESSAGES_TAB_INDEX, contextScreen = index == QUESTIONS_TAB_INDEX)
+            javafx.application.Platform.runLater(fitTopBar)
+        }
+        showButtons(tabPane.selectionModel.selectedIndex)
+        tabPane.selectionModel.selectedIndexProperty().addListener { _, _, index -> showButtons(index.toInt()) }
         // Once the label has taken its new text in: its width is still the old one while the text changes.
         listOf(ramValueLabel, tokensLabel).forEach {
             it.textProperty().addListener { _, _, _ -> javafx.application.Platform.runLater(fitTopBar) }

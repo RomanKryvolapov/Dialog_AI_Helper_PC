@@ -16,8 +16,15 @@ class QuestionPromptsTest {
         fullAnswers = 3,
         questionDisplayLanguage = "",
         answerDisplayLanguage = "English",
+        aboutUser = "",
+        topic = "",
+        expansionModelId = "gpt-6.1-terra",
         system = QuestionPrompts.INSTRUCTIONS,
         user = QuestionPrompts.MESSAGE,
+        followUpsSystem = AnswerExpansionPrompts.FOLLOW_UPS_INSTRUCTIONS,
+        followUpsUser = AnswerExpansionPrompts.FOLLOW_UPS_MESSAGE,
+        expansionSystem = AnswerExpansionPrompts.EXPANSION_INSTRUCTIONS,
+        expansionUser = AnswerExpansionPrompts.EXPANSION_MESSAGE,
     )
 
     private fun turn(text: String, speaker: String? = null) = ConversationTurn(text).apply { this.speaker = speaker }
@@ -36,7 +43,7 @@ class QuestionPromptsTest {
             lastReplaceable = true,
         )
         assertTrue("{{" !in prompt.system, "every placeholder of the instructions is filled")
-        assertTrue("Answer in English, in the first person" in prompt.system)
+        assertTrue("Answer in English, the way an experienced engineer" in prompt.system)
         assertTrue("<question>the question(s) in the language of the call: complete" in prompt.system)
         assertTrue("<summary>\n(none yet)\n</summary>" in prompt.user)
         assertTrue("<qa>\n<question>What is a thread?</question>\n</qa>" in prompt.user, "an older entry keeps only its question")
@@ -101,7 +108,7 @@ class QuestionPromptsTest {
     fun `the languages chosen for the question and the answer reach the instructions`() {
         val chosen = settings.copy(questionDisplayLanguage = "Russian", answerDisplayLanguage = "German")
         val prompt = QuestionPrompts.request(chosen, "", emptyList(), listOf(turn("What is a thread?")), afterSilence = false, lastReplaceable = false)
-        assertTrue("Answer in German, in the first person" in prompt.system)
+        assertTrue("Answer in German, the way an experienced engineer" in prompt.system)
         assertTrue("<question>the question(s) in Russian: complete" in prompt.system)
         assertTrue("{{" !in prompt.system)
     }

@@ -12,6 +12,7 @@ import models.domain.SherpaModelConfig
 import models.domain.SherpaModelConfigNullable
 import models.domain.QuestionsSettings
 import models.domain.QuestionsSettingsNullable
+import utils.PersonalTexts
 import models.domain.SpeechmaticsConfig
 import models.domain.resolveLlmModel
 import models.domain.SpeechmaticsConfigNullable
@@ -43,7 +44,8 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                 useStreamingResponse = useStreamingResponse ?: defaultApplicationInfo.useStreamingResponse,
                 sherpaModelPath = sherpaModelPath ?: defaultApplicationInfo.sherpaModelPath,
                 sherpaConfig = reverseSherpaConfig(sherpaConfig),
-                questions = defaultApplicationInfo.questions.let { default ->
+                // What `personal/` holds stands in for an untouched setting, as `.env` does for the others.
+                questions = PersonalTexts.questionsDefaults.let { default ->
                     QuestionsSettings(
                         enabled = questions?.enabled ?: default.enabled,
                         // A model the catalog dropped falls back to the built-in choice.
@@ -52,8 +54,16 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                         fullAnswers = questions?.fullAnswers ?: default.fullAnswers,
                         questionDisplayLanguage = questions?.questionDisplayLanguage ?: default.questionDisplayLanguage,
                         answerDisplayLanguage = questions?.answerDisplayLanguage ?: default.answerDisplayLanguage,
+                        aboutUser = questions?.aboutUser ?: default.aboutUser,
+                        topic = questions?.topic ?: default.topic,
+                        expansionModelId = questions?.expansionModelId?.let { id -> resolveLlmModel(id)?.takeIf { it.readsText }?.id }
+                            ?: default.expansionModelId,
                         system = questions?.system.orDefault(default.system),
                         user = questions?.user.orDefault(default.user),
+                        followUpsSystem = questions?.followUpsSystem.orDefault(default.followUpsSystem),
+                        followUpsUser = questions?.followUpsUser.orDefault(default.followUpsUser),
+                        expansionSystem = questions?.expansionSystem.orDefault(default.expansionSystem),
+                        expansionUser = questions?.expansionUser.orDefault(default.expansionUser),
                     )
                 },
                 speechmaticsConfig = SpeechmaticsConfig(
@@ -94,8 +104,15 @@ class ApplicationInfoMapper : BaseReverseMapper<ApplicationInfo, ApplicationInfo
                     fullAnswers = questions.fullAnswers,
                     questionDisplayLanguage = questions.questionDisplayLanguage,
                     answerDisplayLanguage = questions.answerDisplayLanguage,
+                    aboutUser = questions.aboutUser,
+                    topic = questions.topic,
+                    expansionModelId = questions.expansionModelId,
                     system = questions.system,
                     user = questions.user,
+                    followUpsSystem = questions.followUpsSystem,
+                    followUpsUser = questions.followUpsUser,
+                    expansionSystem = questions.expansionSystem,
+                    expansionUser = questions.expansionUser,
                 ),
                 speechmaticsConfig = SpeechmaticsConfigNullable(
                     endpoint = speechmaticsConfig.endpoint,

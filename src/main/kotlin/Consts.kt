@@ -5,6 +5,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.javafx.JavaFx
 import org.slf4j.LoggerFactory
 import models.domain.*
+import utils.AnswerExpansionPrompts
 import utils.QuestionPrompts
 
 const val COLOUR_GREEN = "#3C713C"
@@ -210,10 +211,17 @@ val defaultApplicationInfo = ApplicationInfo(
         modelId = OpenAiModelsEnum.GPT_6_1_TERRA.type,
         phrases = 8,
         fullAnswers = 3,
-        questionDisplayLanguage = "",
-        answerDisplayLanguage = "English",
+        questionDisplayLanguage = "Russian",
+        answerDisplayLanguage = "Russian",
+        aboutUser = "",
+        topic = "",
+        expansionModelId = OpenAiModelsEnum.GPT_6_1_TERRA.type,
         system = QuestionPrompts.INSTRUCTIONS,
         user = QuestionPrompts.MESSAGE,
+        followUpsSystem = AnswerExpansionPrompts.FOLLOW_UPS_INSTRUCTIONS,
+        followUpsUser = AnswerExpansionPrompts.FOLLOW_UPS_MESSAGE,
+        expansionSystem = AnswerExpansionPrompts.EXPANSION_INSTRUCTIONS,
+        expansionUser = AnswerExpansionPrompts.EXPANSION_MESSAGE,
     ),
     translationEnabled = true,
     uiScalePercent = 100,

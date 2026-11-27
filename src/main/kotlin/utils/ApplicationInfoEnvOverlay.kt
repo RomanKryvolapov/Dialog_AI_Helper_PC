@@ -212,7 +212,7 @@ class ApplicationInfoEnvOverlay(
 
             prompts = toSave.prompts?.let(::dropBuiltInPrompts),
             questions = toSave.questions?.let { saved ->
-                val default = defaultApplicationInfo.questions
+                val default = PersonalTexts.questionsDefaults
                 QuestionsSettingsNullable(
                     enabled = saved.enabled.dropIfFallback(default.enabled),
                     modelId = saved.modelId.dropIfFallback(default.modelId),
@@ -220,8 +220,15 @@ class ApplicationInfoEnvOverlay(
                     fullAnswers = saved.fullAnswers.dropIfFallback(default.fullAnswers),
                     questionDisplayLanguage = saved.questionDisplayLanguage.dropIfFallback(default.questionDisplayLanguage),
                     answerDisplayLanguage = saved.answerDisplayLanguage.dropIfFallback(default.answerDisplayLanguage),
+                    aboutUser = saved.aboutUser.dropIfFallback(default.aboutUser),
+                    topic = saved.topic.dropIfFallback(default.topic),
+                    expansionModelId = saved.expansionModelId.dropIfFallback(default.expansionModelId),
                     system = saved.system.dropIfFallback(default.system),
                     user = saved.user.dropIfFallback(default.user),
+                    followUpsSystem = saved.followUpsSystem.dropIfFallback(default.followUpsSystem),
+                    followUpsUser = saved.followUpsUser.dropIfFallback(default.followUpsUser),
+                    expansionSystem = saved.expansionSystem.dropIfFallback(default.expansionSystem),
+                    expansionUser = saved.expansionUser.dropIfFallback(default.expansionUser),
                 ).takeUnless { it == QuestionsSettingsNullable() }
             },
             speechmaticsConfig = toSave.speechmaticsConfig?.let { config ->

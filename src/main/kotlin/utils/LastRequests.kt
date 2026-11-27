@@ -16,17 +16,23 @@ class LastRequests {
     private val voiceState = MutableStateFlow<Sent?>(null)
     private val summaryRequestState = MutableStateFlow<Sent?>(null)
     private val questionsState = MutableStateFlow<Sent?>(null)
+    private val followUpsState = MutableStateFlow<Sent?>(null)
+    private val expansionState = MutableStateFlow<Sent?>(null)
     private val summaryState = MutableStateFlow("")
 
     val text: StateFlow<Sent?> = textState
     val voice: StateFlow<Sent?> = voiceState
     val summaryRequest: StateFlow<Sent?> = summaryRequestState
     val questions: StateFlow<Sent?> = questionsState
+    val followUps: StateFlow<Sent?> = followUpsState
+    val expansion: StateFlow<Sent?> = expansionState
     val summary: StateFlow<String> = summaryState
 
     fun textSent(sent: Sent) { textState.value = sent }
     fun voiceSent(sent: Sent) { voiceState.value = sent }
     fun summarySent(sent: Sent) { summaryRequestState.value = sent }
     fun questionsSent(sent: Sent) { questionsState.value = sent }
+    fun followUpsSent(sent: Sent) { followUpsState.value = sent }
+    fun expansionSent(sent: Sent) { expansionState.value = sent }
     fun summaryIs(summary: String) { summaryState.value = summary }
 }

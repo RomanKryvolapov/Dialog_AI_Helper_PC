@@ -57,3 +57,5 @@ __pycache__/
 ### App working files (phrase recordings, voice samples) ###
 cache/
 voice/
+# Your own texts for the Questions mode (see README)
+/personal/

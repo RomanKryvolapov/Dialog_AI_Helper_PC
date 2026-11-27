@@ -205,13 +205,29 @@ class MessagesTab(
         setOnAction { questionsAssistant.clear() }
     }
 
+    /** For a question the Questions mode let pass: answers the latest one heard; usable while a dialog runs. */
+    private val answerNowButton = Button("Answer now").apply {
+        style = "-fx-background-color: $COLOUR_BLUE;"
+        isDisable = true
+        setOnAction { questionsAssistant.answerNow() }
+    }
+
     /**
      * The dialog's own buttons: the window shows them in its top bar, right after the tabs, shaped and
      * spaced like them (the `header-button` style).
      */
-    val headerControls: HBox = HBox(HEADER_SPACING, listeningButton, clearButton, clearAnswersButton).apply {
+    val headerControls: HBox = HBox(HEADER_SPACING, listeningButton, clearButton, clearAnswersButton, answerNowButton).apply {
         alignment = Pos.CENTER_LEFT
-        listOf(listeningButton, clearButton, clearAnswersButton).forEach { it.styleClass.add("header-button") }
+        listOf(listeningButton, clearButton, clearAnswersButton, answerNowButton).forEach { it.styleClass.add("header-button") }
+    }
+
+    /** Each screen's own buttons only: Clear dialog on Messages, Clear answers and Answer now on Context. */
+    fun showButtonsFor(messagesScreen: Boolean, contextScreen: Boolean) {
+        mapOf(clearButton to messagesScreen, clearAnswersButton to contextScreen, answerNowButton to contextScreen)
+            .forEach { (button, shown) ->
+                button.isVisible = shown
+                button.isManaged = shown
+            }
     }
 
     /** What the live loop is doing: recognition, translation, which method answers and why. */
@@ -300,6 +316,7 @@ class MessagesTab(
             Platform.runLater {
                 listeningButton.text = "Start dialog"
                 listeningButton.style = "-fx-background-color: $COLOUR_GREEN;"
+                answerNowButton.isDisable = true
             }
             labelMessagePartVoiceRecognition = ""
             updateLabelMessage()
@@ -343,6 +360,7 @@ class MessagesTab(
         Platform.runLater {
             listeningButton.text = "Stop dialog"
             listeningButton.style = "-fx-background-color: $COLOUR_BLUE;"
+            answerNowButton.isDisable = false
         }
         labelMessagePartVoiceRecognition = "Listening — ${primary.title}"
         labelMessagePartProcessMessage = skipped.joinToString("; ") { "skipped $it" }
